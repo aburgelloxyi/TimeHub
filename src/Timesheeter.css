@@ -1,0 +1,185 @@
+/* --- THE SLEDGEHAMMER DARK MODE V3 --- */
+body.dark-theme {
+  background-color: #0f172a !important;
+}
+
+/* Force standard backgrounds dark */
+.dark-theme .bg-slate-100 {
+  background-color: #0f172a !important;
+}
+.dark-theme .bg-white {
+  background-color: #1e293b !important;
+}
+
+/* Catch the opacity variants and hardcoded hex backgrounds */
+.dark-theme .bg-slate-50,
+.dark-theme .bg-slate-50\/50,
+.dark-theme .bg-slate-50\/60,
+.dark-theme .bg-slate-50\/80,
+.dark-theme .bg-white\/80,
+.dark-theme .bg-\[\#f8fafc\]\/40 {
+  background-color: #0f172a !important;
+}
+
+/* --- NEW: Weekdays Bar Overrides --- */
+.dark-theme .bg-white\/60 {
+  background-color: rgba(30, 41, 59, 0.8) !important;
+}
+.dark-theme .hover\:bg-white\/50:hover {
+  background-color: rgba(51, 65, 85, 0.8) !important;
+}
+.dark-theme .bg-slate-100\/50 {
+  background-color: rgba(15, 23, 42, 0.8) !important;
+  color: #94a3b8 !important;
+}
+.dark-theme .hover\:text-\[\#122027\]:hover {
+  color: #ffffff !important;
+}
+
+/* --- NEW: Mute Team Allocation Pastel Backgrounds --- */
+.dark-theme .bg-blue-50,
+.dark-theme .bg-emerald-50,
+.dark-theme .bg-pink-50,
+.dark-theme .bg-yellow-50,
+.dark-theme .bg-purple-50,
+.dark-theme .bg-orange-50,
+.dark-theme .bg-cyan-50,
+.dark-theme .bg-indigo-50,
+.dark-theme .bg-rose-50,
+.dark-theme .bg-fuchsia-50 {
+  background-color: #1e293b !important;
+}
+
+/* --- NEW: Brighten Team Allocation Text for Readability --- */
+.dark-theme .text-blue-700 {
+  color: #60a5fa !important;
+}
+.dark-theme .text-emerald-700 {
+  color: #34d399 !important;
+}
+.dark-theme .text-pink-700 {
+  color: #f472b6 !important;
+}
+.dark-theme .text-yellow-800,
+.dark-theme .text-yellow-700 {
+  color: #fbbf24 !important;
+}
+.dark-theme .text-purple-700,
+.dark-theme .text-purple-600 {
+  color: #c084fc !important;
+}
+.dark-theme .text-orange-700,
+.dark-theme .text-orange-600 {
+  color: #fb923c !important;
+}
+.dark-theme .text-cyan-700,
+.dark-theme .text-cyan-600 {
+  color: #22d3ee !important;
+}
+.dark-theme .text-fuchsia-700,
+.dark-theme .text-fuchsia-600 {
+  color: #e879f9 !important;
+}
+.dark-theme .text-rose-600 {
+  color: #fb7185 !important;
+}
+
+/* Force standard text white/light-grey */
+.dark-theme .text-\[\#122027\] {
+  color: #f8fafc !important;
+}
+.dark-theme .text-\[\#768994\] {
+  color: #94a3b8 !important;
+}
+.dark-theme .text-slate-700 {
+  color: #cbd5e1 !important;
+}
+
+/* Force all borders dark */
+.dark-theme .border-\[\#dce4ec\] {
+  border-color: #334155 !important;
+}
+.dark-theme .border-slate-100,
+.dark-theme .border-slate-200,
+.dark-theme .border-slate-200\/80,
+.dark-theme .border-black\/5 {
+  border-color: #334155 !important;
+}
+
+/* Kill drop shadows and replace with crisp borders */
+.dark-theme .shadow-sm,
+.dark-theme .shadow-md,
+.dark-theme .shadow-lg,
+.dark-theme .shadow-xl,
+.dark-theme .shadow-2xl {
+  box-shadow: none !important;
+  border: 1px solid #334155 !important;
+}
+.dark-theme .hover\:bg-white:hover,
+.dark-theme .hover\:bg-slate-50:hover,
+.dark-theme .hover\:bg-slate-50\/50:hover {
+  background-color: #334155 !important;
+}
+.dark-theme .text-\[\#323b43\] {
+  color: #f8fafc !important;
+}
+.dark-theme .bg-white\/95 {
+  background-color: rgba(30, 41, 59, 0.95) !important;
+}
+.dark-theme .bg-\[\#f8fafc\] {
+  background-color: #1e293b !important;
+}
+
+.dark-theme .wrike-matrix-render td {
+  color: #cbd5e1 !important;
+  border-color: #334155 !important;
+}
+.dark-theme .wrike-matrix-render th {
+  background-color: #0f172a !important;
+  color: #f8fafc !important;
+  border-color: #334155 !important;
+}
+.dark-theme .wrike-matrix-render tr:nth-child(even) {
+  background-color: #1e293b !important;
+}
+.dark-theme .wrike-matrix-render tr:nth-child(odd) {
+  background-color: #0f172a !important;
+}
+.dark-theme .wrike-matrix-render tr:hover {
+  background-color: rgba(51, 65, 85, 0.8) !important;
+}
+
+.dark-theme .via-white\/80 {
+  --tw-gradient-stops: var(--tw-gradient-from), rgba(255, 255, 255, 0.15),
+    var(--tw-gradient-to) !important;
+}
+/* --- Canvas Editor Dark Mode Fixes --- */
+.dark-theme .bg-indigo-50\/50 {
+  background-color: #1e293b !important;
+}
+
+.dark-theme .hover\:bg-indigo-100:hover {
+  background-color: #334155 !important;
+}
+
+.dark-theme .border-indigo-100 {
+  border-color: #334155 !important;
+}
+
+/* Ensure the placeholder text has good contrast */
+.dark-theme textarea::placeholder {
+  color: #64748b !important;
+}
+
+/* Fix the toolbar icon colors */
+.dark-theme .text-indigo-600 {
+  color: #818cf8 !important;
+}
+
+.dark-theme .from-\[\#4bbdf1\] {
+  --tw-gradient-from: #0f84be !important;
+  --tw-gradient-stops: var(--tw-gradient-from), var(--tw-gradient-to) !important;
+}
+.dark-theme .to-\[\#7cd7c7\] {
+  --tw-gradient-to: #12a188 !important;
+}

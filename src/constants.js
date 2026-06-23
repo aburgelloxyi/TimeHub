@@ -653,6 +653,17 @@ export const FILM_MAPPINGS = {
   SCRY: "Scary Movie 6",
 };
 
+export const MOTION_TEAM_NAME_MAP = {
+  "Antonio Burgello": "Antonio",
+  "Aaron Gunasingham": "Aaron",
+  "Jacqui Harrington": "Jacqui",
+  "Maria Cerrato": "Maria",
+  "Nicholas 😎": "Nicholas",
+  "Trott ⚡️": "Luke",
+  "Luke Trott": "Luke",
+  Turk: "Turk",
+};
+
 export const REGION_ALIASES = {
   TR: "Türkiye",
   CZ: "Czech Republic",

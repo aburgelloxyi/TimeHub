@@ -18,7 +18,7 @@ import {
 } from "lucide-react";
 
 // --- IMPORT YOUR CONSTANTS ---
-import { TERRITORY_FLAGS } from "../constants";
+import { TERRITORY_FLAGS, MOTION_TEAM_NAME_MAP } from "../constants";
 
 const TEAM_MEMBERS = [
   "Antonio",
@@ -62,17 +62,6 @@ const TEAM_COLORS = {
 };
 
 const INITIAL_CAMPAIGNS = [];
-
-// --- MOTION TEAM MAPPING ---
-const NAME_MAP = {
-  "Antonio Burgello": "Antonio",
-  "Aaron Gunasingham": "Aaron",
-  "Jacqui Harrington": "Jacqui",
-  "Maria Cerrato": "Maria",
-  "Nicholas 😎": "Nicholas",
-  "Trott ⚡️": "Luke",
-  Turk: "Turk",
-};
 
 // --- EXTENDED FLAG DICTIONARY ---
 const FALLBACK_FLAGS = {
@@ -606,9 +595,9 @@ export default function TodaysList({ wrikeData }) {
           });
           backlogTasksAssigned++;
         } else {
-          Object.keys(NAME_MAP).forEach((wrikeFullName) => {
+          Object.keys(MOTION_TEAM_NAME_MAP).forEach((wrikeFullName) => {
             if (task.assignees.includes(wrikeFullName)) {
-              const teamBoardName = NAME_MAP[wrikeFullName];
+              const teamBoardName = MOTION_TEAM_NAME_MAP[wrikeFullName];
               if (freshAssignments[teamBoardName]) {
                 freshAssignments[teamBoardName].push({
                   id: task.id,

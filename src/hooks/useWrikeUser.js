@@ -16,7 +16,10 @@ export function useWrikeUser(wrikeData, triggerToast) {
       fetch("https://www.wrike.com/api/v4/contacts?me=true", {
         headers: { Authorization: `Bearer ${token}` },
       })
-        .then((res) => res.json())
+        .then((res) => {
+          if (!res.ok) throw new Error(`Wrike API error ${res.status}`);
+          return res.json();
+        })
         .then((json) => {
           if (json.data?.length > 0) {
             setWrikeUser({
@@ -25,9 +28,12 @@ export function useWrikeUser(wrikeData, triggerToast) {
             });
           }
         })
-        .catch(() => {});
+        .catch((err) => {
+          console.error("Failed to fetch Wrike user:", err.message);
+        });
     }
-  }, [wrikeUser]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const handleFetchLifetimeStats = async () => {
     if (!wrikeUser?.id) return;

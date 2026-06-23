@@ -4,9 +4,7 @@ import {
   LayoutList,
   Layout,
   Server,
-  Trophy,
-  Ghost,
-  Database, // <-- Imported new icon
+  Database,
 } from "lucide-react";
 
 // 1. THIS MUST LIVE OUTSIDE THE COMPONENT to prevent infinite loops!

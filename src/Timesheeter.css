@@ -1,42 +1,25 @@
-/* --- THE SLEDGEHAMMER DARK MODE V3 --- */
-body.dark-theme {
+/* --- THE SLEDGEHAMMER DARK MODE V4 --- */
+/* Applied to <html> via document.documentElement.classList.toggle("dark-theme") */
+html.dark-theme,
+html.dark-theme body {
   background-color: #0f172a !important;
 }
 
-/* Force standard backgrounds dark */
-.dark-theme .bg-slate-100 {
-  background-color: #0f172a !important;
-}
-.dark-theme .bg-white {
-  background-color: #1e293b !important;
-}
+/* ── BACKGROUNDS ────────────────────────────────────────────── */
+.dark-theme .bg-slate-100 { background-color: #0f172a !important; }
+.dark-theme .bg-white     { background-color: #1e293b !important; }
 
-/* Catch the opacity variants and hardcoded hex backgrounds */
 .dark-theme .bg-slate-50,
 .dark-theme .bg-slate-50\/50,
 .dark-theme .bg-slate-50\/60,
-.dark-theme .bg-slate-50\/80,
+.dark-theme .bg-slate-50\/80 { background-color: #162032 !important; }
+
 .dark-theme .bg-white\/80,
-.dark-theme .bg-\[\#f8fafc\]\/40 {
-  background-color: #0f172a !important;
-}
+.dark-theme .bg-white\/95,
+.dark-theme .bg-\[\#f8fafc\],
+.dark-theme .bg-\[\#f8fafc\]\/40 { background-color: rgba(30, 41, 59, 0.95) !important; }
 
-/* --- NEW: Weekdays Bar Overrides --- */
-.dark-theme .bg-white\/60 {
-  background-color: rgba(30, 41, 59, 0.8) !important;
-}
-.dark-theme .hover\:bg-white\/50:hover {
-  background-color: rgba(51, 65, 85, 0.8) !important;
-}
-.dark-theme .bg-slate-100\/50 {
-  background-color: rgba(15, 23, 42, 0.8) !important;
-  color: #94a3b8 !important;
-}
-.dark-theme .hover\:text-\[\#122027\]:hover {
-  color: #ffffff !important;
-}
-
-/* --- NEW: Mute Team Allocation Pastel Backgrounds --- */
+/* Pastel team-card backgrounds */
 .dark-theme .bg-blue-50,
 .dark-theme .bg-emerald-50,
 .dark-theme .bg-pink-50,
@@ -45,68 +28,71 @@ body.dark-theme {
 .dark-theme .bg-orange-50,
 .dark-theme .bg-cyan-50,
 .dark-theme .bg-indigo-50,
+.dark-theme .bg-indigo-50\/50,
 .dark-theme .bg-rose-50,
-.dark-theme .bg-fuchsia-50 {
-  background-color: #1e293b !important;
-}
+.dark-theme .bg-fuchsia-50 { background-color: #1e293b !important; }
 
-/* --- NEW: Brighten Team Allocation Text for Readability --- */
-.dark-theme .text-blue-700 {
-  color: #60a5fa !important;
-}
-.dark-theme .text-emerald-700 {
-  color: #34d399 !important;
-}
-.dark-theme .text-pink-700 {
-  color: #f472b6 !important;
-}
+/* Weekday bar / nav overrides */
+.dark-theme .bg-white\/60  { background-color: rgba(30, 41, 59, 0.8) !important; }
+.dark-theme .bg-slate-100\/50 { background-color: rgba(15, 23, 42, 0.8) !important; color: #94a3b8 !important; }
+
+/* Hover states */
+.dark-theme .hover\:bg-white:hover,
+.dark-theme .hover\:bg-slate-50:hover,
+.dark-theme .hover\:bg-slate-50\/50:hover,
+.dark-theme .hover\:bg-white\/50:hover { background-color: #334155 !important; }
+.dark-theme .hover\:bg-indigo-100:hover { background-color: #334155 !important; }
+
+/* ── ACTION BAR / FREEZE STRIP ──────────────────────────────── */
+/* The freeze toggle strip between tabs and table */
+.dark-theme .border-slate-100 + .bg-white.border-b { background-color: #162032 !important; }
+
+/* Freeze toggle pill track — bg-slate-200 track when unlocked */
+.dark-theme .bg-slate-200 { background-color: #334155 !important; }
+.dark-theme .hover\:bg-slate-300:hover { background-color: #475569 !important; }
+
+/* Bottom action bar — targets the bg-slate-50 rounded-b-2xl bar specifically */
+.dark-theme .bg-slate-50.rounded-b-2xl { background-color: #162032 !important; }
+
+/* ── TEXT ───────────────────────────────────────────────────── */
+.dark-theme .text-\[\#122027\]  { color: #f8fafc  !important; }
+.dark-theme .text-\[\#768994\]  { color: #94a3b8  !important; }
+.dark-theme .text-\[\#323b43\]  { color: #f8fafc  !important; }
+.dark-theme .text-slate-700    { color: #cbd5e1  !important; }
+.dark-theme .text-slate-600    { color: #94a3b8  !important; }
+.dark-theme .text-slate-500    { color: #64748b  !important; }
+.dark-theme .text-slate-400    { color: #475569  !important; }
+
+/* Team allocation text */
+.dark-theme .text-blue-700     { color: #60a5fa !important; }
+.dark-theme .text-emerald-700  { color: #34d399 !important; }
+.dark-theme .text-pink-700     { color: #f472b6 !important; }
 .dark-theme .text-yellow-800,
-.dark-theme .text-yellow-700 {
-  color: #fbbf24 !important;
-}
+.dark-theme .text-yellow-700   { color: #fbbf24 !important; }
 .dark-theme .text-purple-700,
-.dark-theme .text-purple-600 {
-  color: #c084fc !important;
-}
+.dark-theme .text-purple-600   { color: #c084fc !important; }
 .dark-theme .text-orange-700,
-.dark-theme .text-orange-600 {
-  color: #fb923c !important;
-}
+.dark-theme .text-orange-600   { color: #fb923c !important; }
 .dark-theme .text-cyan-700,
-.dark-theme .text-cyan-600 {
-  color: #22d3ee !important;
-}
+.dark-theme .text-cyan-600     { color: #22d3ee !important; }
 .dark-theme .text-fuchsia-700,
-.dark-theme .text-fuchsia-600 {
-  color: #e879f9 !important;
-}
-.dark-theme .text-rose-600 {
-  color: #fb7185 !important;
-}
+.dark-theme .text-fuchsia-600  { color: #e879f9 !important; }
+.dark-theme .text-rose-600     { color: #fb7185 !important; }
+.dark-theme .text-indigo-600   { color: #818cf8 !important; }
+.dark-theme .hover\:text-\[\#122027\]:hover { color: #ffffff !important; }
 
-/* Force standard text white/light-grey */
-.dark-theme .text-\[\#122027\] {
-  color: #f8fafc !important;
-}
-.dark-theme .text-\[\#768994\] {
-  color: #94a3b8 !important;
-}
-.dark-theme .text-slate-700 {
-  color: #cbd5e1 !important;
-}
-
-/* Force all borders dark */
-.dark-theme .border-\[\#dce4ec\] {
-  border-color: #334155 !important;
-}
+/* ── BORDERS ────────────────────────────────────────────────── */
+.dark-theme .border-\[\#dce4ec\],
 .dark-theme .border-slate-100,
 .dark-theme .border-slate-200,
 .dark-theme .border-slate-200\/80,
-.dark-theme .border-black\/5 {
-  border-color: #334155 !important;
-}
+.dark-theme .border-black\/5,
+.dark-theme .border-indigo-100 { border-color: #334155 !important; }
 
-/* Kill drop shadows and replace with crisp borders */
+/* Dashed borders (ghost add-row row) */
+.dark-theme .border-dashed { border-color: #334155 !important; }
+
+/* ── SHADOWS → crisp borders ────────────────────────────────── */
 .dark-theme .shadow-sm,
 .dark-theme .shadow-md,
 .dark-theme .shadow-lg,
@@ -115,71 +101,78 @@ body.dark-theme {
   box-shadow: none !important;
   border: 1px solid #334155 !important;
 }
-.dark-theme .hover\:bg-white:hover,
-.dark-theme .hover\:bg-slate-50:hover,
-.dark-theme .hover\:bg-slate-50\/50:hover {
-  background-color: #334155 !important;
+
+/* ── LEGACY TIMESHEET TABLE ─────────────────────────────────── */
+/* Table header row bg-slate-800 is fine dark already */
+
+/* Semantic row classes (light mode) */
+.timesheet-row {
+  background-color: #f0fdf8;
 }
-.dark-theme .text-\[\#323b43\] {
-  color: #f8fafc !important;
+.timesheet-row:hover {
+  background-color: #dcfce7;
 }
-.dark-theme .bg-white\/95 {
-  background-color: rgba(30, 41, 59, 0.95) !important;
+.timesheet-row.frozen-row {
+  background-color: #f8fafc;
 }
-.dark-theme .bg-\[\#f8fafc\] {
-  background-color: #1e293b !important;
+.timesheet-row.frozen-row:hover {
+  background-color: #f1f5f9;
 }
 
-.dark-theme .wrike-matrix-render td {
+/* Dark mode rows */
+.dark-theme .timesheet-row {
+  background-color: #162032 !important;
+}
+.dark-theme .timesheet-row:hover {
+  background-color: #1e293b !important;
+}
+.dark-theme .timesheet-row.frozen-row {
+  background-color: #111827 !important;
+  opacity: 0.85;
+}
+
+/* Cell borders */
+.dark-theme .border-slate-100 { border-color: #1e293b !important; }
+.dark-theme .divide-slate-100 > * + * { border-color: #1e293b !important; }
+
+/* ── DAY TABS (pill segment) ────────────────────────────────── */
+/* Track */
+.dark-theme .bg-slate-200\/70 { background-color: #0f172a !important; }
+/* Inactive pill hover */
+.dark-theme .hover\:bg-white\/50:hover { background-color: rgba(255,255,255,0.07) !important; }
+/* Active pill text — blue active stays blue, no override needed */
+
+/* More Info textarea */
+.dark-theme textarea {
   color: #cbd5e1 !important;
-  border-color: #334155 !important;
+  background-color: transparent !important;
 }
-.dark-theme .wrike-matrix-render th {
-  background-color: #0f172a !important;
-  color: #f8fafc !important;
-  border-color: #334155 !important;
-}
-.dark-theme .wrike-matrix-render tr:nth-child(even) {
-  background-color: #1e293b !important;
-}
-.dark-theme .wrike-matrix-render tr:nth-child(odd) {
-  background-color: #0f172a !important;
-}
-.dark-theme .wrike-matrix-render tr:hover {
-  background-color: rgba(51, 65, 85, 0.8) !important;
+.dark-theme textarea::placeholder { color: #334155 !important; }
+.dark-theme textarea:hover { border-color: #334155 !important; }
+.dark-theme textarea:focus {
+  border-color: #12a0e1 !important;
+  background-color: rgba(18, 160, 225, 0.05) !important;
 }
 
+/* Select dropdowns inside table */
+.dark-theme select {
+  color: #cbd5e1 !important;
+  background-color: #1e293b !important;
+}
+
+/* ── CANVAS / GRADIENT OVERRIDES ────────────────────────────── */
 .dark-theme .via-white\/80 {
-  --tw-gradient-stops: var(--tw-gradient-from), rgba(255, 255, 255, 0.15),
-    var(--tw-gradient-to) !important;
+  --tw-gradient-stops: var(--tw-gradient-from), rgba(255,255,255,0.1), var(--tw-gradient-to) !important;
 }
-/* --- Canvas Editor Dark Mode Fixes --- */
-.dark-theme .bg-indigo-50\/50 {
-  background-color: #1e293b !important;
-}
-
-.dark-theme .hover\:bg-indigo-100:hover {
-  background-color: #334155 !important;
-}
-
-.dark-theme .border-indigo-100 {
-  border-color: #334155 !important;
-}
-
-/* Ensure the placeholder text has good contrast */
-.dark-theme textarea::placeholder {
-  color: #64748b !important;
-}
-
-/* Fix the toolbar icon colors */
-.dark-theme .text-indigo-600 {
-  color: #818cf8 !important;
-}
-
 .dark-theme .from-\[\#4bbdf1\] {
   --tw-gradient-from: #0f84be !important;
   --tw-gradient-stops: var(--tw-gradient-from), var(--tw-gradient-to) !important;
 }
-.dark-theme .to-\[\#7cd7c7\] {
-  --tw-gradient-to: #12a188 !important;
-}
+.dark-theme .to-\[\#7cd7c7\] { --tw-gradient-to: #12a188 !important; }
+
+/* ── WRIKE MATRIX TABLE ─────────────────────────────────────── */
+.dark-theme .wrike-matrix-render td { color: #cbd5e1 !important; border-color: #334155 !important; }
+.dark-theme .wrike-matrix-render th { background-color: #0f172a !important; color: #f8fafc !important; border-color: #334155 !important; }
+.dark-theme .wrike-matrix-render tr:nth-child(even) { background-color: #1e293b !important; }
+.dark-theme .wrike-matrix-render tr:nth-child(odd)  { background-color: #0f172a !important; }
+.dark-theme .wrike-matrix-render tr:hover           { background-color: rgba(51,65,85,0.8) !important; }

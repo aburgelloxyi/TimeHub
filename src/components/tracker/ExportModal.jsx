@@ -1,10 +1,46 @@
 import React from "react";
-import { X, Play, Copy, Check, Upload } from "lucide-react";
+import { X, Play, Copy, Check, Upload, FileSpreadsheet } from "lucide-react";
+
+function formatSeconds(totalSeconds) {
+  const h = Math.floor(totalSeconds / 3600);
+  const m = Math.floor((totalSeconds % 3600) / 60);
+  return `${h}h ${m}m`;
+}
+
+function handleExportCSV(tasks) {
+  if (!tasks || tasks.length === 0) return;
+
+  const headers = ["Day", "Date", "Job", "Territory", "Category", "Time", "Notes"];
+  const rows = tasks.map((t) => [
+    t.dayOfWeek ?? "",
+    t.date ?? "",
+    t.jobNumber ?? "",
+    t.territory ?? "",
+    t.category ?? "",
+    formatSeconds((t.rawSeconds ?? 0) + (t.additionalSeconds ?? 0)),
+    (t.notes ?? "").replace(/"/g, '""'),
+  ]);
+
+  const csv = [headers, ...rows]
+    .map((row) => row.map((cell) => `"${cell}"`).join(","))
+    .join("\n");
+
+  const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = `Timesheet_${new Date().toISOString().split("T")[0]}.csv`;
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  URL.revokeObjectURL(url);
+}
 
 export default function ExportModal({
   showExportModal, setShowExportModal,
   jsonCopied, pastedJson, setPastedJson,
   handleCopyJSONToClipboard, handlePasteImport,
+  tasks,
 }) {
   if (!showExportModal) return null;
 
@@ -42,6 +78,23 @@ export default function ExportModal({
             >
               {jsonCopied ? <Check className="w-4 h-4" /> : <Copy className="w-4 h-4" />}
               {jsonCopied ? "JSON Copied!" : "Copy JSON"}
+            </button>
+          </div>
+
+          <div className="bg-emerald-50 p-5 rounded-2xl border border-emerald-200">
+            <h4 className="text-sm font-bold text-[#122027] mb-2 flex items-center gap-2">
+              <FileSpreadsheet className="w-4 h-4 text-emerald-600" /> CSV Export
+            </h4>
+            <p className="text-xs text-[#323b43] mb-4 leading-relaxed">
+              Download all logged tasks as a CSV file — easy to open in Excel or Google Sheets.
+            </p>
+            <button
+              onClick={() => handleExportCSV(tasks)}
+              disabled={!tasks || tasks.length === 0}
+              className="flex items-center justify-center gap-2 px-4 py-3 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl font-bold transition-all shadow-lg shadow-emerald-600/20 active:scale-[0.98] w-full disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              <FileSpreadsheet className="w-4 h-4" />
+              Download CSV
             </button>
           </div>
 

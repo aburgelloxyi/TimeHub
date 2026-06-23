@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo } from "react";
+import React, { useEffect, useRef, useMemo } from "react";
 import {
   Activity, Download, RefreshCw,
   List, BarChart2,
@@ -62,6 +62,70 @@ export default function Tracker({ wrikeData }) {
       document.head.appendChild(script);
     }
   }, []);
+
+  // --- Favicon + tab title when timer is running ---
+  const originalTitle = useRef(document.title);
+  const faviconRef = useRef(null);
+  useEffect(() => {
+    if (!faviconRef.current) {
+      faviconRef.current = document.querySelector("link[rel~='icon']");
+      if (!faviconRef.current) {
+        faviconRef.current = document.createElement("link");
+        faviconRef.current.rel = "icon";
+        document.head.appendChild(faviconRef.current);
+      }
+    }
+    if (isRunning) {
+      const h = Math.floor(elapsedTime / 3600);
+      const m = String(Math.floor((elapsedTime % 3600) / 60)).padStart(2, "0");
+      const s = String(elapsedTime % 60).padStart(2, "0");
+      document.title = `⏱ ${h}:${m}:${s} — XYi Timesheeter`;
+
+      const canvas = document.createElement("canvas");
+      canvas.width = 32; canvas.height = 32;
+      const ctx = canvas.getContext("2d");
+      ctx.fillStyle = "#ef4444";
+      ctx.beginPath();
+      ctx.arc(16, 16, 14, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = "#ffffff";
+      ctx.font = "bold 18px sans-serif";
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.fillText("⏱", 16, 17);
+      faviconRef.current.href = canvas.toDataURL("image/png");
+    } else {
+      document.title = originalTitle.current;
+      faviconRef.current.href = "/favicon.ico";
+    }
+  }, [isRunning, elapsedTime]);
+
+  // Restore on unmount
+  useEffect(() => () => { document.title = originalTitle.current; }, []);
+
+  // --- Hourly toast nudge ---
+  const lastHourToasted = useRef(0);
+  useEffect(() => {
+    if (!isRunning) return;
+    const completedHours = Math.floor(elapsedTime / 3600);
+    if (completedHours > 0 && completedHours > lastHourToasted.current) {
+      lastHourToasted.current = completedHours;
+      triggerToast(`${completedHours}h on the clock — don't forget to log!`, "success");
+    }
+  }, [elapsedTime, isRunning]);
+
+  // --- Space bar shortcut to toggle timer (skip when typing in inputs) ---
+  useEffect(() => {
+    const handleKeyDown = (e) => {
+      if (e.code !== "Space" || e.repeat) return;
+      const tag = document.activeElement?.tagName;
+      if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
+      e.preventDefault();
+      actions.handleToggleTimer();
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [actions.handleToggleTimer]);
 
   // Derived data
   const currentFilteredTasks = tasks.filter((t) => t.dayOfWeek === selectedDay);
@@ -128,6 +192,7 @@ export default function Tracker({ wrikeData }) {
         jsonCopied={jsonCopied} pastedJson={pastedJson} setPastedJson={setPastedJson}
         handleCopyJSONToClipboard={actions.handleCopyJSONToClipboard}
         handlePasteImport={actions.handlePasteImport}
+        tasks={tasks}
       />
       <RecentJobsModal
         showRecentJobsModal={showRecentJobsModal}
@@ -178,24 +243,34 @@ export default function Tracker({ wrikeData }) {
             {DAYS_OF_WEEK.map((day) => {
               const isActive = selectedDay === day;
               const daySeconds = getSecondsForDay(day);
+              const TARGET = 27000; // 7.5h
+              const isGreen = !isActive && daySeconds >= TARGET;
+              const isAmber = !isActive && daySeconds > 0 && daySeconds < TARGET;
+              const tabStyle = isActive
+                ? "bg-white border-[#12a0e1]/30 text-[#12a0e1] shadow-md scale-[1.02]"
+                : isGreen
+                ? "bg-emerald-50 border-emerald-200/70 text-emerald-700 hover:bg-emerald-100"
+                : isAmber
+                ? "bg-amber-50 border-amber-200/70 text-amber-700 hover:bg-amber-100"
+                : "bg-transparent border-transparent text-[#768994] hover:bg-white/50 hover:text-[#122027]";
+              const badgeStyle = isActive
+                ? "bg-[#12a0e1]/10 text-[#12a0e1]"
+                : isGreen
+                ? "bg-emerald-200/60 text-emerald-700"
+                : isAmber
+                ? "bg-amber-200/60 text-amber-700"
+                : "bg-slate-100/50 text-[#768994]";
               return (
                 <button
                   key={day}
                   onClick={() => setSelectedDay(day)}
-                  className={`relative flex flex-col items-center justify-center py-4 px-2 rounded-2xl transition-all border ${
-                    isActive
-                      ? "bg-white border-[#12a0e1]/30 text-[#12a0e1] shadow-md scale-[1.02]"
-                      : "bg-transparent border-transparent text-[#768994] hover:bg-white/50 hover:text-[#122027]"
-                  }`}
+                  className={`relative flex flex-col items-center justify-center py-4 px-2 rounded-2xl transition-all border ${tabStyle}`}
                 >
                   <span className="text-sm font-black uppercase tracking-wider">{day}</span>
-                  <span className={`text-[11px] mt-1.5 font-mono px-3 py-0.5 rounded-full font-bold ${
-                    daySeconds > 0
-                      ? isActive ? "bg-[#12a0e1]/10 text-[#12a0e1]" : "bg-slate-200 text-[#122027]"
-                      : "bg-slate-100/50 text-[#768994]"
-                  }`}>
+                  <span className={`text-[11px] mt-1.5 font-mono px-3 py-0.5 rounded-full font-bold ${badgeStyle}`}>
                     {daySeconds > 0 ? formatDurationText(daySeconds) : "Snoozing"}
                   </span>
+                  {isGreen && <span className="absolute top-2 right-2 text-[8px]">✓</span>}
                 </button>
               );
             })}

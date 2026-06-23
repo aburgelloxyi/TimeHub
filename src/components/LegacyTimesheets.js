@@ -2,17 +2,16 @@ import React, { useState, useEffect } from "react";
 import {
   RefreshCw,
   XCircle,
-  Info,
   FileSpreadsheet,
   ChevronDown,
   ChevronRight,
   CheckCircle,
   Lock,
-  Unlock,
   LayoutList,
   X,
   AlertCircle,
   Copy,
+  Plus,
 } from "lucide-react";
 import {
   DEFAULT_JOBS,
@@ -416,6 +415,68 @@ export default function LegacyTimesheet({ wrikeData }) {
 
   const [activeDropdown, setActiveDropdown] = useState(null);
 
+  // --- Toast ---
+  const [toast, setToast] = useState({ show: false, message: "", type: "error" });
+  const showToast = (message, type = "error") => setToast({ show: true, message, type });
+  useEffect(() => {
+    if (!toast.show) return;
+    const t = setTimeout(() => setToast({ show: false, message: "", type: "error" }), 4000);
+    return () => clearTimeout(t);
+  }, [toast.show]);
+
+  // Today's real calendar day name (for modal column locking)
+  const todayDayName = React.useMemo(() => {
+    const d = new Date().getDay();
+    return DAYS[d === 0 ? 6 : d - 1];
+  }, []);
+
+  // --- Dynamic week date range ---
+  const weekDateRange = React.useMemo(() => {
+    const now = new Date();
+    const day = now.getDay();
+    const monday = new Date(now);
+    monday.setDate(now.getDate() - (day === 0 ? 6 : day - 1));
+    const sunday = new Date(monday);
+    sunday.setDate(monday.getDate() + 6);
+    const fmt = (d) => d.toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric" });
+    return `${fmt(monday)} – ${fmt(sunday)}`;
+  }, []);
+
+  // --- Per-day hour totals ---
+  const getDayTotal = (day) =>
+    rows
+      .filter((r) => r.dayOfWeek === day)
+      .reduce((sum, r) => {
+        const t = r.timeSpent === "none" || !r.timeSpent ? 0 : parseFloat(r.timeSpent);
+        const a = r.additionalTime === "none" || !r.additionalTime ? 0 : parseFloat(r.additionalTime);
+        return sum + t + a;
+      }, 0);
+
+  // --- Add blank row ---
+  const handleAddRow = () => {
+    if (frozenDays[activeDay]) return;
+    setRows((prev) => [
+      ...prev,
+      {
+        id: Date.now() + Math.random(),
+        taskId: null,
+        dayOfWeek: activeDay,
+        jobNumber: "",
+        client: "",
+        filmTitle: "",
+        projectDescription: "",
+        country: "",
+        category: "",
+        clientAmends: false,
+        moreInfo: "",
+        is3D: false,
+        timeSpent: "none",
+        additionalTime: "none",
+        isSaved: false,
+      },
+    ]);
+  };
+
   const [isWrikeModalOpen, setIsWrikeModalOpen] = useState(false);
   const [modalTab, setModalTab] = useState("timesheet");
   const [wrikeTimesheetData, setWrikeTimesheetData] = useState({});
@@ -453,7 +514,7 @@ export default function LegacyTimesheet({ wrikeData }) {
     const token = localStorage.getItem("wrike_personal_token");
     if (!token || !wrikeUserId) {
       if (!silent)
-        alert("Missing Wrike token or User ID. Please check your connection.");
+        showToast("Missing Wrike token or User ID. Please check your connection.");
       return null;
     }
 
@@ -529,30 +590,8 @@ export default function LegacyTimesheet({ wrikeData }) {
         hasMore = !!nextPageToken;
       }
 
-      const parseWrikeData = (htmlString) => {
-        if (!htmlString) return { notesText: "", extractedPathData: "" };
-        let extractedPathData = "";
-        const plainText = htmlString.replace(/<[^>]*>?/gm, " ");
-        const folderMatches = plainText.match(/\/Volumes\/[^\s]+/gi);
-        if (folderMatches) extractedPathData = folderMatches.join(" ");
-
-        const xyMatch = plainText.match(/(XY\d{5,6})/i);
-        if (xyMatch && !extractedPathData.includes(xyMatch[1])) {
-          extractedPathData += " " + xyMatch[1];
-        }
-
-        const rawText = htmlString
-          .replace(/<table[\s\S]*?<\/table>/i, "")
-          .replace(/<[^>]*>/g, "")
-          .trim();
-        return {
-          notesText: rawText,
-          extractedPathData: extractedPathData.toUpperCase(),
-        };
-      };
-
       const enrichedTasks = rawTasks.map((task) => {
-        const parsed = parseWrikeData(task.description);
+        const parsed = parseWrikeDescription(task.description);
         let projectName = task.title.split(/[_|-]/)[0].trim();
         if (parsed.extractedPathData) {
           const parts = parsed.extractedPathData.split("/");
@@ -582,7 +621,7 @@ export default function LegacyTimesheet({ wrikeData }) {
     } catch (err) {
       console.error(err);
       if (!silent)
-        alert("Failed to sync your personal jobs. See console for details.");
+        showToast("Failed to sync your personal jobs. See console for details.");
       return null;
     } finally {
       setIsSyncingJobs(false);
@@ -742,7 +781,7 @@ export default function LegacyTimesheet({ wrikeData }) {
 
   const handleOpenWrikeModal = async () => {
     if (!wrikeFullName || !wrikeUserId) {
-      alert("Still loading your Wrike profile, please wait a second...");
+      showToast("Still loading your Wrike profile — please wait a moment.");
       return;
     }
 
@@ -928,7 +967,7 @@ export default function LegacyTimesheet({ wrikeData }) {
       setExpandedGroups(newExpanded);
     } catch (err) {
       console.error(err);
-      alert("Failed to fetch Wrike native view data.");
+      showToast("Failed to fetch Wrike data. Check your token and connection.");
     } finally {
       setIsFetchingModalData(false);
     }
@@ -1018,12 +1057,19 @@ export default function LegacyTimesheet({ wrikeData }) {
     );
     const localValue = localRow ? localRow.timeSpent : "none";
     const isActive = localValue !== "none";
+    const isToday = dayOfWeek === todayDayName;
+    const isLocked = !isToday;
 
     return (
       <td
         className={`px-1 py-1.5 border-r border-[#263143] text-center relative group/cell transition-all ${
-          isActive ? "bg-[#1e293b]" : ""
+          isToday
+            ? "bg-[#12a0e1]/8"
+            : isActive
+            ? "bg-[#1e293b]/40"
+            : "opacity-30"
         }`}
+        title={isLocked ? `Can only log time for today (${todayDayName})` : undefined}
       >
         {wrikeHours && (
           <div
@@ -1034,30 +1080,36 @@ export default function LegacyTimesheet({ wrikeData }) {
           </div>
         )}
         <div className="mx-auto w-11 h-7 relative flex items-center justify-center">
-          <select
-            value={localValue}
-            onChange={(e) =>
-              handleModalTimeChange(task, dayOfWeek, e.target.value)
-            }
-            className={`w-full h-full text-center outline-none cursor-pointer appearance-none text-[11px] font-bold rounded-lg border transition-all ${
-              isActive
-                ? "text-[#38bdf8] bg-[#0c4a6e]/40 border-[#0284c7]/50 shadow-sm"
-                : "text-transparent bg-transparent border-transparent group-hover/cell:bg-[#253042] group-hover/cell:border-[#384252] group-hover/cell:text-slate-500"
-            }`}
-          >
-            <option value="none" className="bg-[#19202b] text-slate-500">
-              +
-            </option>
-            {TIME_OPTIONS.filter((o) => o !== "none").map((opt) => (
-              <option
-                key={opt}
-                value={opt}
-                className="bg-[#19202b] text-slate-200"
-              >
-                {opt}
+          {isLocked ? (
+            <span className={`text-[11px] font-bold ${isActive ? "text-slate-500" : "text-slate-700"}`}>
+              {isActive ? localValue : "—"}
+            </span>
+          ) : (
+            <select
+              value={localValue}
+              onChange={(e) =>
+                handleModalTimeChange(task, dayOfWeek, e.target.value)
+              }
+              className={`w-full h-full text-center outline-none cursor-pointer appearance-none text-[11px] font-bold rounded-lg border transition-all ${
+                isActive
+                  ? "text-[#0284c7] bg-[#e0f2fe] border-[#bae6fd] shadow-sm"
+                  : "text-[#38bdf8]/50 bg-[#12a0e1]/10 border-[#12a0e1]/20 hover:bg-[#12a0e1]/20 hover:text-[#38bdf8]/80"
+              }`}
+            >
+              <option value="none" className="bg-[#19202b] text-slate-500">
+                +
               </option>
-            ))}
-          </select>
+              {TIME_OPTIONS.filter((o) => o !== "none").map((opt) => (
+                <option
+                  key={opt}
+                  value={opt}
+                  className="bg-[#19202b] text-slate-200"
+                >
+                  {opt}
+                </option>
+              ))}
+            </select>
+          )}
         </div>
       </td>
     );
@@ -1148,11 +1200,11 @@ export default function LegacyTimesheet({ wrikeData }) {
   const handlePullTimes = async () => {
     const token = localStorage.getItem("wrike_personal_token");
     if (!token) {
-      alert("Please set your Wrike token in the API Sandbox first.");
+      showToast("Please set your Wrike token in the API tab first.");
       return;
     }
     if (!wrikeUserId) {
-      alert("Loading user profile, please wait a second.");
+      showToast("Loading your Wrike profile — please wait a moment.");
       return;
     }
 
@@ -1260,12 +1312,13 @@ export default function LegacyTimesheet({ wrikeData }) {
 
       if (newRows.length > 0) {
         setRows((prev) => [...newRows, ...prev]);
+        showToast(`Pulled ${newRows.length} row${newRows.length !== 1 ? "s" : ""} from Wrike.`, "success");
       } else {
-        alert("No new or unfrozen times found for today.");
+        showToast("No new or unfrozen times found for today.");
       }
     } catch (err) {
       console.error(err);
-      alert("Failed to pull times: " + err.message);
+      showToast("Failed to pull times: " + err.message);
     } finally {
       setIsPulling(false);
     }
@@ -1273,7 +1326,7 @@ export default function LegacyTimesheet({ wrikeData }) {
 
   const handleExportExcel = () => {
     if (rows.length === 0) {
-      alert("No data to export!");
+      showToast("No data to export yet.");
       return;
     }
 
@@ -1309,7 +1362,7 @@ export default function LegacyTimesheet({ wrikeData }) {
 
   const handleCopyJSON = async () => {
     if (rows.length === 0) {
-      alert("No data to copy!");
+      showToast("No data to copy yet.");
       return;
     }
 
@@ -1406,9 +1459,7 @@ export default function LegacyTimesheet({ wrikeData }) {
       setTimeout(() => setJsonCopied(false), 3000);
     } catch (err) {
       console.error("Failed to copy JSON", err);
-      alert(
-        "Failed to copy JSON to clipboard. Please check browser permissions."
-      );
+      showToast("Failed to copy JSON. Check browser clipboard permissions.");
     }
   };
 
@@ -1446,12 +1497,23 @@ export default function LegacyTimesheet({ wrikeData }) {
   const currentDayRows = rows.filter((r) => r.dayOfWeek === activeDay);
   const isDayFrozen = frozenDays[activeDay] || false;
 
-  const textAreaClass = `w-full bg-transparent border border-transparent hover:border-slate-300 focus:border-[#12a0e1] focus:ring-2 focus:ring-[#12a0e1]/20 focus:bg-white outline-none text-[12px] text-slate-800 font-medium p-2 transition-all rounded-md resize-none overflow-hidden leading-tight ${
+  const textAreaClass = `w-full bg-transparent border border-transparent hover:border-slate-300 focus:border-[#12a0e1] focus:ring-2 focus:ring-[#12a0e1]/20 outline-none text-[12px] text-slate-800 font-medium p-2 transition-all rounded-md resize-none overflow-hidden leading-tight ${
     isDayFrozen ? "opacity-60 cursor-not-allowed" : ""
   }`;
 
   return (
     <div className="min-h-screen bg-slate-100 p-4 font-sans selection:bg-[#12a0e1]/30">
+      {/* Toast */}
+      {toast.show && (
+        <div className={`fixed top-5 right-5 z-[99999] flex items-center gap-3 px-5 py-3.5 rounded-2xl shadow-2xl text-sm font-bold transition-all animate-in fade-in slide-in-from-top-2 duration-300 ${
+          toast.type === "error"
+            ? "bg-rose-500 text-white"
+            : "bg-[#1cc1a5] text-white"
+        }`}>
+          {toast.type === "error" ? <AlertCircle className="w-4 h-4 shrink-0" /> : <CheckCircle className="w-4 h-4 shrink-0" />}
+          {toast.message}
+        </div>
+      )}
       {/* --- DESIGN PACK: PREMIUM MODERN WRIKE TIMESHEET MODAL --- */}
       {isWrikeModalOpen && (
         <div className="fixed inset-0 z-[99999] bg-[#0b0f17]/95 backdrop-blur-xl flex flex-col text-slate-300 animate-in fade-in duration-200">
@@ -1547,7 +1609,7 @@ export default function LegacyTimesheet({ wrikeData }) {
                     </th>
                     {["Mo", "Tu", "We", "Th", "Fr", "Sa", "Su"].map((d, i) => {
                       const dayName = DAYS[i];
-                      const isCurrent = activeDay === dayName;
+                      const isCurrent = todayDayName === dayName;
                       const isEnd = d === "Sa" || d === "Su";
                       return (
                         <th
@@ -1648,9 +1710,9 @@ export default function LegacyTimesheet({ wrikeData }) {
                                 <td
                                   key={d}
                                   className={`border-r border-[#222f3e] last:border-r-0 ${
-                                    activeDay === d
-                                      ? "bg-[#12a0e1]/5"
-                                      : "bg-[#0f141f]"
+                                    todayDayName === d
+                                      ? "bg-[#12a0e1]/8"
+                                      : "bg-[#0f141f] opacity-40"
                                   }`}
                                 ></td>
                               ))}
@@ -1921,7 +1983,7 @@ export default function LegacyTimesheet({ wrikeData }) {
                 Weekly Timesheet
               </h1>
               <span className="text-[13px] font-bold text-slate-400 bg-slate-800 px-3 py-1 rounded-full">
-                22nd June - 28th June 2026
+                {weekDateRange}
               </span>
             </div>
             <div className="text-[13px] text-slate-300 font-medium flex items-center gap-4 mt-2">
@@ -1981,22 +2043,33 @@ export default function LegacyTimesheet({ wrikeData }) {
                   isActive ? "relative z-10 top-[1px]" : ""
                 }`}
               >
-                <div className="flex items-center justify-center gap-1.5">
-                  {frozenDays[day] && <Lock className="w-3 h-3 opacity-60" />}
-                  {day}
-                  {rows.filter((r) => r.dayOfWeek === day).length > 0 && (
-                    <span
-                      className={`ml-1.5 text-[10px] px-2 py-0.5 rounded-full ${
-                        isActive
-                          ? isWeekend
-                            ? "bg-rose-100 text-rose-600"
-                            : "bg-[#12a0e1]/10 text-[#12a0e1]"
-                          : isWeekend
-                          ? "bg-rose-200/50 text-rose-500"
-                          : "bg-slate-200 text-slate-500"
-                      }`}
-                    >
-                      {rows.filter((r) => r.dayOfWeek === day).length}
+                <div className="flex flex-col items-center gap-0.5">
+                  <div className="flex items-center justify-center gap-1.5">
+                    {frozenDays[day] && <Lock className="w-3 h-3 opacity-60" />}
+                    {day}
+                    {rows.filter((r) => r.dayOfWeek === day).length > 0 && (
+                      <span
+                        className={`ml-1.5 text-[10px] px-2 py-0.5 rounded-full ${
+                          isActive
+                            ? isWeekend
+                              ? "bg-rose-100 text-rose-600"
+                              : "bg-[#12a0e1]/10 text-[#12a0e1]"
+                            : isWeekend
+                            ? "bg-rose-200/50 text-rose-500"
+                            : "bg-slate-200 text-slate-500"
+                        }`}
+                      >
+                        {rows.filter((r) => r.dayOfWeek === day).length}
+                      </span>
+                    )}
+                  </div>
+                  {getDayTotal(day) > 0 && (
+                    <span className={`text-[10px] font-mono font-bold ${
+                      isActive
+                        ? isWeekend ? "text-rose-500" : "text-[#12a0e1]"
+                        : "text-slate-400"
+                    }`}>
+                      {getDayTotal(day)}h
                     </span>
                   )}
                 </div>
@@ -2005,8 +2078,27 @@ export default function LegacyTimesheet({ wrikeData }) {
           })}
         </div>
 
+        {/* Freeze toggle strip */}
+        <div className="bg-white border-b border-slate-100 px-4 py-1.5 flex items-center justify-end gap-2">
+          <span className={`text-[11px] font-bold transition-colors ${isDayFrozen ? "text-amber-500" : "text-slate-400"}`}>
+            {isDayFrozen ? `${activeDay} is locked` : `Lock ${activeDay}`}
+          </span>
+          <button
+            onClick={toggleFreeze}
+            title={isDayFrozen ? "Unlock day" : "Lock day to prevent edits"}
+            className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors focus:outline-none ${
+              isDayFrozen ? "bg-amber-400" : "bg-slate-200 hover:bg-slate-300"
+            }`}
+          >
+            <span className={`inline-block h-3.5 w-3.5 rounded-full bg-white shadow transition-transform ${
+              isDayFrozen ? "translate-x-4" : "translate-x-0.5"
+            }`} />
+          </button>
+          {isDayFrozen && <Lock className="w-3.5 h-3.5 text-amber-400" />}
+        </div>
+
         {/* --- TABLE AREA --- */}
-        <div className="flex-1 bg-white relative rounded-b-2xl overflow-x-auto w-full pb-96">
+        <div className="flex-1 bg-white relative overflow-x-auto w-full">
           <table className="w-full text-left text-[12px] border-collapse min-w-max">
             <thead>
               <tr className="bg-slate-800 text-slate-200 shadow-sm">
@@ -2022,21 +2114,15 @@ export default function LegacyTimesheet({ wrikeData }) {
                 ))}
               </tr>
             </thead>
-            <tbody
-              className={`divide-y divide-emerald-100 ${
-                isDayFrozen ? "bg-slate-50/50" : ""
-              }`}
-            >
+            <tbody className="divide-y divide-slate-100">
               {currentDayRows.map((row) => (
                 <tr
                   key={row.id}
-                  className={`${
-                    isDayFrozen
-                      ? "bg-slate-50 hover:bg-slate-100"
-                      : "bg-emerald-50/30 hover:bg-emerald-50/80"
-                  } transition-colors group relative`}
+                  className={`timesheet-row transition-colors group relative ${
+                    isDayFrozen ? "frozen-row" : ""
+                  }`}
                 >
-                  <td className="p-2 border-r border-emerald-100 align-middle min-w-[240px]">
+                  <td className="p-2 border-r border-slate-100 align-middle min-w-[240px]">
                     <div className="flex items-start gap-2 pl-1">
                       <button
                         onClick={() => deleteRow(row.id)}
@@ -2079,7 +2165,7 @@ export default function LegacyTimesheet({ wrikeData }) {
                     </div>
                   </td>
 
-                  <td className="p-2 border-r border-emerald-100 align-middle w-[140px]">
+                  <td className="p-2 border-r border-slate-100 align-middle w-[140px]">
                     <div
                       className={`text-[12px] leading-tight font-semibold px-2 ${
                         isDayFrozen ? "text-slate-500" : "text-slate-700"
@@ -2089,7 +2175,7 @@ export default function LegacyTimesheet({ wrikeData }) {
                     </div>
                   </td>
 
-                  <td className="p-2 border-r border-emerald-100 align-middle w-[150px]">
+                  <td className="p-2 border-r border-slate-100 align-middle w-[150px]">
                     <div
                       className={`text-[12px] leading-tight font-black px-2 ${
                         isDayFrozen ? "text-slate-600" : "text-slate-900"
@@ -2099,7 +2185,7 @@ export default function LegacyTimesheet({ wrikeData }) {
                     </div>
                   </td>
 
-                  <td className="p-2 border-r border-emerald-100 align-middle w-[220px]">
+                  <td className="p-2 border-r border-slate-100 align-middle w-[220px]">
                     <textarea
                       rows={2}
                       value={row.projectDescription}
@@ -2112,7 +2198,7 @@ export default function LegacyTimesheet({ wrikeData }) {
                     />
                   </td>
 
-                  <td className="p-2 border-r border-emerald-100 align-middle w-[140px]">
+                  <td className="p-2 border-r border-slate-100 align-middle w-[140px]">
                     <TableSearchableSelect
                       options={TERRITORIES}
                       value={row.country}
@@ -2127,7 +2213,7 @@ export default function LegacyTimesheet({ wrikeData }) {
                     />
                   </td>
 
-                  <td className="p-2 border-r border-emerald-100 align-middle w-[180px]">
+                  <td className="p-2 border-r border-slate-100 align-middle w-[180px]">
                     <TableSearchableSelect
                       options={CATEGORIES}
                       value={row.category}
@@ -2142,7 +2228,7 @@ export default function LegacyTimesheet({ wrikeData }) {
                     />
                   </td>
 
-                  <td className="p-2 border-r border-emerald-100 align-middle w-[70px] text-center">
+                  <td className="p-2 border-r border-slate-100 align-middle w-[70px] text-center">
                     <input
                       type="checkbox"
                       checked={row.clientAmends}
@@ -2158,22 +2244,22 @@ export default function LegacyTimesheet({ wrikeData }) {
                     />
                   </td>
 
-                  <td className="p-2 border-r border-emerald-100 align-middle w-[60px] text-center">
-                    <div
-                      className="flex justify-center"
-                      title={row.moreInfo || "No additional notes provided."}
-                    >
-                      <Info
-                        className={`w-5 h-5 ${
-                          isDayFrozen
-                            ? "text-slate-400"
-                            : "text-[#12a0e1] opacity-70 hover:opacity-100"
-                        } transition-opacity cursor-help`}
-                      />
-                    </div>
+                  <td className="p-2 border-r border-slate-100 align-middle w-[140px]">
+                    <textarea
+                      value={row.moreInfo || ""}
+                      onChange={(e) => updateRow(row.id, "moreInfo", e.target.value)}
+                      placeholder="Notes…"
+                      rows={2}
+                      disabled={isDayFrozen}
+                      className={`w-full text-[11px] bg-transparent border border-transparent rounded-lg px-2 py-1 resize-none transition-colors leading-relaxed placeholder:text-slate-300 ${
+                        isDayFrozen
+                          ? "text-slate-400 cursor-not-allowed"
+                          : "text-slate-700 hover:border-slate-200 focus:border-[#12a0e1] focus:bg-[#12a0e1]/5 outline-none"
+                      }`}
+                    />
                   </td>
 
-                  <td className="p-2 border-r border-emerald-100 align-middle w-[50px] text-center">
+                  <td className="p-2 border-r border-slate-100 align-middle w-[50px] text-center">
                     <input
                       type="checkbox"
                       checked={row.is3D}
@@ -2189,7 +2275,7 @@ export default function LegacyTimesheet({ wrikeData }) {
                     />
                   </td>
 
-                  <td className="p-2 border-r border-emerald-100 align-middle w-[90px] text-center">
+                  <td className="p-2 border-r border-slate-100 align-middle w-[90px] text-center">
                     <TableSearchableSelect
                       options={TIME_OPTIONS}
                       value={row.timeSpent}
@@ -2219,6 +2305,23 @@ export default function LegacyTimesheet({ wrikeData }) {
                   </td>
                 </tr>
               ))}
+              {/* Ghost Add Row */}
+              {!isDayFrozen && (
+                <tr
+                  className="group/addrow border-t border-dashed border-slate-200 cursor-pointer"
+                  onClick={handleAddRow}
+                >
+                  <td
+                    colSpan={COLUMNS.length + 1}
+                    className="px-4 py-3 text-center"
+                  >
+                    <span className="flex items-center justify-center gap-1.5 text-[11px] font-bold text-slate-300 group-hover/addrow:text-[#12a0e1] transition-colors">
+                      <Plus className="w-3.5 h-3.5" />
+                      Add row
+                    </span>
+                  </td>
+                </tr>
+              )}
             </tbody>
           </table>
 
@@ -2234,7 +2337,7 @@ export default function LegacyTimesheet({ wrikeData }) {
         </div>
 
         {/* Bottom Action Bar */}
-        <div className="absolute bottom-6 right-6 flex gap-3 z-30">
+        <div className="p-4 border-t border-slate-200 bg-slate-50 rounded-b-2xl flex flex-wrap gap-3 justify-between items-center">
           <button
             onClick={handleOpenWrikeModal}
             className="flex items-center gap-2 px-5 py-2.5 text-sm font-bold bg-[#1b202a] hover:bg-[#252a33] text-emerald-400 border border-[#2d3342] rounded-xl shadow-lg transition-all active:scale-95"
@@ -2242,23 +2345,7 @@ export default function LegacyTimesheet({ wrikeData }) {
             <LayoutList className="w-4 h-4" />
             Wrike Timesheets
           </button>
-
-          <button
-            onClick={toggleFreeze}
-            className={`flex items-center gap-2 px-5 py-2.5 text-sm font-bold rounded-xl shadow-lg transition-all active:scale-95 ${
-              isDayFrozen
-                ? "bg-slate-700 hover:bg-slate-800 text-white"
-                : "bg-white hover:bg-slate-50 border border-slate-200 text-slate-700"
-            }`}
-          >
-            {isDayFrozen ? (
-              <Lock className="w-4 h-4 text-amber-400" />
-            ) : (
-              <Unlock className="w-4 h-4 text-slate-400" />
-            )}
-            {isDayFrozen ? "Unlock Day" : "Freeze Day"}
-          </button>
-
+          <div className="flex gap-3 flex-wrap">
           <button
             onClick={handlePullTimes}
             disabled={isPulling || isDayFrozen}
@@ -2299,6 +2386,7 @@ export default function LegacyTimesheet({ wrikeData }) {
             <FileSpreadsheet className="w-4 h-4" />
             Export to Excel
           </button>
+          </div>
         </div>
       </div>
     </div>

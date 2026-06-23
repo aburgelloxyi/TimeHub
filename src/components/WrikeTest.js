@@ -10,26 +10,7 @@ import {
   ArrowUpDown,
   Filter,
 } from "lucide-react";
-import { FILM_MAPPINGS } from "../constants.js";
-
-// --- MOTION TEAM MAPPING ---
-const NAME_MAP = {
-  "Antonio Burgello": "Antonio 🐍",
-  "Antonio Burgello 🐍": "Antonio 🐍",
-  "Aaron Gunasingham": "Aaron 🦉",
-  "Aaron Gunasingham 🦉": "Aaron 🦉",
-  "Jacqui Harrington": "Jacqui 🐝",
-  "Jacqui Harrington 🐝": "Jacqui 🐝",
-  "Maria Cerrato": "Maria 🦊",
-  "Maria Cerrato 🦊": "Maria 🦊",
-  Nicholas: "Nicholas 😎",
-  "Nicholas 😎": "Nicholas 😎",
-  "Trott ⚡️": "Luke Trott 🐴",
-  "Luke Trott": "Luke Trott 🐴",
-  "Luke Trott 🐴": "Luke Trott 🐴",
-  Turk: "Turk 👻",
-  "Turk 👻": "Turk 👻",
-};
+import { FILM_MAPPINGS, MOTION_TEAM_NAME_MAP } from "../constants.js";
 
 export default function WrikeTest({
   wrikeData,
@@ -191,7 +172,7 @@ export default function WrikeTest({
           upperTitle.includes("DINTH") ||
           upperTitle.includes("MATRIX");
         const matchesAssignee = task.responsibleIds?.some(
-          (id) => contactDictionary[id] && NAME_MAP[contactDictionary[id]]
+          (id) => contactDictionary[id] && MOTION_TEAM_NAME_MAP[contactDictionary[id]]
         );
 
         let matchesDigitalTag = false;
@@ -215,7 +196,7 @@ export default function WrikeTest({
               subUpper.includes("DINTH") ||
               subUpper.includes("MATRIX");
             const subMatchesAssignee = subTask.responsibleIds?.some(
-              (id) => contactDictionary[id] && NAME_MAP[contactDictionary[id]]
+              (id) => contactDictionary[id] && MOTION_TEAM_NAME_MAP[contactDictionary[id]]
             );
             const subMatchesDigital = subTask.parentIds?.some((pId) =>
               folderDictionary[pId]?.title?.toUpperCase().includes("DIGITAL")

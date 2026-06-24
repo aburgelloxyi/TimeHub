@@ -2,8 +2,9 @@ import { useState, useEffect } from "react";
 import { DEFAULT_JOBS, DAYS_OF_WEEK } from "../constants";
 
 /**
- * All state and non-API logic for the Tracker component.
- * Keeps Tracker.jsx focused purely on rendering.
+ * All UI state for the Tracker component.
+ * Tasks are no longer stored here — they live in useTasks (Supabase-backed).
+ * Job options remain in localStorage as a UI convenience list.
  */
 export function useTrackerState() {
   // --- Form fields ---
@@ -34,20 +35,15 @@ export function useTrackerState() {
   });
   const [activeTab, setActiveTab] = useState("history");
 
-  // --- Tasks & job options (persisted) ---
-  const [tasks, setTasks] = useState(() => {
-    const saved = localStorage.getItem("xyi_timesheet_tasks_v5");
-    return saved ? JSON.parse(saved) : [];
-  });
+  // --- Job options (persisted locally — just a UI convenience dropdown list) ---
   const [jobOptions, setJobOptions] = useState(() => {
     const saved = localStorage.getItem("xyi_job_options_v5");
     return saved ? JSON.parse(saved) : DEFAULT_JOBS;
   });
 
   useEffect(() => {
-    localStorage.setItem("xyi_timesheet_tasks_v5", JSON.stringify(tasks));
     localStorage.setItem("xyi_job_options_v5", JSON.stringify(jobOptions));
-  }, [tasks, jobOptions]);
+  }, [jobOptions]);
 
   // --- Toast ---
   const [toast, setToast] = useState({ show: false, message: "", type: "error" });
@@ -88,28 +84,15 @@ export function useTrackerState() {
     addHours: 0, addMins: 0, addSecs: 0,
   });
 
-  // --- Timer interval ---
+  // --- Timer interval (only handles the running clock; history timer ticks
+  //     are handled in Tracker.jsx using updateTask from useTasks) ---
   useEffect(() => {
-    let interval;
-    if (isRunning && trackingSince) {
-      interval = setInterval(() => {
-        setElapsedTime(Math.floor((Date.now() - trackingSince) / 1000));
-      }, 1000);
-    }
-
-    if (historyTimer.taskId) {
-      if (!interval) interval = setInterval(() => {}, 1000);
-      setTasks((prevTasks) =>
-        prevTasks.map((t) => {
-          if (t.id === historyTimer.taskId && historyTimer.type === "additional") {
-            return { ...t, additionalSeconds: (t.additionalSeconds || 0) + 1 };
-          }
-          return t;
-        })
-      );
-    }
+    if (!isRunning || !trackingSince) return;
+    const interval = setInterval(() => {
+      setElapsedTime(Math.floor((Date.now() - trackingSince) / 1000));
+    }, 1000);
     return () => clearInterval(interval);
-  }, [isRunning, trackingSince, historyTimer]);
+  }, [isRunning, trackingSince]);
 
   return {
     // Form fields
@@ -132,8 +115,7 @@ export function useTrackerState() {
     // Day/Tab
     selectedDay, setSelectedDay,
     activeTab, setActiveTab,
-    // Tasks
-    tasks, setTasks,
+    // Job options
     jobOptions, setJobOptions,
     // Toast
     toast, setToast, triggerToast,

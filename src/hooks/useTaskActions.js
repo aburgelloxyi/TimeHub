@@ -16,7 +16,7 @@ export function useTaskActions(state) {
     setShowReward,
     retainJobNumber, retainTerritory, retainCategory,
     selectedDay,
-    tasks, setTasks,
+    tasks, setTasks, addTask, addTasks, updateTask, updateTasks, deleteTasks, importTasks,
     jobOptions, setJobOptions,
     triggerToast,
     setTriageQueue,
@@ -76,7 +76,7 @@ export function useTaskActions(state) {
       timeLogged: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
     };
 
-    setTasks([newTask, ...tasks]);
+    addTask(newTask);
     triggerToast(`Logged successfully to ${selectedDay}!`, "success");
     setShowReward(true);
     setTimeout(() => setShowReward(false), 1200);
@@ -179,7 +179,7 @@ export function useTaskActions(state) {
       });
 
       if (newTasksCount > 0) {
-        setTasks((prev) => [...newTasks, ...prev].sort((a, b) => b.id - a.id));
+        addTasks(newTasks);
         triggerToast(`Pulled ${newTasksCount} entries from today!`, "success");
 
         const needingTriage = newTasks.filter((t) => t.category === "⚠️ Unassigned");
@@ -220,13 +220,7 @@ export function useTaskActions(state) {
       return;
     }
     const taskIds = groupTasks.map((t) => t.id);
-    setTasks((prev) =>
-      prev.map((t) =>
-        taskIds.includes(t.id)
-          ? { ...t, jobNumber: editGroupForm.jobNumber, territory: editGroupForm.territory, category: editGroupForm.category }
-          : t
-      )
-    );
+    updateTasks(taskIds, { jobNumber: editGroupForm.jobNumber, territory: editGroupForm.territory, category: editGroupForm.category });
     if (editGroupForm.jobNumber && !jobOptions.includes(editGroupForm.jobNumber)) {
       setJobOptions((prev) => [...prev, editGroupForm.jobNumber]);
     }
@@ -249,13 +243,7 @@ export function useTaskActions(state) {
       triggerToast("Please select Job, Country, and Category to move this task.");
       return;
     }
-    setTasks((prev) =>
-      prev.map((t) =>
-        t.id === taskId
-          ? { ...t, jobNumber: editTaskForm.jobNumber, territory: editTaskForm.territory, category: editTaskForm.category }
-          : t
-      )
-    );
+    updateTask(taskId, { jobNumber: editTaskForm.jobNumber, territory: editTaskForm.territory, category: editTaskForm.category });
     if (editTaskForm.jobNumber && !jobOptions.includes(editTaskForm.jobNumber)) {
       setJobOptions((prev) => [...prev, editTaskForm.jobNumber]);
     }
@@ -286,9 +274,7 @@ export function useTaskActions(state) {
       parseInt(editTimeForm.addMins || 0) * 60 +
       parseInt(editTimeForm.addSecs || 0);
 
-    setTasks((prev) =>
-      prev.map((t) => t.id === id ? { ...t, rawSeconds: newRaw, additionalSeconds: newAdd } : t)
-    );
+    updateTask(id, { rawSeconds: newRaw, additionalSeconds: newAdd });
     setEditingTimeId(null);
     triggerToast("Time updated successfully!", "success");
   };
@@ -300,7 +286,7 @@ export function useTaskActions(state) {
   };
 
   const saveEditedNote = (id) => {
-    setTasks((prev) => prev.map((t) => t.id === id ? { ...t, notes: state.editNoteText } : t));
+    updateTask(id, { notes: state.editNoteText });
     setEditingNoteId(null);
     triggerToast("Note updated.", "success");
   };
@@ -311,7 +297,7 @@ export function useTaskActions(state) {
     if (historyTimer.taskId && itemToDelete.ids.includes(historyTimer.taskId)) {
       setHistoryTimer({ taskId: null, type: null });
     }
-    setTasks((prev) => prev.filter((t) => !itemToDelete.ids.includes(t.id)));
+    deleteTasks(itemToDelete.ids);
     triggerToast(
       itemToDelete.type === "group" ? "Batch deleted successfully." : "Subtask deleted successfully.",
       "success"
@@ -373,19 +359,15 @@ export function useTaskActions(state) {
     }
   };
 
-  const handlePasteImport = () => {
+  const handlePasteImport = async () => {
     try {
       const data = JSON.parse(pastedJson);
       const tasksToImport = data.rawTasks || data.tasks || [];
       if (data && tasksToImport) {
-        setTasks((prev) => {
-          const existingIds = new Set(prev.map((t) => t.id));
-          const newTasks = tasksToImport.filter((t) => !existingIds.has(t.id));
-          return [...newTasks, ...prev].sort((a, b) => b.id - a.id);
-        });
+        const count = await importTasks(tasksToImport);
         if (data.jobOptions) setJobOptions((prev) => [...new Set([...prev, ...data.jobOptions])]);
         setPastedJson("");
-        triggerToast("Data merged successfully from pasted text!", "success");
+        if (count > 0) triggerToast(`Merged ${count} new tasks successfully!`, "success");
       } else throw new Error("Invalid format");
     } catch {
       triggerToast("Invalid JSON syntax pasted.");
@@ -433,7 +415,7 @@ export function useTaskActions(state) {
       date: new Date().toLocaleDateString(),
       timeLogged: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
     };
-    setTasks([newTask, ...tasks]);
+    addTask(newTask);
     triggerToast(`Insta-Logged successfully to ${selectedDay}!`, "success");
     setShowReward(true);
     setTimeout(() => setShowReward(false), 1200);

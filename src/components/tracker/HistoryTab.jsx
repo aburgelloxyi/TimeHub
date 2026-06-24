@@ -9,6 +9,7 @@ import { formatTimerDisplay, getTimesheetValue } from "../../utils/timeHelpers";
 import { getBorderColorClass } from "../../utils/tagStyles";
 
 export default function HistoryTab({
+  loading,
   currentFilteredTasks, consolidatedGroups,
   editingGroupId, setEditingGroupId, editGroupForm, setEditGroupForm,
   editingTaskId, editTaskForm, setEditTaskForm,
@@ -21,6 +22,15 @@ export default function HistoryTab({
   startEditingNote, saveEditedNote,
   toggleHistoryTimer, setItemToDelete,
 }) {
+  if (loading) {
+    return (
+      <div className="py-24 flex flex-col items-center justify-center text-[#768994] text-center">
+        <div className="w-8 h-8 border-4 border-[#12a0e1]/30 border-t-[#12a0e1] rounded-full animate-spin mb-4" />
+        <p className="font-bold text-[#768994]">Loading from database...</p>
+      </div>
+    );
+  }
+
   if (currentFilteredTasks.length === 0) {
     return (
       <div className="py-24 flex flex-col items-center justify-center text-[#768994] text-center">

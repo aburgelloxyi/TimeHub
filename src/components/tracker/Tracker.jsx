@@ -71,7 +71,7 @@ export default function Tracker({ wrikeData }) {
   }, []);
 
   // Normalise a task regardless of whether it came from Tracker or Legacy
-  const getTerritory = (t) => t.territory || t.country || "Unknown Territory";
+  const getTerritory = (t) => t.territory || "Unknown Territory";
   const getRawSeconds = (t) => {
     if (t.rawSeconds) return t.rawSeconds;
     if (t.timeSpent && t.timeSpent !== "none") return Math.round(parseFloat(t.timeSpent) * 3600);

@@ -1,4 +1,4 @@
-import React from "react";
+import React, { useState, useEffect } from "react";
 import {
   X, Clock, CheckSquare, Film, Layers, Plus, CheckCircle,
   Activity, Calendar, Tag,
@@ -14,12 +14,98 @@ export default function RecentJobsModal({
   recentTaskDraft, setRecentTaskDraft,
   handleExpandRecentJob, handleConfirmRecentJob, handleInstaLogRecentJob,
 }) {
+  const [localData, setLocalData] = useState([]);
+  const [isFetching, setIsFetching] = useState(false);
+
+  useEffect(() => {
+    if (!showRecentJobsModal || !wrikeUser?.id) return;
+
+    const token = localStorage.getItem("wrike_personal_token");
+    if (!token) return;
+
+    setIsFetching(true);
+    const headers = { Authorization: `Bearer ${token}` };
+    const fields = encodeURIComponent("[description]");
+
+    Promise.all([
+      // Active tab: targeted, fast
+      fetch(`https://www.wrike.com/api/v4/tasks?responsibles=[${wrikeUser.id}]&status=Active&fields=${fields}&pageSize=500`, { headers }),
+      // Completed tab: all tasks assigned to user regardless of status, then filter for Delivered client-side
+      fetch(`https://www.wrike.com/api/v4/tasks?responsibles=[${wrikeUser.id}]&fields=${fields}&pageSize=1000`, { headers }),
+      fetch(`https://www.wrike.com/api/v4/workflows`, { headers }),
+    ])
+      .then(([aRes, cRes, wRes]) => Promise.all([aRes.json(), cRes.json(), wRes.json()]))
+      .then(([aJson, cJson, wJson]) => {
+        const statusNameMap = {};
+        (wJson.data || []).forEach((wf) => {
+          (wf.customStatuses || []).forEach((cs) => { statusNameMap[cs.id] = cs.name; });
+        });
+
+        const enrich = (task) => {
+          const customStatusName = task.customStatusId
+            ? (statusNameMap[task.customStatusId] || task.status)
+            : task.status;
+          const isDone = task.status === "Completed" ||
+            /^(delivered|completed|done|published)$/i.test(customStatusName);
+          const html = (task.description || "").replace(/<[^>]*>/g, " ");
+          const folderMatches = html.match(/\/Volumes\/[^\s]+/gi) || [];
+          // Count film name occurrences across ALL paths — most frequent = actual project, not a reference
+          let projectName = "";
+          const filmFreq = {};
+          for (const path of folderMatches) {
+            const parts = path.split("/");
+            const digIdx = parts.findIndex((p) => p.toUpperCase() === "DIGITAL");
+            if (digIdx > 0 && parts[digIdx - 1]) {
+              const name = decodeURIComponent(parts[digIdx - 1]).replace(/[_\-]/g, " ").trim();
+              filmFreq[name] = (filmFreq[name] || 0) + 1;
+            }
+          }
+          if (Object.keys(filmFreq).length > 0) {
+            projectName = Object.entries(filmFreq).sort((a, b) => b[1] - a[1])[0][0];
+          }
+          if (!projectName) {
+            const verbMatch = task.title.match(
+              /^(?:Edit|Design|Animation|Motion|Finish|Grade|Sound|Audio|VFX|Colourist|DI)\s*[-–]\s*(.+?)(?:\s*[-–]\s*.+)?$/i
+            );
+            if (verbMatch) projectName = verbMatch[1].trim();
+          }
+          if (!projectName) projectName = task.title.split(/[_\-]/)[0].trim() || "Other Projects";
+          return { ...task, customStatusName, isDone, projectName, assignees: [wrikeUser.firstName] };
+        };
+
+        const activeTasks = (aJson.data || []).map(enrich);
+        const completedTasks = (cJson.data || []).map(enrich).filter((t) => t.isDone);
+
+        // Merge, dedup by id — active tasks take priority if same id appears in both
+        const seen = new Set(activeTasks.map((t) => t.id));
+        const fetched = [...activeTasks, ...completedTasks.filter((t) => !seen.has(t.id))];
+
+        console.log("[RecentJobs] active:", activeTasks.length, "delivered:", completedTasks.length);
+        setLocalData(fetched);
+      })
+      .catch(console.error)
+      .finally(() => setIsFetching(false));
+  }, [showRecentJobsModal, wrikeUser?.id]);
+
   if (!showRecentJobsModal) return null;
 
-  const filteredTasks = (wrikeData || []).filter((t) => {
+  // Merge on-demand fetch with any pre-fetched wrikeData — wrikeData fills gaps (e.g. Delivered tasks our fetch misses)
+  const fetchedIds = new Set(localData.map((t) => t.id));
+  const wrikeExtras = (wrikeData || []).filter((t) => !fetchedIds.has(t.id)).map((t) => ({
+    ...t,
+    isDone: t.isDone !== undefined ? t.isDone : (t.status === "Completed" || t.status === "Delivered"),
+    assignees: t.assignees || (wrikeUser?.firstName ? [wrikeUser.firstName] : []),
+  }));
+  const dataSource = [...localData, ...wrikeExtras];
+
+  const filteredTasks = dataSource.filter((t) => {
     if (!t.assignees) return false;
-    if (recentJobsFilter === "Active" && t.status !== "Active") return false;
-    if (recentJobsFilter === "Completed" && t.status !== "Completed" && t.status !== "Delivered") return false;
+    // For on-demand fetched data use isDone; for wrikeData prop fallback use original status check
+    const done = t.isDone !== undefined
+      ? t.isDone
+      : (t.status === "Completed" || t.status === "Delivered");
+    if (recentJobsFilter === "Active" && done) return false;
+    if (recentJobsFilter === "Completed" && !done) return false;
     return wrikeUser?.firstName ? t.assignees.includes(wrikeUser.firstName) : true;
   });
 
@@ -28,13 +114,10 @@ export default function RecentJobsModal({
       const aIsMatrix = a.title?.toUpperCase().includes("MATRIX") ? 1 : 0;
       const bIsMatrix = b.title?.toUpperCase().includes("MATRIX") ? 1 : 0;
       if (aIsMatrix !== bIsMatrix) return aIsMatrix - bIsMatrix;
-
       if (recentJobsFilter === "Completed") {
         return new Date(b.completedDate || b.updatedDate || 0) - new Date(a.completedDate || a.updatedDate || 0);
       }
-      const dateA = a.dueDate && a.dueDate !== "No Due Date" ? new Date(a.dueDate) : Infinity;
-      const dateB = b.dueDate && b.dueDate !== "No Due Date" ? new Date(b.dueDate) : Infinity;
-      return dateA - dateB;
+      return new Date(b.updatedDate || 0) - new Date(a.updatedDate || 0);
     })
     .slice(0, 30);
 
@@ -46,29 +129,21 @@ export default function RecentJobsModal({
     return acc;
   }, {});
 
-  const getRelevantDate = (tasks) => {
-    if (recentJobsFilter === "Completed") {
-      return Math.max(...tasks.map((t) => new Date(t.completedDate || t.updatedDate || 0).getTime()));
-    }
-    return Math.min(...tasks.map((t) => t.dueDate && t.dueDate !== "No Due Date" ? new Date(t.dueDate).getTime() : Infinity));
-  };
+  const getRelevantDate = (tasks) =>
+    recentJobsFilter === "Completed"
+      ? Math.max(...tasks.map((t) => new Date(t.completedDate || t.updatedDate || 0).getTime()))
+      : Math.max(...tasks.map((t) => new Date(t.updatedDate || 0).getTime()));
 
-  const sortedCampaigns = Object.keys(grouped).sort((a, b) => {
-    const dateA = getRelevantDate(grouped[a]);
-    const dateB = getRelevantDate(grouped[b]);
-    if (dateA === dateB) return a.localeCompare(b);
-    return recentJobsFilter === "Completed" ? dateB - dateA : dateA - dateB;
-  });
+  const sortedCampaigns = Object.keys(grouped).sort((a, b) =>
+    getRelevantDate(grouped[b]) - getRelevantDate(grouped[a])
+  );
 
   const sortTasks = (tasks) =>
-    [...tasks].sort((a, b) => {
-      if (recentJobsFilter === "Completed") {
-        return new Date(b.completedDate || b.updatedDate || 0) - new Date(a.completedDate || a.updatedDate || 0);
-      }
-      const dateA = a.dueDate && a.dueDate !== "No Due Date" ? new Date(a.dueDate) : Infinity;
-      const dateB = b.dueDate && b.dueDate !== "No Due Date" ? new Date(b.dueDate) : Infinity;
-      return dateA - dateB;
-    });
+    [...tasks].sort((a, b) =>
+      recentJobsFilter === "Completed"
+        ? new Date(b.completedDate || b.updatedDate || 0) - new Date(a.completedDate || a.updatedDate || 0)
+        : new Date(b.updatedDate || 0) - new Date(a.updatedDate || 0)
+    );
 
   return (
     <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-[#122027]/60 backdrop-blur-sm animate-in fade-in duration-200">
@@ -111,13 +186,18 @@ export default function RecentJobsModal({
 
         {/* Task list */}
         <div className="overflow-y-auto pr-2 pb-2 space-y-3 flex-1 custom-scrollbar">
-          {filteredTasks.length === 0 ? (
+          {isFetching ? (
+            <div className="text-center py-10 text-[#768994]">
+              <div className="w-8 h-8 border-2 border-[#12a0e1] border-t-transparent rounded-full animate-spin mx-auto mb-3" />
+              <p className="font-bold text-sm">Fetching your Wrike tasks…</p>
+            </div>
+          ) : filteredTasks.length === 0 ? (
             <div className="text-center py-10 text-[#768994]">
               <Layers className="w-10 h-10 mx-auto opacity-20 mb-3" />
               <p className="font-bold">
                 {recentJobsFilter === "Active" ? "No active assigned Wrike tasks found." : "No completed Wrike tasks found."}
               </p>
-              <p className="text-sm mt-1">Please fetch data in the Wrike API tab first.</p>
+              <p className="text-sm mt-1">Make sure your Wrike token is saved and you have tasks assigned to you.</p>
             </div>
           ) : (
             sortedCampaigns.map((campaign) => {
@@ -165,16 +245,17 @@ export default function RecentJobsModal({
                                 <div className="flex items-center gap-2 ml-auto sm:ml-2">
                                   {recentJobsFilter === "Completed" && formattedCompletedDate ? (
                                     <span className="flex items-center gap-1 text-[10px] font-bold text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200 shadow-sm" title="Date Delivered">
-                                      <CheckCircle className="w-3 h-3" /> {formattedCompletedDate}
+                                      <CheckCircle className="w-3 h-3" /> Delivered {formattedCompletedDate}
                                     </span>
-                                  ) : (
-                                    <span className="flex items-center gap-1 text-[10px] font-bold text-indigo-500 bg-indigo-50 px-2 py-0.5 rounded border border-indigo-200 shadow-sm" title="Last Updated">
-                                      <Activity className="w-3 h-3" /> Last Update: {formattedUpdatedDate || "Unknown"}
+                                  ) : null}
+                                  <span className="flex items-center gap-1 text-[10px] font-bold text-indigo-500 bg-indigo-50 px-2 py-0.5 rounded border border-indigo-200 shadow-sm" title="Last Updated">
+                                    <Activity className="w-3 h-3" /> Updated {formattedUpdatedDate || "Unknown"}
+                                  </span>
+                                  {task.dueDate && task.dueDate !== "No Due Date" && (
+                                    <span className="flex items-center gap-1 text-[10px] font-bold text-[#768994] bg-white px-2 py-0.5 rounded border border-slate-200 shadow-sm">
+                                      <Calendar className="w-3 h-3" /> Due {formattedDueDate}
                                     </span>
                                   )}
-                                  <span className="flex items-center gap-1 text-[10px] font-bold text-[#768994] bg-white px-2 py-0.5 rounded border border-slate-200 shadow-sm">
-                                    <Calendar className="w-3 h-3" /> Due: {formattedDueDate}
-                                  </span>
                                 </div>
                               </div>
                               <div className={`text-sm font-bold transition-colors ${isExpanded ? "text-[#12a0e1]" : isMatrix ? "text-slate-500 group-hover:text-[#12a0e1]" : "text-[#122027] group-hover:text-[#12a0e1]"}`}>

@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useMemo } from "react";
 import { useLegacyRows } from "../hooks/useLegacyRows";
 import { setWrikeUserId as stampWrikeUserId, fetchExistingTimelogIds } from "../lib/supabaseClient";
 import {
@@ -14,6 +14,7 @@ import {
   AlertCircle,
   Copy,
   Plus,
+  Layers,
 } from "lucide-react";
 import {
   DEFAULT_JOBS,
@@ -31,7 +32,7 @@ const COLUMNS = [
   "Country",
   "Category",
   "Client Amends",
-  "More Info",
+  "Notes",
   "3D",
   "Time Spent",
   "Additional Time",
@@ -463,14 +464,13 @@ export default function LegacyTimesheet({ wrikeData }) {
       client: "",
       filmTitle: "",
       projectDescription: "",
-      country: "",
+      territory: "",
       category: "",
       clientAmends: false,
-      moreInfo: "",
+      notes: "",
       is3D: false,
       timeSpent: "none",
       additionalTime: "none",
-      isSaved: false,
     });
   };
 
@@ -997,7 +997,7 @@ export default function LegacyTimesheet({ wrikeData }) {
     );
 
     if (value === "none") {
-      if (existingRow && !existingRow.isSaved) {
+      if (existingRow) {
         deleteRow(existingRow.id);
       }
       return;
@@ -1015,14 +1015,12 @@ export default function LegacyTimesheet({ wrikeData }) {
         client: task.client,
         filmTitle: task.filmTitle,
         projectDescription: task.projectDescription,
-        country: task.wrikeLocation,
+        territory: task.wrikeLocation,
         category: task.wrikeCategory,
         clientAmends: false,
-        moreInfo: "Added from Wrike View",
         is3D: false,
         timeSpent: value,
         additionalTime: "none",
-        isSaved: false,
       };
       addRow(newRow);
     }
@@ -1296,14 +1294,13 @@ export default function LegacyTimesheet({ wrikeData }) {
           client: client,
           filmTitle: filmTitle,
           projectDescription: guessed.notes,
-          country: guessed.territory,
+          territory: guessed.territory,
           category: guessed.category,
           clientAmends: false,
-          moreInfo: log.comment || "Wrike Timelog Pull",
+          notes: log.comment || "",
           is3D: false,
           timeSpent: getTimesheetValue(log.hours),
           additionalTime: "none",
-          isSaved: true,
         });
       });
 
@@ -1335,10 +1332,10 @@ export default function LegacyTimesheet({ wrikeData }) {
         `"${row.client}"`,
         `"${row.filmTitle}"`,
         `"${row.projectDescription?.replace(/"/g, '""') || ""}"`,
-        `"${row.country}"`,
+        `"${row.territory}"`,
         `"${row.category}"`,
         row.clientAmends ? "Yes" : "No",
-        `"${row.moreInfo?.replace(/"/g, '""') || ""}"`,
+        `"${(row.notes ?? "").replace(/"/g, '""')}"`,
         row.is3D ? "Yes" : "No",
         row.timeSpent,
         row.additionalTime,
@@ -1374,7 +1371,7 @@ export default function LegacyTimesheet({ wrikeData }) {
             ? 0
             : parseFloat(row.additionalTime) * 3600;
 
-        let exportTerritory = row.country || "";
+        let exportTerritory = row.territory || "";
         if (exportTerritory === "UK") exportTerritory = "United Kingdom";
         else if (exportTerritory === "USA" || exportTerritory === "US")
           exportTerritory = "United States";
@@ -1387,13 +1384,7 @@ export default function LegacyTimesheet({ wrikeData }) {
           jobNumber: row.jobNumber || "",
           territory: exportTerritory,
           category: row.category || "",
-          notes:
-            (row.projectDescription || "") +
-            (row.moreInfo &&
-            row.moreInfo !== "Wrike Timelog Pull" &&
-            row.moreInfo !== "Added from Wrike View"
-              ? ` | ${row.moreInfo}`
-              : ""),
+          notes: (row.projectDescription || "") + (row.notes ? ` | ${row.notes}` : ""),
           dayOfWeek: row.dayOfWeek || activeDay,
           rawSeconds: rawSecs,
           additionalSeconds: addSecs,
@@ -1485,8 +1476,35 @@ export default function LegacyTimesheet({ wrikeData }) {
   const currentDayRows = rows.filter((r) => r.dayOfWeek === activeDay);
   const isDayFrozen = frozenDays[activeDay] || false;
 
+  const [consolidatedView, setConsolidatedView] = useState(false);
+
+  const consolidatedRows = useMemo(() => {
+    const groups = {};
+    currentDayRows.forEach((row) => {
+      const key = `${row.jobNumber}|||${row.territory}|||${row.category}`;
+      if (!groups[key]) {
+        groups[key] = { ...row, _timeSpent: 0, _additionalTime: 0, _notes: new Set(), _count: 0 };
+      }
+      const ts = row.timeSpent && row.timeSpent !== "none" ? parseFloat(row.timeSpent) : 0;
+      const at = row.additionalTime && row.additionalTime !== "none" ? parseFloat(row.additionalTime) : 0;
+      groups[key]._timeSpent += ts;
+      groups[key]._additionalTime += at;
+      if (row.notes) groups[key]._notes.add(row.notes);
+      groups[key]._count += 1;
+    });
+    return Object.values(groups).map((g) => ({
+      ...g,
+      timeSpent: g._timeSpent > 0 ? g._timeSpent.toString() : "none",
+      additionalTime: g._additionalTime > 0 ? g._additionalTime.toString() : "none",
+      notes: [...g._notes].filter(Boolean).join(" | "),
+    }));
+  }, [currentDayRows]);
+
+  const displayRows = consolidatedView ? consolidatedRows : currentDayRows;
+  const rowsAreEditable = !isDayFrozen && !consolidatedView;
+
   const textAreaClass = `w-full bg-transparent border border-transparent hover:border-slate-300 focus:border-[#12a0e1] focus:ring-2 focus:ring-[#12a0e1]/20 outline-none text-[12px] text-slate-800 font-medium p-2 transition-all rounded-md resize-none overflow-hidden leading-tight ${
-    isDayFrozen ? "opacity-60 cursor-not-allowed" : ""
+    !rowsAreEditable ? "opacity-60 cursor-not-allowed" : ""
   }`;
 
   return (
@@ -2067,7 +2085,26 @@ export default function LegacyTimesheet({ wrikeData }) {
         </div>
 
         {/* Freeze toggle strip */}
-        <div className="bg-white border-b border-slate-100 px-4 py-1.5 flex items-center justify-end gap-2">
+        <div className="bg-white border-b border-slate-100 px-4 py-1.5 flex items-center justify-end gap-4">
+          {/* Consolidated view toggle */}
+          <div className="flex items-center gap-2">
+            <Layers className={`w-3.5 h-3.5 ${consolidatedView ? "text-[#12a0e1]" : "text-slate-400"}`} />
+            <span className={`text-[11px] font-bold transition-colors ${consolidatedView ? "text-[#12a0e1]" : "text-slate-400"}`}>
+              Consolidated
+            </span>
+            <button
+              onClick={() => setConsolidatedView((v) => !v)}
+              title="Merge rows with same job, country & category"
+              className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors focus:outline-none ${
+                consolidatedView ? "bg-[#12a0e1]" : "bg-slate-200 hover:bg-slate-300"
+              }`}
+            >
+              <span className={`inline-block h-3.5 w-3.5 rounded-full bg-white shadow transition-transform ${
+                consolidatedView ? "translate-x-4" : "translate-x-0.5"
+              }`} />
+            </button>
+          </div>
+          <div className="w-px h-4 bg-slate-200" />
           <span className={`text-[11px] font-bold transition-colors ${isDayFrozen ? "text-amber-500" : "text-slate-400"}`}>
             {isDayFrozen ? `${activeDay} is locked` : `Lock ${activeDay}`}
           </span>
@@ -2103,27 +2140,27 @@ export default function LegacyTimesheet({ wrikeData }) {
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
-              {currentDayRows.map((row) => (
+              {displayRows.map((row) => (
                 <tr
                   key={row.id}
                   className={`timesheet-row transition-colors group relative ${
-                    isDayFrozen ? "frozen-row" : ""
+                    !rowsAreEditable ? "frozen-row" : ""
                   }`}
                 >
                   <td className="p-2 border-r border-slate-100 align-middle min-w-[240px]">
                     <div className="flex items-start gap-2 pl-1">
                       <button
                         onClick={() => handleDeleteRow(row.id)}
-                        disabled={isDayFrozen}
+                        disabled={!rowsAreEditable}
                         className={`mt-1.5 transition-opacity ${
-                          isDayFrozen
+                          !rowsAreEditable
                             ? "opacity-20 cursor-not-allowed"
                             : "opacity-50 hover:opacity-100"
                         }`}
                       >
                         <XCircle
                           className={`w-5 h-5 ${
-                            isDayFrozen
+                            !rowsAreEditable
                               ? "text-slate-400"
                               : "text-rose-500 fill-rose-100"
                           }`}
@@ -2142,11 +2179,16 @@ export default function LegacyTimesheet({ wrikeData }) {
                           activeDropdown={activeDropdown}
                           setActiveDropdown={setActiveDropdown}
                           isJob={true}
-                          disabled={isDayFrozen}
+                          disabled={!rowsAreEditable}
                         />
-                        {row.isSaved && (
+                        {row.wrikeTimelogId && (
                           <span className="text-[10px] font-bold text-emerald-600 ml-2 mt-0.5 flex items-center gap-1 opacity-80">
                             <CheckCircle className="w-3 h-3" /> Wrike Synced
+                          </span>
+                        )}
+                        {consolidatedView && row._count > 1 && (
+                          <span className="text-[10px] font-bold text-[#12a0e1] ml-2 mt-0.5 flex items-center gap-1 opacity-80">
+                            <Layers className="w-3 h-3" /> {row._count} rows merged
                           </span>
                         )}
                       </div>
@@ -2156,7 +2198,7 @@ export default function LegacyTimesheet({ wrikeData }) {
                   <td className="p-2 border-r border-slate-100 align-middle w-[140px]">
                     <div
                       className={`text-[12px] leading-tight font-semibold px-2 ${
-                        isDayFrozen ? "text-slate-500" : "text-slate-700"
+                        !rowsAreEditable ? "text-slate-500" : "text-slate-700"
                       }`}
                     >
                       {row.client}
@@ -2166,7 +2208,7 @@ export default function LegacyTimesheet({ wrikeData }) {
                   <td className="p-2 border-r border-slate-100 align-middle w-[150px]">
                     <div
                       className={`text-[12px] leading-tight font-black px-2 ${
-                        isDayFrozen ? "text-slate-600" : "text-slate-900"
+                        !rowsAreEditable ? "text-slate-600" : "text-slate-900"
                       }`}
                     >
                       {row.filmTitle}
@@ -2182,22 +2224,22 @@ export default function LegacyTimesheet({ wrikeData }) {
                       }
                       className={textAreaClass}
                       placeholder="Project description..."
-                      disabled={isDayFrozen}
+                      disabled={!rowsAreEditable}
                     />
                   </td>
 
                   <td className="p-2 border-r border-slate-100 align-middle w-[140px]">
                     <TableSearchableSelect
                       options={TERRITORIES}
-                      value={row.country}
-                      onChange={(val) => handleUpdateRow(row.id, "country", val)}
+                      value={row.territory}
+                      onChange={(val) => handleUpdateRow(row.id, "territory", val)}
                       placeholder="Country"
                       getPrefix={(val) => TERRITORY_FLAGS[val]}
                       dropdownId={`country-${row.id}`}
                       activeDropdown={activeDropdown}
                       setActiveDropdown={setActiveDropdown}
                       isCountry={true}
-                      disabled={isDayFrozen}
+                      disabled={!rowsAreEditable}
                     />
                   </td>
 
@@ -2212,7 +2254,7 @@ export default function LegacyTimesheet({ wrikeData }) {
                       activeDropdown={activeDropdown}
                       setActiveDropdown={setActiveDropdown}
                       isCategory={true}
-                      disabled={isDayFrozen}
+                      disabled={!rowsAreEditable}
                     />
                   </td>
 
@@ -2224,23 +2266,23 @@ export default function LegacyTimesheet({ wrikeData }) {
                         handleUpdateRow(row.id, "clientAmends", e.target.checked)
                       }
                       className={`w-4 h-4 rounded text-[#12a0e1] focus:ring-[#12a0e1] ${
-                        isDayFrozen
+                        !rowsAreEditable
                           ? "opacity-50 cursor-not-allowed"
                           : "cursor-pointer"
                       }`}
-                      disabled={isDayFrozen}
+                      disabled={!rowsAreEditable}
                     />
                   </td>
 
                   <td className="p-2 border-r border-slate-100 align-middle w-[140px]">
                     <textarea
-                      value={row.moreInfo || ""}
-                      onChange={(e) => handleUpdateRow(row.id, "moreInfo", e.target.value)}
+                      value={row.notes || ""}
+                      onChange={(e) => handleUpdateRow(row.id, "notes", e.target.value)}
                       placeholder="Notes…"
                       rows={2}
-                      disabled={isDayFrozen}
+                      disabled={!rowsAreEditable}
                       className={`w-full text-[11px] bg-transparent border border-transparent rounded-lg px-2 py-1 resize-none transition-colors leading-relaxed placeholder:text-slate-300 ${
-                        isDayFrozen
+                        !rowsAreEditable
                           ? "text-slate-400 cursor-not-allowed"
                           : "text-slate-700 hover:border-slate-200 focus:border-[#12a0e1] focus:bg-[#12a0e1]/5 outline-none"
                       }`}
@@ -2255,11 +2297,11 @@ export default function LegacyTimesheet({ wrikeData }) {
                         handleUpdateRow(row.id, "is3D", e.target.checked)
                       }
                       className={`w-4 h-4 rounded text-[#12a0e1] focus:ring-[#12a0e1] ${
-                        isDayFrozen
+                        !rowsAreEditable
                           ? "opacity-50 cursor-not-allowed"
                           : "cursor-pointer"
                       }`}
-                      disabled={isDayFrozen}
+                      disabled={!rowsAreEditable}
                     />
                   </td>
 
@@ -2273,7 +2315,7 @@ export default function LegacyTimesheet({ wrikeData }) {
                       activeDropdown={activeDropdown}
                       setActiveDropdown={setActiveDropdown}
                       isTime={true}
-                      disabled={isDayFrozen}
+                      disabled={!rowsAreEditable}
                     />
                   </td>
                   <td className="p-2 align-middle w-[90px] text-center">
@@ -2288,13 +2330,13 @@ export default function LegacyTimesheet({ wrikeData }) {
                       activeDropdown={activeDropdown}
                       setActiveDropdown={setActiveDropdown}
                       isTime={true}
-                      disabled={isDayFrozen}
+                      disabled={!rowsAreEditable}
                     />
                   </td>
                 </tr>
               ))}
               {/* Ghost Add Row */}
-              {!isDayFrozen && (
+              {rowsAreEditable && (
                 <tr
                   className="group/addrow border-t border-dashed border-slate-200 cursor-pointer"
                   onClick={handleAddRow}
@@ -2313,7 +2355,7 @@ export default function LegacyTimesheet({ wrikeData }) {
             </tbody>
           </table>
 
-          {currentDayRows.length === 0 && !isPulling && (
+          {displayRows.length === 0 && !isPulling && (
             <div className="flex flex-col items-center justify-center py-20 text-slate-400 w-full left-0 right-0 absolute">
               <RefreshCw className="w-10 h-10 mb-4 opacity-20" />
               <p className="text-sm font-bold text-slate-500 font-sans">

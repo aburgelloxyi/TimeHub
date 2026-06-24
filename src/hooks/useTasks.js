@@ -3,6 +3,9 @@ import { supabase } from "../lib/supabaseClient";
 
 // --- Translators ---
 
+const secsToHours = (s) => (s > 0 ? (s / 3600).toFixed(4) : null);
+const hoursToSecs = (h) => (h && h !== "none" ? Math.round(parseFloat(h) * 3600) : 0);
+
 const toDb = (task) => ({
   id: task.id,
   source: task.source || "tracker",
@@ -12,24 +15,18 @@ const toDb = (task) => ({
   category: task.category ?? null,
   day_of_week: task.dayOfWeek ?? null,
   date: task.date ?? null,
-  time_logged: task.timeLogged ?? null,
-  // Tracker fields
   territory: task.territory ?? null,
   notes: task.notes ?? null,
-  raw_seconds: task.rawSeconds ?? null,
-  additional_seconds: task.additionalSeconds ?? null,
   wrike_timelog_id: task.wrikeTimelogId ?? null,
+  // Time: DB stores decimal hours; in-memory uses seconds
+  time_spent: task.timeSpent ?? secsToHours(task.rawSeconds ?? 0),
+  additional_time: task.additionalTime ?? secsToHours(task.additionalSeconds ?? 0),
   // Legacy fields
-  country: task.country ?? null,
   film_title: task.filmTitle ?? null,
   client: task.client ?? null,
   project_description: task.projectDescription ?? null,
-  more_info: task.moreInfo ?? null,
-  time_spent: task.timeSpent ?? null,
-  additional_time: task.additionalTime ?? null,
   client_amends: task.clientAmends ?? false,
   is_3d: task.is3D ?? false,
-  is_saved: task.isSaved ?? false,
   task_id: task.taskId ?? null,
 });
 
@@ -42,24 +39,20 @@ const fromDb = (row) => ({
   category: row.category,
   dayOfWeek: row.day_of_week,
   date: row.date,
-  timeLogged: row.time_logged,
-  // Tracker fields
   territory: row.territory,
   notes: row.notes,
-  rawSeconds: row.raw_seconds ?? 0,
-  additionalSeconds: row.additional_seconds ?? 0,
   wrikeTimelogId: row.wrike_timelog_id,
+  // Time: decimal hours from DB, seconds derived for in-memory use
+  timeSpent: row.time_spent,
+  additionalTime: row.additional_time,
+  rawSeconds: hoursToSecs(row.time_spent),
+  additionalSeconds: hoursToSecs(row.additional_time),
   // Legacy fields
-  country: row.country,
   filmTitle: row.film_title,
   client: row.client,
   projectDescription: row.project_description,
-  moreInfo: row.more_info,
-  timeSpent: row.time_spent,
-  additionalTime: row.additional_time,
   clientAmends: row.client_amends ?? false,
   is3D: row.is_3d ?? false,
-  isSaved: row.is_saved ?? false,
   taskId: row.task_id,
 });
 
@@ -138,16 +131,26 @@ export function useTasks(triggerToast, source = null, wrikeUserId = null) {
 
     const KEY_MAP = {
       jobNumber: "job_number", territory: "territory", category: "category",
-      notes: "notes", dayOfWeek: "day_of_week", rawSeconds: "raw_seconds",
-      additionalSeconds: "additional_seconds",
-      country: "country", filmTitle: "film_title", client: "client",
-      projectDescription: "project_description", moreInfo: "more_info",
+      notes: "notes", dayOfWeek: "day_of_week",
+      filmTitle: "film_title", client: "client",
+      projectDescription: "project_description",
       timeSpent: "time_spent", additionalTime: "additional_time",
-      clientAmends: "client_amends", is3D: "is_3d", isSaved: "is_saved",
+      clientAmends: "client_amends", is3D: "is_3d",
     };
 
+    // Convert in-memory seconds to decimal hours before persisting
+    const resolved = { ...changes };
+    if ("rawSeconds" in resolved) {
+      resolved.timeSpent = secsToHours(resolved.rawSeconds ?? 0);
+      delete resolved.rawSeconds;
+    }
+    if ("additionalSeconds" in resolved) {
+      resolved.additionalTime = secsToHours(resolved.additionalSeconds ?? 0);
+      delete resolved.additionalSeconds;
+    }
+
     const dbChanges = {};
-    for (const [key, val] of Object.entries(changes)) {
+    for (const [key, val] of Object.entries(resolved)) {
       if (KEY_MAP[key]) dbChanges[KEY_MAP[key]] = val;
     }
 
@@ -162,8 +165,8 @@ export function useTasks(triggerToast, source = null, wrikeUserId = null) {
     setTasks((prev) => prev.map((t) => (ids.includes(t.id) ? { ...t, ...changes } : t)));
     const KEY_MAP = {
       jobNumber: "job_number", territory: "territory", category: "category",
-      country: "country", filmTitle: "film_title", client: "client",
-      projectDescription: "project_description", moreInfo: "more_info",
+      filmTitle: "film_title", client: "client",
+      projectDescription: "project_description",
     };
     const dbChanges = {};
     for (const [key, val] of Object.entries(changes)) {

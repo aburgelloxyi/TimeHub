@@ -1,31 +1,28 @@
 import { useCallback, useMemo } from "react";
 import { useTasks } from "./useTasks";
 
-// Legacy time values are decimal hours in 0.5h steps (0.5 = 30min, 1.5 = 1h30m)
-const toSeconds = (val) => {
-  if (!val || val === "none") return 0;
-  return Math.round(parseFloat(val) * 3600);
+// Round to nearest 0.5h step — Legacy timesheet format requires half-hour increments
+const roundHalf = (val) => {
+  if (!val || val === "none") return val;
+  const n = parseFloat(val);
+  if (isNaN(n) || n <= 0) return val;
+  return (Math.round(n * 2) / 2).toString();
 };
 
-// Round seconds to nearest 0.5h step and return as decimal string
-const secondsToDecimalRounded = (s) => {
-  const halfHours = Math.round(s / 1800); // 1800s = 30min
-  return (halfHours / 2).toString();
-};
-
-// Normalise a legacy row so it stores seconds like tracker rows do
+// Normalise a legacy row on add/read — useTasks.fromDb already handles seconds↔hours
 const normaliseLegacyRow = (row) => ({
   ...row,
-  // Keep territory and country in sync regardless of which page wrote the row
-  territory: row.territory || row.country || "",
-  country: row.country || row.territory || "",
-  // Convert HH.MM → seconds (Legacy path)
-  rawSeconds: row.rawSeconds || toSeconds(row.timeSpent),
-  additionalSeconds: row.additionalSeconds || toSeconds(row.additionalTime),
-  // Derive rounded decimal-hour values for Tracker rows that only have seconds
-  timeSpent: row.timeSpent || (row.rawSeconds ? secondsToDecimalRounded(row.rawSeconds) : ""),
-  additionalTime: row.additionalTime || (row.additionalSeconds ? secondsToDecimalRounded(row.additionalSeconds) : ""),
-  // Auto-derive project description from job number (same logic as handleUpdateRow)
+  territory: row.territory || "",
+  // Round to 0.5h steps for Legacy timesheet display
+  timeSpent: roundHalf(row.timeSpent) || row.timeSpent || "none",
+  additionalTime: row.additionalTime && row.additionalTime !== "none"
+    ? (roundHalf(row.additionalTime) || "none")
+    : (row.additionalTime || "none"),
+  // Derive rawSeconds from the rounded timeSpent for in-memory use
+  rawSeconds: row.rawSeconds || (row.timeSpent && row.timeSpent !== "none"
+    ? Math.round(parseFloat(roundHalf(row.timeSpent) || row.timeSpent) * 3600)
+    : 0),
+  // Auto-derive project description from job number
   projectDescription: row.projectDescription ||
     (row.jobNumber?.includes(",") ? row.jobNumber.substring(row.jobNumber.indexOf(",") + 1).trim() : ""),
 });
@@ -59,14 +56,9 @@ export function useLegacyRows(triggerToast, wrikeUserId = null) {
 
   // Update a single field on a row (called as updateRow(id, field, value))
   const updateRow = useCallback(async (id, field, value) => {
-    // Keep territory and country in sync
+    // "country" was merged into "territory" — treat them as the same field
     if (field === "country") {
-      await updateTask(id, { country: value, territory: value });
-    // Convert timeSpent decimal hours to rawSeconds on save
-    } else if (field === "timeSpent") {
-      await updateTask(id, { timeSpent: value, rawSeconds: toSeconds(value) });
-    } else if (field === "additionalTime") {
-      await updateTask(id, { additionalTime: value, additionalSeconds: toSeconds(value) });
+      await updateTask(id, { territory: value });
     } else {
       await updateTask(id, { [field]: value });
     }
@@ -77,7 +69,7 @@ export function useLegacyRows(triggerToast, wrikeUserId = null) {
     await deleteTasks([id]);
   }, [deleteTasks]);
 
-  // Normalise on read so Tracker rows get country/timeSpent derived correctly
+  // Normalise on read (projectDescription auto-derive)
   const normalisedRows = useMemo(() => rows.map(normaliseLegacyRow), [rows]);
 
   return {

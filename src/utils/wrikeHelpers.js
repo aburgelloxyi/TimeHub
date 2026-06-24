@@ -26,16 +26,28 @@ export const guessFieldsFromTask = (linkedTask, jobOptions = [], extraText = "")
     if (!projectText) projectText = titleText.split(/[_|-]/)[0]?.trim() || "";
   }
 
-  // Derive film title: folder immediately before "DIGITAL" in the path, or
-  // fall back to the pre-enriched projectName, or first segment of task title
+  // Derive film title: most-frequent folder before "DIGITAL" across all paths (avoids reference paths)
   let filmTitle = linkedTask.projectName || "";
   if (!filmTitle && pathText) {
-    const parts = pathText.split("/");
-    const digIdx = parts.findIndex((p) => p.trim() === "DIGITAL");
-    if (digIdx > 0 && parts[digIdx - 1]) {
-      filmTitle = decodeURIComponent(parts[digIdx - 1])
-        .replace(/[_|-]/g, " ")
-        .trim();
+    const pathSegments = pathText.match(/\/Volumes\/[^\s]+/gi) || [];
+    const filmFreq = {};
+    for (const path of pathSegments) {
+      const parts = path.split("/");
+      const digIdx = parts.findIndex((p) => p.trim().toUpperCase() === "DIGITAL");
+      if (digIdx > 0 && parts[digIdx - 1]) {
+        const name = decodeURIComponent(parts[digIdx - 1]).replace(/[_\-]/g, " ").trim();
+        filmFreq[name] = (filmFreq[name] || 0) + 1;
+      }
+    }
+    if (Object.keys(filmFreq).length > 0) {
+      filmTitle = Object.entries(filmFreq).sort((a, b) => b[1] - a[1])[0][0];
+    }
+    if (!filmTitle) {
+      const parts = pathText.split("/");
+      const digIdx = parts.findIndex((p) => p.trim().toUpperCase() === "DIGITAL");
+      if (digIdx > 0 && parts[digIdx - 1]) {
+        filmTitle = decodeURIComponent(parts[digIdx - 1]).replace(/[_\-]/g, " ").trim();
+      }
     }
   }
   if (!filmTitle) filmTitle = titleText.split(/[_|-]/)[0]?.trim() || "";

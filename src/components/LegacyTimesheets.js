@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from "react";
+import React, { useState, useEffect, useLayoutEffect, useMemo, useRef } from "react";
 import { useLegacyRows } from "../hooks/useLegacyRows";
 import { setWrikeUserId as stampWrikeUserId, fetchExistingTimelogIds } from "../lib/supabaseClient";
 import {
@@ -113,10 +113,38 @@ const TableSearchableSelect = ({
 }) => {
   const isOpen = activeDropdown === dropdownId && !disabled;
   const [searchTerm, setSearchTerm] = useState(value || "");
+  const wrapperRef = useRef(null);
+  const [fixedStyle, setFixedStyle] = useState({});
 
   useEffect(() => {
     setSearchTerm(value || "");
   }, [value]);
+
+  // Compute fixed position on open so the dropdown escapes any overflow container.
+  // useLayoutEffect fires before paint so the dropdown never renders at position 0,0.
+  useLayoutEffect(() => {
+    if (!isOpen || !wrapperRef.current) return;
+    const rect = wrapperRef.current.getBoundingClientRect();
+    const vw = window.innerWidth;
+    const vh = window.innerHeight;
+
+    let w = 300;
+    if (isCountry) w = Math.min(800, vw - 16);
+    else if (isCategory) w = Math.min(750, vw - 16);
+    else if (isTime) w = 160;
+
+    const rightAlign = isTime || (isCategory && !isDarkModal);
+    let left = rightAlign ? rect.right - w : rect.left;
+    left = Math.max(4, Math.min(left, vw - w - 4));
+
+    const spaceBelow = vh - rect.bottom;
+    const flipUp = spaceBelow < 220 && rect.top > spaceBelow;
+    const vertical = flipUp
+      ? { bottom: vh - rect.top + 4 }
+      : { top: rect.bottom + 4 };
+
+    setFixedStyle({ position: "fixed", zIndex: 999999, left, width: w, ...vertical });
+  }, [isOpen, isTime, isCountry, isCategory, isDarkModal]);
 
   const filteredOptions = options.filter((opt) => {
     if (searchTerm === value) return true;
@@ -145,23 +173,12 @@ const TableSearchableSelect = ({
     return opt;
   };
 
-  let containerClass = "min-w-[300px] w-full left-0";
   let gridClass = "grid-cols-1";
-
-  if (isCountry) {
-    containerClass = "w-[400px] lg:w-[800px] left-0";
-    gridClass = "grid-cols-2 sm:grid-cols-3 lg:grid-cols-4";
-  } else if (isCategory) {
-    containerClass = `w-[300px] sm:w-[500px] lg:w-[750px] ${
-      isDarkModal ? "left-0" : "right-0"
-    }`;
-  } else if (isTime) {
-    containerClass = "w-[160px] right-0";
-    gridClass = "grid-cols-2";
-  }
+  if (isCountry) gridClass = "grid-cols-2 sm:grid-cols-3 lg:grid-cols-4";
+  else if (isTime) gridClass = "grid-cols-2";
 
   return (
-    <div className={`relative w-full ${isOpen ? "z-[999999]" : "z-50"}`}>
+    <div ref={wrapperRef} className={`relative w-full ${isOpen ? "z-[999999]" : "z-50"}`}>
       {isOpen && (
         <div
           className="fixed inset-0 z-40"
@@ -237,7 +254,8 @@ const TableSearchableSelect = ({
 
       {isOpen && (
         <div
-          className={`absolute top-full mt-1.5 border shadow-2xl z-[999999] max-h-[350px] overflow-y-auto custom-scrollbar animate-in fade-in slide-in-from-top-2 duration-200 rounded-2xl ${containerClass} ${
+          style={fixedStyle}
+          className={`border shadow-2xl max-h-[350px] overflow-y-auto custom-scrollbar animate-in fade-in slide-in-from-top-2 duration-200 rounded-2xl ${
             isDarkModal
               ? "bg-[#19202b] border-[#2d3748]"
               : "bg-white border-slate-200"
@@ -476,6 +494,7 @@ export default function LegacyTimesheet({ wrikeData }) {
 
   const [isWrikeModalOpen, setIsWrikeModalOpen] = useState(false);
   const [modalTab, setModalTab] = useState("timesheet");
+  const [showReminderModal, setShowReminderModal] = useState(false);
   const [wrikeTimesheetData, setWrikeTimesheetData] = useState({});
   const [wrikeWeeklyLogs, setWrikeWeeklyLogs] = useState([]);
   const [expandedGroups, setExpandedGroups] = useState({});
@@ -1052,7 +1071,7 @@ export default function LegacyTimesheet({ wrikeData }) {
 
     return (
       <td
-        className={`px-1 py-1.5 border-r border-[#263143] text-center relative group/cell transition-all ${
+        className={`px-1 py-1.5 border-r border-[#263143] text-center group/cell transition-all ${
           isToday
             ? "bg-[#12a0e1]/8"
             : isActive
@@ -1061,45 +1080,40 @@ export default function LegacyTimesheet({ wrikeData }) {
         }`}
         title={isLocked ? `Can only log time for today (${todayDayName})` : undefined}
       >
-        {wrikeHours && (
-          <div
-            className="absolute top-0.5 left-1 text-[8px] font-bold text-emerald-400/50"
-            title="Wrike Synced Time"
-          >
-            {wrikeHours}h
+        <div className="flex flex-col items-center gap-1">
+          <div className="mx-auto w-11 h-7 relative flex items-center justify-center">
+            {isLocked ? (
+              <span className={`text-[11px] font-bold ${isActive ? "text-slate-400" : "text-slate-700"}`}>
+                {isActive ? localValue : "—"}
+              </span>
+            ) : (
+              <TableSearchableSelect
+                options={TIME_OPTIONS}
+                value={localValue}
+                onChange={(val) => handleModalTimeChange(task, dayOfWeek, val)}
+                placeholder="+"
+                dropdownId={`wrike-day-${task.id}-${dayOfWeek}`}
+                activeDropdown={activeDropdown}
+                setActiveDropdown={setActiveDropdown}
+                isTime={true}
+                isDarkModal={true}
+              />
+            )}
           </div>
-        )}
-        <div className="mx-auto w-11 h-7 relative flex items-center justify-center">
-          {isLocked ? (
-            <span className={`text-[11px] font-bold ${isActive ? "text-slate-500" : "text-slate-700"}`}>
-              {isActive ? localValue : "—"}
-            </span>
-          ) : (
-            <select
-              value={localValue}
-              onChange={(e) =>
-                handleModalTimeChange(task, dayOfWeek, e.target.value)
-              }
-              className={`w-full h-full text-center outline-none cursor-pointer appearance-none text-[11px] font-bold rounded-lg border transition-all ${
-                isActive
-                  ? "text-[#0284c7] bg-[#e0f2fe] border-[#bae6fd] shadow-sm"
-                  : "text-[#38bdf8]/50 bg-[#12a0e1]/10 border-[#12a0e1]/20 hover:bg-[#12a0e1]/20 hover:text-[#38bdf8]/80"
-              }`}
-            >
-              <option value="none" className="bg-[#19202b] text-slate-500">
-                +
-              </option>
-              {TIME_OPTIONS.filter((o) => o !== "none").map((opt) => (
-                <option
-                  key={opt}
-                  value={opt}
-                  className="bg-[#19202b] text-slate-200"
-                >
-                  {opt}
-                </option>
-              ))}
-            </select>
-          )}
+          {wrikeHours && (() => {
+            const totalMins = Math.round(parseFloat(wrikeHours) * 60);
+            const h = Math.floor(totalMins / 60);
+            const m = totalMins % 60;
+            const label = h > 0 && m > 0 ? `${h}h ${m}m` : h > 0 ? `${h}h` : `${m}m`;
+            return (
+              <div
+                className="text-[10px] font-bold text-emerald-400 bg-emerald-400/10 rounded px-1 leading-tight whitespace-nowrap"
+                title="Wrike Synced Time"
+              >
+                {label} ✓
+              </div>
+            );
+          })()}
         </div>
       </td>
     );
@@ -1238,6 +1252,10 @@ export default function LegacyTimesheet({ wrikeData }) {
 
         let client = "";
         let filmTitle = task?.projectName || "";
+        // Normalize all-caps folder names (e.g. "THE ODYSSEY" → "The Odyssey")
+        if (filmTitle && filmTitle === filmTitle.toUpperCase() && filmTitle !== filmTitle.toLowerCase()) {
+          filmTitle = filmTitle.replace(/\w\S*/g, (w) => w[0].toUpperCase() + w.slice(1).toLowerCase());
+        }
         const searchTitle = (task?.title || "").toUpperCase();
 
         if (task) {
@@ -1290,6 +1308,7 @@ export default function LegacyTimesheet({ wrikeData }) {
           wrikeTimelogId: log.id,
           taskId: task?.id,
           dayOfWeek,
+          date: logDate.toLocaleDateString("en-GB"),
           jobNumber: guessed.jobNumber,
           client: client,
           filmTitle: filmTitle,
@@ -1297,7 +1316,7 @@ export default function LegacyTimesheet({ wrikeData }) {
           territory: guessed.territory,
           category: guessed.category,
           clientAmends: false,
-          notes: log.comment || "",
+          notes: log.comment || task?.title || "",
           is3D: false,
           timeSpent: getTimesheetValue(log.hours),
           additionalTime: "none",
@@ -1520,6 +1539,93 @@ export default function LegacyTimesheet({ wrikeData }) {
           {toast.message}
         </div>
       )}
+      {/* --- REMINDER MODAL --- */}
+      {showReminderModal && (
+        <div
+          className="fixed inset-0 z-[100001] flex items-center justify-center p-4"
+          onClick={() => setShowReminderModal(false)}
+        >
+          <div className="absolute inset-0 bg-black/40 backdrop-blur-sm" />
+          <div
+            className="relative w-full max-w-md bg-gradient-to-b from-[#1c2333] to-[#141b28] border border-white/10 rounded-2xl shadow-2xl flex flex-col max-h-[80vh] animate-in fade-in zoom-in-95 duration-200"
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* Glossy top edge */}
+            <div className="absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-white/25 to-transparent" />
+            {/* Header */}
+            <div className="px-5 pt-5 pb-4 border-b border-white/5 flex items-start justify-between gap-3">
+              <div>
+                <h2 className="text-sm font-bold text-white">Anything left to log?</h2>
+                <p className="text-xs text-slate-400 mt-0.5">
+                  These tasks don't have hours yet for{" "}
+                  <span className="text-slate-200">{activeDay}</span>
+                </p>
+              </div>
+              <button
+                onClick={() => setShowReminderModal(false)}
+                className="text-slate-500 hover:text-white transition-colors mt-0.5 shrink-0"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+            {/* Body */}
+            <div className="p-4 space-y-2 overflow-visible">
+              {unloggedTasks.length === 0 ? (
+                <div className="text-center py-8">
+                  <CheckCircle className="w-8 h-8 text-emerald-400 mx-auto mb-2 opacity-80" />
+                  <p className="text-white font-semibold text-sm">All good!</p>
+                  <p className="text-slate-500 text-xs mt-1">Nothing missing for {activeDay}</p>
+                </div>
+              ) : (
+                unloggedTasks.map((task) => (
+                  <div
+                    key={task.id}
+                    className="bg-white/[0.04] hover:bg-white/[0.07] border border-white/[0.07] rounded-xl p-3.5 flex items-center gap-3 transition-colors"
+                  >
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm font-semibold text-white truncate" title={task.title}>
+                        {task.title}
+                      </p>
+                      <div className="flex flex-wrap gap-1.5 mt-1.5">
+                        <span className={getDarkTagStyle(task.wrikeStatus)}>{task.wrikeStatus}</span>
+                        <span className="text-slate-500 text-[11px]">{task.wrikeCategory}</span>
+                        {task.wrikeLocation !== "⚠️ Unassigned" && (
+                          <span className="text-slate-500 text-[11px]">
+                            {TERRITORY_FLAGS[task.wrikeLocation]} {task.wrikeLocation}
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                    <div className="w-24 shrink-0">
+                      <TableSearchableSelect
+                        options={TIME_OPTIONS}
+                        value={"none"}
+                        onChange={(val) => handleModalTimeChange(task, activeDay, val)}
+                        placeholder="none"
+                        dropdownId={`reminder-time-${task.id}`}
+                        activeDropdown={activeDropdown}
+                        setActiveDropdown={setActiveDropdown}
+                        isTime={true}
+                        isDarkModal={true}
+                      />
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
+            {/* Footer */}
+            <div className="px-4 pb-4 pt-2 border-t border-white/5">
+              <button
+                onClick={() => setShowReminderModal(false)}
+                className="w-full py-2 text-xs font-semibold text-slate-500 hover:text-slate-300 transition-colors rounded-xl hover:bg-white/5"
+              >
+                Got it, close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* --- DESIGN PACK: PREMIUM MODERN WRIKE TIMESHEET MODAL --- */}
       {isWrikeModalOpen && (
         <div className="fixed inset-0 z-[99999] bg-[#0b0f17]/95 backdrop-blur-xl flex flex-col text-slate-300 animate-in fade-in duration-200">
@@ -1544,16 +1650,12 @@ export default function LegacyTimesheet({ wrikeData }) {
                   My Timesheet
                 </button>
                 <button
-                  onClick={() => setModalTab("reminders")}
-                  className={`px-4 py-1.5 text-xs font-black tracking-wide uppercase transition-all rounded-lg flex items-center gap-2 ${
-                    modalTab === "reminders"
-                      ? "bg-[#12a0e1] text-white shadow-md"
-                      : "text-slate-500 hover:text-slate-300"
-                  }`}
+                  onClick={() => setShowReminderModal(true)}
+                  className="px-4 py-1.5 text-xs font-black tracking-wide uppercase transition-all rounded-lg flex items-center gap-2 text-slate-500 hover:text-slate-300"
                 >
                   Reminders
                   {unloggedTasks.length > 0 && (
-                    <span className="bg-rose-500 text-white text-[10px] font-black px-2 py-0.5 rounded-full leading-none shadow-sm shadow-rose-500/20 animate-pulse">
+                    <span className="bg-amber-500/80 text-white text-[10px] font-black px-2 py-0.5 rounded-full leading-none">
                       {unloggedTasks.length}
                     </span>
                   )}
@@ -1877,104 +1979,6 @@ export default function LegacyTimesheet({ wrikeData }) {
               </table>
             )}
 
-            {/* REMINDERS TAB */}
-            {modalTab === "reminders" && (
-              <div className="p-8 md:p-12 max-w-4xl mx-auto w-full animate-in fade-in slide-in-from-bottom-3 duration-300">
-                <div className="mb-10 text-center space-y-2">
-                  <h2 className="text-2xl font-black text-white tracking-tight">
-                    Active Cross-Check •{" "}
-                    <span className="text-[#38bdf8]">{activeDay}</span>
-                  </h2>
-                  <p className="text-sm text-slate-400 max-w-2xl mx-auto leading-relaxed">
-                    The framework auto-detected missing time metrics on the
-                    following active items for{" "}
-                    <span className="text-slate-200 font-semibold">
-                      {activeDay}
-                    </span>
-                    . Update your row records below:
-                  </p>
-                </div>
-
-                {unloggedTasks.length === 0 ? (
-                  <div className="bg-[#121824] border border-[#222f3e] rounded-2xl p-12 text-center flex flex-col items-center shadow-xl">
-                    <div className="bg-emerald-500/10 p-4 rounded-full mb-4 border border-emerald-500/20 shadow-[0_0_15px_rgba(16,185,129,0.1)]">
-                      <CheckCircle className="w-10 h-10 text-[#10b981]" />
-                    </div>
-                    <p className="text-white text-lg font-black tracking-tight">
-                      Logs fully synchronized!
-                    </p>
-                    <p className="text-xs text-slate-500 mt-1 max-w-xs leading-relaxed">
-                      No allocated tasks are currently missing matching log
-                      hours for this target day.
-                    </p>
-                  </div>
-                ) : (
-                  <div className="space-y-4">
-                    {unloggedTasks.map((task) => (
-                      <div
-                        key={task.id}
-                        className="bg-[#121824] border border-[#222f3e] hover:border-[#2d3d52] rounded-2xl p-5 flex flex-col md:flex-row md:items-center justify-between gap-5 transition-all shadow-md relative overflow-hidden"
-                      >
-                        <div className="absolute top-0 bottom-0 left-0 w-1 bg-rose-500/50"></div>
-                        <div className="flex items-start gap-4 flex-1 min-w-0 pl-1">
-                          <div className="bg-rose-500/10 p-2 rounded-xl shrink-0 mt-0.5 border border-rose-500/20">
-                            <AlertCircle className="w-4 h-4 text-rose-400" />
-                          </div>
-                          <div className="flex-1 min-w-0 space-y-2">
-                            <h3
-                              className="text-sm font-bold text-white truncate"
-                              title={task.title}
-                            >
-                              {task.title}
-                            </h3>
-                            <div className="flex flex-wrap items-center gap-1.5">
-                              <span
-                                className={getDarkTagStyle(task.wrikeStatus)}
-                              >
-                                {task.wrikeStatus}
-                              </span>
-                              <span className="bg-[#0b0f17] text-slate-400 px-2.5 py-0.5 rounded-md text-[11px] border border-[#1e293b] font-mono">
-                                {task.wrikeJob}
-                              </span>
-                              <span className="bg-[#0b0f17] text-slate-400 px-2.5 py-0.5 rounded-md text-[11px] border border-[#1e293b] truncate max-w-[200px]">
-                                {task.wrikeCategory}
-                              </span>
-                              {task.wrikeLocation !== "⚠️ Unassigned" && (
-                                <span className="bg-[#0b0f17] text-slate-400 px-2.5 py-0.5 rounded-md text-[11px] border border-[#1e293b] flex items-center gap-1">
-                                  {TERRITORY_FLAGS[task.wrikeLocation]}{" "}
-                                  {task.wrikeLocation}
-                                </span>
-                              )}
-                            </div>
-                          </div>
-                        </div>
-
-                        <div className="flex items-center justify-between md:justify-end gap-4 shrink-0 bg-[#090d14] p-2.5 rounded-xl border border-[#1e293b] w-full md:w-auto">
-                          <span className="text-[11px] font-black text-slate-500 uppercase tracking-widest pl-2">
-                            Hours:
-                          </span>
-                          <div className="w-24">
-                            <TableSearchableSelect
-                              options={TIME_OPTIONS}
-                              value={"none"}
-                              onChange={(val) =>
-                                handleModalTimeChange(task, activeDay, val)
-                              }
-                              placeholder="none"
-                              dropdownId={`reminder-time-${task.id}`}
-                              activeDropdown={activeDropdown}
-                              setActiveDropdown={setActiveDropdown}
-                              isTime={true}
-                              isDarkModal={true}
-                            />
-                          </div>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-            )}
           </div>
         </div>
       )}

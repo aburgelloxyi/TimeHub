@@ -1,12 +1,13 @@
 import { useCallback, useMemo } from "react";
 import { useTasks } from "./useTasks";
 
-// Round to nearest 0.5h step — Legacy timesheet format requires half-hour increments
+// Round to nearest 0.5h step — minimum 0.5h for any logged time (never round to 0)
 const roundHalf = (val) => {
   if (!val || val === "none") return val;
   const n = parseFloat(val);
   if (isNaN(n) || n <= 0) return val;
-  return (Math.round(n * 2) / 2).toString();
+  const rounded = Math.round(n * 2) / 2;
+  return (rounded > 0 ? rounded : 0.5).toString();
 };
 
 // Normalise a legacy row on add/read — useTasks.fromDb already handles seconds↔hours

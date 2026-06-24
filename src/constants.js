@@ -665,12 +665,24 @@ export const MOTION_TEAM_NAME_MAP = {
 };
 
 export const REGION_ALIASES = {
-  TR: "Türkiye",
-  CZ: "Czech Republic",
-  CZECHIA: "Czech Republic",
-  UK: "UK",
-  UAE: "United Arab Emirates",
-  US: "USA",
-  ZA: "South Africa",
-  IN: "India",
+  // Original entries
+  TR: "Türkiye", CZ: "Czech Republic", CZECHIA: "Czech Republic",
+  UK: "UK", UAE: "United Arab Emirates", US: "USA", ZA: "South Africa", IN: "India",
+  // 2-letter ISO codes
+  AE: "United Arab Emirates", AT: "Austria", AU: "Australia",
+  BE: "Belgium", BR: "Brazil", CA: "Canada", CH: "Switzerland",
+  CL: "Chile", CN: "China", CO: "Colombia", DE: "Germany",
+  DK: "Denmark", ES: "Spain", FI: "Finland", FR: "France",
+  GB: "UK", GR: "Greece", HR: "Croatia", HU: "Hungary",
+  IE: "Ireland", IT: "Italy", JP: "Japan", KR: "South Korea",
+  MX: "Mexico", NL: "Netherlands", NO: "Norway", NZ: "New Zealand",
+  PE: "Peru", PL: "Poland", PT: "Portugal", RO: "Romania",
+  RS: "Serbia", RU: "Russia", SE: "Sweden", SG: "Singapore",
+  SK: "Slovakia", TH: "Thailand", TW: "Taiwan",
+  // 3-letter codes common in Wrike file/task names
+  POL: "Poland", GER: "Germany", SWE: "Sweden", NOR: "Norway",
+  DEN: "Denmark", FIN: "Finland", AUT: "Austria", CRO: "Croatia",
+  COL: "Colombia", SPA: "Spain", GRE: "Greece", POR: "Portugal",
+  ITA: "Italy", FRA: "France", BEL: "Belgium", NED: "Netherlands",
+  ENG: "UK", SCO: "UK", WAL: "UK",
 };

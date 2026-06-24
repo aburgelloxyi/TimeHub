@@ -3,7 +3,7 @@ import { supabase } from "../lib/supabaseClient";
 
 // --- Translators ---
 
-const secsToHours = (s) => (s > 0 ? (s / 3600).toFixed(4) : null);
+const secsToHours = (s) => (s > 0 ? (s / 3600).toFixed(2) : null);
 const hoursToSecs = (h) => (h && h !== "none" ? Math.round(parseFloat(h) * 3600) : 0);
 
 const toDb = (task) => ({

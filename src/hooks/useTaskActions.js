@@ -74,7 +74,7 @@ export function useTaskActions(state) {
       dayOfWeek: selectedDay,
       rawSeconds: finalSeconds,
       additionalSeconds: 0,
-      date: new Date().toLocaleDateString(),
+      date: new Date().toLocaleDateString("en-GB"),
       timeLogged: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
     };
 
@@ -183,14 +183,19 @@ export function useTaskActions(state) {
         const fields = guessFields(log.taskId, log.comment, "Wrike Timelog");
         const logDate = new Date(log.trackedDate);
         const logDayName = dayNames[logDate.getDay()];
+        // Derive project description from job number "Film : CODE, Description"
+        const projectDescription = fields.jobNumber?.includes(",")
+          ? fields.jobNumber.substring(fields.jobNumber.indexOf(",") + 1).trim()
+          : "";
         newTasks.push({
           id: Date.now() + Math.floor(Math.random() * 1000),
           wrikeTimelogId: log.id,
           ...fields,
+          projectDescription,
           dayOfWeek: DAYS_OF_WEEK.includes(logDayName) ? logDayName : "Monday",
           rawSeconds: Math.floor(log.hours * 3600),
           additionalSeconds: 0,
-          date: logDate.toLocaleDateString(),
+          date: logDate.toLocaleDateString("en-GB"),
           timeLogged: logDate.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
         });
       });
@@ -210,7 +215,7 @@ export function useTaskActions(state) {
           dayOfWeek: DAYS_OF_WEEK.includes(logDayName) ? logDayName : "Monday",
           rawSeconds: accumulatedSeconds > 0 ? accumulatedSeconds : 60,
           additionalSeconds: 0,
-          date: logDate.toLocaleDateString(),
+          date: logDate.toLocaleDateString("en-GB"),
           timeLogged: logDate.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
         });
       });
@@ -448,7 +453,7 @@ export function useTaskActions(state) {
       dayOfWeek: selectedDay,
       rawSeconds: finalSeconds,
       additionalSeconds: 0,
-      date: new Date().toLocaleDateString(),
+      date: new Date().toLocaleDateString("en-GB"),
       timeLogged: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
     };
     addTask(newTask);

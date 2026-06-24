@@ -25,12 +25,10 @@ export default function RecentJobsModal({
 
     setIsFetching(true);
     const headers = { Authorization: `Bearer ${token}` };
-    const fields = encodeURIComponent("[description]");
+    const fields = encodeURIComponent("[description,superTaskIds]");
 
     Promise.all([
-      // Active tab: targeted, fast
       fetch(`https://www.wrike.com/api/v4/tasks?responsibles=[${wrikeUser.id}]&status=Active&fields=${fields}&pageSize=500`, { headers }),
-      // Completed tab: all tasks assigned to user regardless of status, then filter for Delivered client-side
       fetch(`https://www.wrike.com/api/v4/tasks?responsibles=[${wrikeUser.id}]&fields=${fields}&pageSize=1000`, { headers }),
       fetch(`https://www.wrike.com/api/v4/workflows`, { headers }),
     ])
@@ -41,6 +39,16 @@ export default function RecentJobsModal({
           (wf.customStatuses || []).forEach((cs) => { statusNameMap[cs.id] = cs.name; });
         });
 
+        const allRaw = [...(aJson.data || []), ...(cJson.data || [])];
+
+        // Build set of all task IDs assigned to this user
+        const assignedIds = new Set(allRaw.map((t) => t.id));
+
+        // Hide a task if any of its parents are also assigned to this user
+        // (i.e. it's a leaf beneath a batch/parent the user also owns)
+        const isChildOfAssigned = (task) =>
+          (task.superTaskIds || []).some((pid) => assignedIds.has(pid));
+
         const enrich = (task) => {
           const customStatusName = task.customStatusId
             ? (statusNameMap[task.customStatusId] || task.status)
@@ -49,7 +57,6 @@ export default function RecentJobsModal({
             /^(delivered|completed|done|published)$/i.test(customStatusName);
           const html = (task.description || "").replace(/<[^>]*>/g, " ");
           const folderMatches = html.match(/\/Volumes\/[^\s]+/gi) || [];
-          // Count film name occurrences across ALL paths — most frequent = actual project, not a reference
           let projectName = "";
           const filmFreq = {};
           for (const path of folderMatches) {
@@ -73,10 +80,14 @@ export default function RecentJobsModal({
           return { ...task, customStatusName, isDone, projectName, assignees: [wrikeUser.firstName] };
         };
 
-        const activeTasks = (aJson.data || []).map(enrich);
-        const completedTasks = (cJson.data || []).map(enrich).filter((t) => t.isDone);
+        const activeTasks = (aJson.data || [])
+          .filter((t) => !isChildOfAssigned(t))
+          .map(enrich);
+        const completedTasks = (cJson.data || [])
+          .filter((t) => !isChildOfAssigned(t))
+          .map(enrich)
+          .filter((t) => t.isDone);
 
-        // Merge, dedup by id — active tasks take priority if same id appears in both
         const seen = new Set(activeTasks.map((t) => t.id));
         const fetched = [...activeTasks, ...completedTasks.filter((t) => !seen.has(t.id))];
 
@@ -89,14 +100,7 @@ export default function RecentJobsModal({
 
   if (!showRecentJobsModal) return null;
 
-  // Merge on-demand fetch with any pre-fetched wrikeData — wrikeData fills gaps (e.g. Delivered tasks our fetch misses)
-  const fetchedIds = new Set(localData.map((t) => t.id));
-  const wrikeExtras = (wrikeData || []).filter((t) => !fetchedIds.has(t.id)).map((t) => ({
-    ...t,
-    isDone: t.isDone !== undefined ? t.isDone : (t.status === "Completed" || t.status === "Delivered"),
-    assignees: t.assignees || (wrikeUser?.firstName ? [wrikeUser.firstName] : []),
-  }));
-  const dataSource = [...localData, ...wrikeExtras];
+  const dataSource = localData;
 
   const filteredTasks = dataSource.filter((t) => {
     if (!t.assignees) return false;

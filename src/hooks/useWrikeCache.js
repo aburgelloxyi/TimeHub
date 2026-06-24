@@ -11,7 +11,7 @@ const FIELDS_FILTER = encodeURIComponent(
 );
 const SYNC_INTERVAL_MS  = 15 * 60 * 1000;   // re-sync if data is >15 min old
 const META_MAX_AGE_MS   = 24 * 60 * 60 * 1000; // refresh folder/contact dicts daily
-const LOOKBACK_MONTHS   = 6;                 // how far back the full refresh window goes
+const LOOKBACK_MONTHS   = 3;                 // how far back the full refresh window goes
 
 // ---------------------------------------------------------------------------
 // Fetch folders, contacts, workflows from Wrike

@@ -258,7 +258,7 @@ export default function App() {
       <div className={activePage === "todayslist" ? "block" : "hidden"}>
         <TodaysList wrikeData={globalWrikeData} triggerToast={triggerToast} />
       </div>
-      {activePage === "canvas" && <CampaignCanvas wrikeData={filteredData} triggerToast={triggerToast} />}
+      {activePage === "canvas" && <CampaignCanvas wrikeData={filteredData} triggerToast={triggerToast} isLoading={!!localStorage.getItem("wrike_personal_token") && globalWrikeData.length === 0} />}
       {activePage === "wriketest" && (
         <WrikeTest wrikeData={globalWrikeData} syncNow={syncNow} isSyncing={isSyncing} lastSynced={lastSynced} syncError={syncError} />
       )}

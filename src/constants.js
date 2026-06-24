@@ -651,6 +651,15 @@ export const FILM_MAPPINGS = {
   FEM: "Finding Emily",
   SCARY: "Scary Movie 6",
   SCRY: "Scary Movie 6",
+  NVC: "Novocaine",
+  SB4: "Spongebob 4",
+  S7: "Scream 7",
+  SMRFS: "Spongebob 4",
+  JA5: "Jackass 5",
+  BJ4: "Bridget Jones Mad About The Boy",
+  HTYD: "How To Train Your Dragon",
+  JWR: "Jurassic World Rebirth",
+  TR3: "Trolls 3 Band Together",
 };
 
 export const MOTION_TEAM_NAME_MAP = {

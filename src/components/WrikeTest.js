@@ -101,8 +101,9 @@ export default function WrikeTest({
       let hasMore = true;
 
       while (hasMore) {
-        let url = `https://www.wrike.com/api/v4/tasks?fields=${fieldsFilter}&updatedDate=${dateFilter}&pageSize=1000`;
-        if (nextPageToken) url += `&nextPageToken=${nextPageToken}`;
+        const url = nextPageToken
+          ? `https://www.wrike.com/api/v4/tasks?nextPageToken=${nextPageToken}`
+          : `https://www.wrike.com/api/v4/tasks?fields=${fieldsFilter}&updatedDate=${dateFilter}&pageSize=1000`;
 
         const response = await fetch(url, {
           headers: { Authorization: `Bearer ${apiToken}` },
@@ -466,6 +467,9 @@ export default function WrikeTest({
     return data;
   }, [wrikeData, searchTerm, statusFilter, sortConfig]);
 
+  const TABLE_LIMIT = 500;
+  const displayData = processedData?.slice(0, TABLE_LIMIT);
+
   return (
     <div className="min-h-screen bg-slate-100 text-[#122027] font-sans pb-12">
       <div className="max-w-[1800px] mx-auto px-4 sm:px-6 pt-8 space-y-6">
@@ -543,7 +547,7 @@ export default function WrikeTest({
             <div className="p-5 border-b border-[#dce4ec] bg-slate-50/50 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
               <h2 className="text-base font-black text-[#122027] flex items-center gap-2">
                 <FileJson className="w-4 h-4 text-indigo-500" /> Task Array (
-                {processedData.length} items)
+                {processedData.length} items{processedData.length > TABLE_LIMIT ? ` — showing first ${TABLE_LIMIT}` : ""})
               </h2>
 
               <div className="flex flex-col sm:flex-row gap-3">
@@ -623,8 +627,8 @@ export default function WrikeTest({
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-[#dce4ec]">
-                  {processedData.length > 0 ? (
-                    processedData.map((task) => (
+                  {displayData.length > 0 ? (
+                    displayData.map((task) => (
                       <tr
                         key={task.id}
                         className="hover:bg-slate-50/50 transition-colors"

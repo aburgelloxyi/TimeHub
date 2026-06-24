@@ -204,7 +204,7 @@ export async function hydrateMissingFolders(tasks, folderDictionary, token) {
   }));
 
   let loopCount = 0;
-  while (missing.size > 0 && loopCount < 3) {
+  while (missing.size > 0 && loopCount < 8) {
     loopCount++;
     const ids = [...missing];
     missing.clear();

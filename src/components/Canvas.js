@@ -1,4 +1,5 @@
-import React, { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect, useRef, useCallback } from "react";
+import { supabase } from "../lib/supabaseClient";
 import {
   Layout,
   Sparkles,
@@ -22,24 +23,7 @@ import {
   Moon,
 } from "lucide-react";
 
-const INITIAL_CAMPAIGNS = [
-  {
-    id: "camp-ody",
-    title: "The Odyssey",
-    wrikeLink: "https://www.wrike.com/open.htm?id=4467542213",
-    notes: [],
-    matrices: [],
-    links: [],
-  },
-  {
-    id: "camp-sm6",
-    title: "Scary Movie 6",
-    wrikeLink: "https://www.wrike.com/open.htm?id=4462395758",
-    notes: [],
-    matrices: [],
-    links: [],
-  },
-];
+const INITIAL_CAMPAIGNS = [];
 
 // --- THE HARDCODED COVER ART DICTIONARY ---
 const CAMPAIGN_COVERS = {
@@ -86,7 +70,7 @@ const parseFormatting = (text) => {
   return html;
 };
 
-export default function CampaignCanvas({ wrikeData = [], triggerToast: _triggerToast }) {
+export default function CampaignCanvas({ wrikeData = [], triggerToast: _triggerToast, isLoading = false }) {
   const triggerToast = _triggerToast ?? ((msg) => console.warn("Toast:", msg));
   const [campaigns, setCampaigns] = useState(INITIAL_CAMPAIGNS);
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -104,11 +88,8 @@ export default function CampaignCanvas({ wrikeData = [], triggerToast: _triggerT
   // --- SIDE PANEL STATE ---
   const [showFoldersPanel, setShowFoldersPanel] = useState(false);
 
-  // --- Cover Art State (Persisted to LocalStorage) ---
-  const [covers, setCovers] = useState(() => {
-    const saved = localStorage.getItem("xyi_campaign_covers");
-    return saved ? JSON.parse(saved) : {};
-  });
+  // --- Cover Art State (Persisted to Supabase so localStorage clears don't wipe it) ---
+  const [covers, setCovers] = useState({});
 
   const [newCampaignTitle, setNewCampaignTitle] = useState("");
   const [newCampaignLink, setNewCampaignLink] = useState("");
@@ -133,8 +114,22 @@ export default function CampaignCanvas({ wrikeData = [], triggerToast: _triggerT
   const [newLinkUrl, setNewLinkUrl] = useState("");
   const [copiedLinkId, setCopiedLinkId] = useState(null);
 
+  // Load covers from Supabase on mount
   useEffect(() => {
-    localStorage.setItem("xyi_campaign_covers", JSON.stringify(covers));
+    (async () => {
+      const { data } = await supabase.from("canvas_covers").select("covers").eq("id", 1).single();
+      if (data?.covers) setCovers(data.covers);
+    })();
+  }, []);
+
+  // Save covers to Supabase whenever they change
+  const saveCoverRef = useRef(null);
+  useEffect(() => {
+    if (Object.keys(covers).length === 0) return;
+    clearTimeout(saveCoverRef.current);
+    saveCoverRef.current = setTimeout(async () => {
+      await supabase.from("canvas_covers").upsert({ id: 1, covers });
+    }, 500);
   }, [covers]);
 
   // --- GLOBAL KEYBOARD LISTENER (CMD+K) ---
@@ -820,6 +815,12 @@ export default function CampaignCanvas({ wrikeData = [], triggerToast: _triggerT
         </header>
 
         {/* --- PERFECTLY CENTERED ICON DOCK --- */}
+        {isLoading && (
+          <div className="flex items-center justify-center gap-2 py-3 text-xs font-bold text-[#768994]">
+            <div className="w-3.5 h-3.5 border-2 border-[#12a0e1] border-t-transparent rounded-full animate-spin" />
+            Loading campaigns from cache…
+          </div>
+        )}
         <div className="flex flex-wrap justify-center gap-8 sm:gap-12 py-10 px-4 max-w-5xl mx-auto">
           {campaigns.map((camp) => {
             const hasCover = covers[camp.id] || CAMPAIGN_COVERS[camp.id];

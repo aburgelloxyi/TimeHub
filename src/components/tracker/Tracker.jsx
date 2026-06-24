@@ -93,7 +93,7 @@ export default function Tracker({ wrikeData }) {
     const territory = getTerritory(task);
     const key = `${task.jobNumber}|||${territory}|||${task.category}`;
     if (!acc[key]) {
-      acc[key] = { jobNumber: task.jobNumber || "Unknown Job", territory, category: task.category || "Unknown Category", tasks: [], totalRaw: 0, totalAdd: 0 };
+      acc[key] = { jobNumber: task.jobNumber || "Unknown Job", territory, category: task.category || "Unknown Category", filmTitle: task.filmTitle || "", tasks: [], totalRaw: 0, totalAdd: 0 };
     }
     acc[key].tasks.push(task);
     acc[key].totalRaw += getRawSeconds(task);
@@ -138,7 +138,7 @@ export default function Tracker({ wrikeData }) {
       <TriageModal
         triageQueue={triageQueue} setTriageQueue={setTriageQueue}
         triageCategory={triageCategory} setTriageCategory={setTriageCategory}
-        setTasks={setTasks} triggerToast={triggerToast}
+        setTasks={setTasks} updateTasks={updateTasks} triggerToast={triggerToast}
       />
       <DeleteModal
         itemToDelete={itemToDelete} setItemToDelete={setItemToDelete}
@@ -324,8 +324,8 @@ export default function Tracker({ wrikeData }) {
                     editTimeForm={editTimeForm} setEditTimeForm={setEditTimeForm}
                     editingNoteId={editingNoteId} setEditingNoteId={setEditingNoteId}
                     editNoteText={editNoteText} setEditNoteText={setEditNoteText}
-                    historyTimer={historyTimer}
                     jobOptions={jobOptions}
+                    updateTask={updateTask}
                     // actions
                     startGroupEdit={actions.startGroupEdit}
                     handleSaveGroupEdit={actions.handleSaveGroupEdit}
@@ -335,7 +335,6 @@ export default function Tracker({ wrikeData }) {
                     saveEditedTime={actions.saveEditedTime}
                     startEditingNote={actions.startEditingNote}
                     saveEditedNote={actions.saveEditedNote}
-                    toggleHistoryTimer={actions.toggleHistoryTimer}
                     setItemToDelete={setItemToDelete}
                   />
                 )}

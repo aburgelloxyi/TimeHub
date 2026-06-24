@@ -105,6 +105,19 @@ html.dark-theme body {
 /* ── LEGACY TIMESHEET TABLE ─────────────────────────────────── */
 /* Table header row bg-slate-800 is fine dark already */
 
+/* Text colours missing from global overrides */
+.dark-theme .text-slate-800   { color: #e2e8f0 !important; }
+.dark-theme .text-slate-900   { color: #f1f5f9 !important; }
+.dark-theme .text-\[\#3b5998\] { color: #93c5fd !important; }
+
+/* Input / number fields inside rows */
+.dark-theme .timesheet-row input[type="text"],
+.dark-theme .timesheet-row input[type="number"] {
+  color: #e2e8f0 !important;
+  background-color: transparent !important;
+}
+.dark-theme .timesheet-row input::placeholder { color: #475569 !important; }
+
 /* Semantic row classes (light mode) */
 .timesheet-row {
   background-color: #f0fdf8;

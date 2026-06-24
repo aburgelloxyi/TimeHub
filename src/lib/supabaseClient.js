@@ -15,6 +15,20 @@ export const supabase = createClient(supabaseUrl, supabaseAnonKey);
 })();
 
 /**
+ * Returns a Set of all wrike_timelog_ids already stored for this user,
+ * across ALL sources (tracker + legacy). Used for cross-page dedup on pull.
+ */
+export async function fetchExistingTimelogIds(wrikeUserId) {
+  let query = supabase
+    .from("tasks")
+    .select("wrike_timelog_id")
+    .not("wrike_timelog_id", "is", null);
+  if (wrikeUserId) query = query.eq("wrike_user_id", wrikeUserId);
+  const { data } = await query;
+  return new Set((data ?? []).map((r) => r.wrike_timelog_id));
+}
+
+/**
  * Call this once the Wrike user ID is known.
  * Stores it in localStorage (fast path for next load) and stamps it
  * onto the anonymous session metadata so RLS policies can read it.

@@ -1,19 +1,33 @@
-import { useCallback } from "react";
+import { useCallback, useMemo } from "react";
 import { useTasks } from "./useTasks";
 
+// Legacy time values are decimal hours in 0.5h steps (0.5 = 30min, 1.5 = 1h30m)
 const toSeconds = (val) => {
   if (!val || val === "none") return 0;
   return Math.round(parseFloat(val) * 3600);
 };
 
+// Round seconds to nearest 0.5h step and return as decimal string
+const secondsToDecimalRounded = (s) => {
+  const halfHours = Math.round(s / 1800); // 1800s = 30min
+  return (halfHours / 2).toString();
+};
+
 // Normalise a legacy row so it stores seconds like tracker rows do
 const normaliseLegacyRow = (row) => ({
   ...row,
-  // Map country → territory so both pages use the same field
+  // Keep territory and country in sync regardless of which page wrote the row
   territory: row.territory || row.country || "",
-  // Convert decimal hours → seconds
+  country: row.country || row.territory || "",
+  // Convert HH.MM → seconds (Legacy path)
   rawSeconds: row.rawSeconds || toSeconds(row.timeSpent),
   additionalSeconds: row.additionalSeconds || toSeconds(row.additionalTime),
+  // Derive rounded decimal-hour values for Tracker rows that only have seconds
+  timeSpent: row.timeSpent || (row.rawSeconds ? secondsToDecimalRounded(row.rawSeconds) : ""),
+  additionalTime: row.additionalTime || (row.additionalSeconds ? secondsToDecimalRounded(row.additionalSeconds) : ""),
+  // Auto-derive project description from job number (same logic as handleUpdateRow)
+  projectDescription: row.projectDescription ||
+    (row.jobNumber?.includes(",") ? row.jobNumber.substring(row.jobNumber.indexOf(",") + 1).trim() : ""),
 });
 
 /**
@@ -31,7 +45,7 @@ export function useLegacyRows(triggerToast, wrikeUserId = null) {
     addTasks,
     updateTask,
     deleteTasks,
-  } = useTasks(triggerToast, "legacy", wrikeUserId);
+  } = useTasks(triggerToast, null, wrikeUserId);
 
   // Add a single blank row (from the + button)
   const addRow = useCallback(async (row) => {
@@ -63,8 +77,11 @@ export function useLegacyRows(triggerToast, wrikeUserId = null) {
     await deleteTasks([id]);
   }, [deleteTasks]);
 
+  // Normalise on read so Tracker rows get country/timeSpent derived correctly
+  const normalisedRows = useMemo(() => rows.map(normaliseLegacyRow), [rows]);
+
   return {
-    rows,
+    rows: normalisedRows,
     setRows,
     loading,
     addRow,

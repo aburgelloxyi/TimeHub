@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from "react";
 import { useLegacyRows } from "../hooks/useLegacyRows";
-import { setWrikeUserId as stampWrikeUserId } from "../lib/supabaseClient";
+import { setWrikeUserId as stampWrikeUserId, fetchExistingTimelogIds } from "../lib/supabaseClient";
 import {
   RefreshCw,
   XCircle,
@@ -1226,10 +1226,14 @@ export default function LegacyTimesheet({ wrikeData }) {
       // their timelogs still exist but the task won't appear in handleSyncMyJobs
       currentTasks = await fetchMissingTasks(currentTasks, logs, token);
 
+      // Fetch existing timelog IDs across ALL sources so we don't duplicate
+      // entries that were already pulled in Tracker (or vice versa)
+      const existingTimelogIds = await fetchExistingTimelogIds(wrikeUserId);
+
       const newRows = [];
 
       logs.forEach((log) => {
-        if (rows.some((r) => r.wrikeTimelogId === log.id)) return;
+        if (existingTimelogIds.has(log.id)) return;
 
         const task = currentTasks.find((t) => t.id === log.taskId);
         const guessed = guessFieldsFromTask(task);

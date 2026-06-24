@@ -6,7 +6,7 @@ import { CATEGORIES } from "../../constants";
 export default function TriageModal({
   triageQueue, setTriageQueue,
   triageCategory, setTriageCategory,
-  setTasks, triggerToast,
+  setTasks, updateTasks, triggerToast,
 }) {
   if (triageQueue.length === 0) return null;
 
@@ -27,6 +27,7 @@ export default function TriageModal({
         current.taskIds.includes(t.id) ? { ...t, category: triageCategory } : t
       )
     );
+    updateTasks(current.taskIds, { category: triageCategory });
     setTriageQueue((prev) => prev.slice(1));
     setTriageCategory("");
     triggerToast("Category assigned!", "success");

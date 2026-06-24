@@ -1,5 +1,6 @@
 import { DAYS_OF_WEEK } from "../constants";
 import { guessFieldsFromTask } from "../utils/wrikeHelpers";
+import { fetchExistingTimelogIds } from "../lib/supabaseClient";
 
 /**
  * All task manipulation handlers: log, delete, edit group/task/time/note,
@@ -171,10 +172,14 @@ export function useTaskActions(state) {
         return { ...guessed, notes: commentText || guessed.notes || fallbackTitle };
       };
 
+      // Fetch existing timelog IDs across ALL sources so we don't duplicate
+      // entries that were already pulled in Legacy (or vice versa)
+      const existingTimelogIds = await fetchExistingTimelogIds(wrikeUserId);
+
       const newTasks = [];
 
       todayLogs.forEach((log) => {
-        if (tasks.some((t) => t.wrikeTimelogId === log.id)) return;
+        if (existingTimelogIds.has(log.id)) return;
         const fields = guessFields(log.taskId, log.comment, "Wrike Timelog");
         const logDate = new Date(log.trackedDate);
         const logDayName = dayNames[logDate.getDay()];
@@ -192,7 +197,7 @@ export function useTaskActions(state) {
 
       todayTimers.forEach((timer) => {
         const timerUniqueId = `timer-${timer.taskId}-${timer.updatedDate}`;
-        if (tasks.some((t) => t.wrikeTimelogId === timerUniqueId)) return;
+        if (existingTimelogIds.has(timerUniqueId)) return;
         const fields = guessFields(timer.taskId, "", "Wrike Live Timer");
         const logDate = new Date(timer.updatedDate);
         const logDayName = dayNames[logDate.getDay()];
@@ -216,13 +221,14 @@ export function useTaskActions(state) {
 
         const needingTriage = newTasks.filter((t) => t.category === "⚠️ Unassigned");
         if (needingTriage.length > 0) {
-          const uniqueBatches = [];
-          needingTriage.forEach((t) => {
-            const match = uniqueBatches.find((b) => b.jobNumber === t.jobNumber && b.territory === t.territory);
-            if (match) match.taskIds.push(t.id);
-            else uniqueBatches.push({ jobNumber: t.jobNumber, territory: t.territory, taskIds: [t.id], sampleTitle: t.notes });
-          });
-          setTriageQueue(uniqueBatches);
+          setTriageQueue(
+            needingTriage.map((t) => ({
+              jobNumber: t.jobNumber,
+              territory: t.territory,
+              taskIds: [t.id],
+              sampleTitle: t.notes,
+            }))
+          );
         }
       } else {
         triggerToast("No new timelogs found for today.");

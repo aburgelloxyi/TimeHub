@@ -1,7 +1,7 @@
 import React from "react";
 import {
-  CheckSquare, Film, Globe, Tag, Edit2, Trash2, Play, Pause,
-  Clock, FolderInput, FileText, Check, X, Save,
+  CheckSquare, Film, Globe, Tag, Edit2, Trash2,
+  Clock, FolderInput, FileText, Check, X, Save, Plus,
 } from "lucide-react";
 import SearchableSelect from "../shared/SearchableSelect";
 import { TERRITORIES, TERRITORY_FLAGS, CATEGORIES } from "../../constants";
@@ -15,14 +15,25 @@ export default function HistoryTab({
   editingTaskId, editTaskForm, setEditTaskForm,
   editingTimeId, setEditingTimeId, editTimeForm, setEditTimeForm,
   editingNoteId, setEditingNoteId, editNoteText, setEditNoteText,
-  historyTimer, jobOptions,
+  jobOptions, updateTask,
   startGroupEdit, handleSaveGroupEdit,
   startTaskEdit, handleSaveTaskEdit,
   startEditingTime, saveEditedTime,
   startEditingNote, saveEditedNote,
-  toggleHistoryTimer, setItemToDelete,
+  setItemToDelete,
 }) {
   const [activeDropdown, setActiveDropdown] = React.useState(null);
+  const [addingTimeId, setAddingTimeId] = React.useState(null);
+  const [addH, setAddH] = React.useState("");
+  const [addM, setAddM] = React.useState("");
+
+  const openAddTime = (taskId) => { setAddingTimeId(taskId); setAddH(""); setAddM(""); };
+  const closeAddTime = () => { setAddingTimeId(null); setAddH(""); setAddM(""); };
+  const commitAddTime = (task) => {
+    const extra = (parseInt(addH || 0) * 3600) + (parseInt(addM || 0) * 60);
+    if (extra > 0) updateTask(task.id, { additionalSeconds: (task.additionalSeconds || 0) + extra });
+    closeAddTime();
+  };
   if (loading) {
     return (
       <div className="py-24 flex flex-col items-center justify-center text-[#768994] text-center">
@@ -44,9 +55,32 @@ export default function HistoryTab({
     );
   }
 
+  // Group batches by filmTitle for campaign-level headers
+  const byFilm = Object.entries(consolidatedGroups).reduce((acc, [key, group]) => {
+    const film = group.filmTitle || "";
+    if (!acc[film]) acc[film] = [];
+    acc[film].push([key, group]);
+    return acc;
+  }, {});
+
   return (
     <div className="space-y-6 relative">
-      {Object.entries(consolidatedGroups).map(([key, group]) => (
+      {Object.entries(byFilm).map(([film, groups]) => (
+        <div key={film}>
+          {film && (
+            <div className="flex items-center gap-2 px-1 mb-3 mt-2">
+              <Film className="w-4 h-4 text-[#12a0e1] shrink-0" />
+              <span className="text-sm font-black text-[#122027] tracking-tight">{film}</span>
+              <div className="flex-1 h-px bg-[#dce4ec]" />
+              <span className="text-xs font-bold text-[#768994]">
+                {groups.reduce((s, [, g]) => s + g.totalRaw + g.totalAdd, 0) > 0 &&
+                  (() => { const s = groups.reduce((sum, [, g]) => sum + g.totalRaw + g.totalAdd, 0); const h = Math.floor(s/3600); const m = Math.floor((s%3600)/60); return `${h}h ${m}m`; })()
+                }
+              </span>
+            </div>
+          )}
+          <div className="space-y-4">
+          {groups.map(([key, group]) => (
         <div
           key={key}
           className={`bg-white border border-[#dce4ec] rounded-2xl shadow-sm transition-all relative ${
@@ -129,7 +163,8 @@ export default function HistoryTab({
                     )}
                   </div>
 
-                  <div className="flex items-center gap-3 shrink-0">
+                  <div className="flex items-center gap-2 shrink-0">
+                    {/* Time display */}
                     <div className="flex flex-col items-end justify-center mr-1">
                       <div className="text-xs font-mono bg-white border border-slate-200 px-2 py-1 rounded text-slate-500">
                         Base: {formatTimerDisplay(task.rawSeconds)}
@@ -140,12 +175,34 @@ export default function HistoryTab({
                         </div>
                       )}
                     </div>
-                    <button onClick={() => toggleHistoryTimer(task.id, "additional")}
-                      className={`p-1.5 rounded-lg transition-all ${historyTimer.taskId === task.id && historyTimer.type === "additional" ? "bg-[#12a0e1]/20 text-[#12a0e1] shadow-inner" : "bg-slate-50 text-[#768994] hover:bg-slate-200"}`}
-                      title="Log Additional Time"
-                    >
-                      {historyTimer.taskId === task.id && historyTimer.type === "additional" ? <Pause className="w-3 h-3" /> : <Play className="w-3 h-3" />}
-                    </button>
+
+                    {/* Inline additional time input */}
+                    {addingTimeId === task.id ? (
+                      <div className="flex items-center gap-1 bg-[#1cc1a5]/10 border border-[#1cc1a5]/30 rounded-xl px-2 py-1">
+                        <input
+                          autoFocus
+                          type="number" min="0" max="23" placeholder="h"
+                          value={addH} onChange={(e) => setAddH(e.target.value)}
+                          onKeyDown={(e) => { if (e.key === "Enter") commitAddTime(task); if (e.key === "Escape") closeAddTime(); }}
+                          className="w-8 text-center text-xs font-mono bg-transparent outline-none text-[#122027]"
+                        />
+                        <span className="text-[#1cc1a5] font-bold text-xs">h</span>
+                        <input
+                          type="number" min="0" max="59" placeholder="m"
+                          value={addM} onChange={(e) => setAddM(e.target.value)}
+                          onKeyDown={(e) => { if (e.key === "Enter") commitAddTime(task); if (e.key === "Escape") closeAddTime(); }}
+                          className="w-8 text-center text-xs font-mono bg-transparent outline-none text-[#122027]"
+                        />
+                        <span className="text-[#1cc1a5] font-bold text-xs">m</span>
+                        <button onClick={() => commitAddTime(task)} className="p-0.5 text-[#1cc1a5] hover:text-[#15a38b] transition-colors"><Check className="w-3.5 h-3.5" /></button>
+                        <button onClick={closeAddTime} className="p-0.5 text-[#768994] hover:text-rose-400 transition-colors"><X className="w-3.5 h-3.5" /></button>
+                      </div>
+                    ) : (
+                      <button onClick={() => openAddTime(task.id)} className="flex items-center gap-1 px-2 py-1 text-[10px] font-bold text-[#768994] hover:text-[#1cc1a5] hover:bg-[#1cc1a5]/10 rounded-lg transition-colors opacity-0 group-hover/row:opacity-100" title="Add Additional Time">
+                        <Plus className="w-3 h-3" /> Add time
+                      </button>
+                    )}
+
                     <button onClick={() => startEditingTime(task)} className="p-2 text-[#768994] hover:text-emerald-600 hover:bg-emerald-100 transition-colors rounded-xl mx-0.5 opacity-0 group-hover/row:opacity-100" title="Edit Logged Time"><Clock className="w-4 h-4" /></button>
                     <button onClick={() => startTaskEdit(task)} className="p-2 text-[#768994] hover:text-indigo-600 hover:bg-indigo-100 transition-colors rounded-xl mx-0.5 opacity-0 group-hover/row:opacity-100" title="Reassign / Move Task"><FolderInput className="w-4 h-4" /></button>
                     <button onClick={() => setItemToDelete({ type: "single", ids: [task.id] })} className="p-2 text-[#768994] hover:text-rose-600 hover:bg-rose-100 transition-colors rounded-xl mx-0.5 opacity-0 group-hover/row:opacity-100" title="Delete Subtask"><Trash2 className="w-4 h-4" /></button>
@@ -191,7 +248,11 @@ export default function HistoryTab({
             ))}
           </div>
         </div>
+          ))}
+          </div>
+        </div>
       ))}
     </div>
   );
 }
+

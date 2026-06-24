@@ -238,7 +238,8 @@ const sortTasksByStatus = (tasks) => {
   });
 };
 
-export default function TodaysList({ wrikeData }) {
+export default function TodaysList({ wrikeData, triggerToast: _triggerToast }) {
+  const triggerToast = _triggerToast ?? ((msg) => console.warn("Toast:", msg));
   const [campaigns, setCampaigns] = useState(INITIAL_CAMPAIGNS);
   const [assignments, setAssignments] = useState(
     TEAM_MEMBERS.reduce((acc, name) => ({ ...acc, [name]: [] }), {})
@@ -251,9 +252,6 @@ export default function TodaysList({ wrikeData }) {
 
   const [timeframe, setTimeframe] = useState("Today");
   const [isSyncing, setIsSyncing] = useState(false);
-
-  // Mock Toast (Replace with actual if available)
-  const triggerToast = (msg) => alert(msg);
 
   const TIMEFRAMES = ["Today", "Tomorrow", "Next Week"];
 
@@ -533,7 +531,7 @@ export default function TodaysList({ wrikeData }) {
 
   const handleAutoAssign = (targetTimeframe = timeframe) => {
     if (!wrikeData || wrikeData.length === 0) {
-      alert("No Wrike data available to assign! Please fetch data first.");
+      triggerToast("No Wrike data available to assign! Please fetch data first.");
       return;
     }
 

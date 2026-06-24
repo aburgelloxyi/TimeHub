@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useMemo } from "react";
+import React, { useState, useEffect, useRef, useMemo, useCallback } from "react";
 import {
   Clock, LayoutList, Layout, Server, Moon, Copy, Zap,
   Command, Search, Database, FileDown, Trash2, RefreshCw,
@@ -6,6 +6,7 @@ import {
 import "./Timesheeter.css";
 import PillNav from "./components/NavPill";
 import ThemeToggle from "./components/shared/ThemeToggle";
+import Toast from "./components/shared/Toast";
 import Tracker from "./components/tracker/Tracker";
 import TodaysList from "./components/TodaysList";
 import CampaignCanvas from "./components/Canvas";
@@ -16,6 +17,17 @@ export default function App() {
   const [activePage, setActivePage] = useState("timesheet");
   const [globalWrikeData, setGlobalWrikeData] = useState([]);
   const [folderDictionary, setFolderDictionary] = useState({});
+
+  // Global toast — available to all pages
+  const [globalToast, setGlobalToast] = useState({ show: false, message: "", type: "error" });
+  const triggerToast = useCallback((message, type = "error") => {
+    setGlobalToast({ show: true, message, type });
+  }, []);
+  useEffect(() => {
+    if (!globalToast.show) return;
+    const t = setTimeout(() => setGlobalToast((p) => ({ ...p, show: false })), 4000);
+    return () => clearTimeout(t);
+  }, [globalToast.show]);
 
   // Only MATRIX tasks go to the Canvas
   const filteredData = useMemo(() => {
@@ -240,11 +252,16 @@ export default function App() {
 
       <ThemeToggle />
 
+      <Toast
+        toast={globalToast}
+        onClose={() => setGlobalToast((p) => ({ ...p, show: false }))}
+      />
+
       {activePage === "timesheet" && <Tracker wrikeData={globalWrikeData} />}
       <div className={activePage === "todayslist" ? "block" : "hidden"}>
-        <TodaysList wrikeData={globalWrikeData} />
+        <TodaysList wrikeData={globalWrikeData} triggerToast={triggerToast} />
       </div>
-      {activePage === "canvas" && <CampaignCanvas wrikeData={filteredData} />}
+      {activePage === "canvas" && <CampaignCanvas wrikeData={filteredData} triggerToast={triggerToast} />}
       {activePage === "wriketest" && (
         <WrikeTest wrikeData={globalWrikeData} setWrikeData={setGlobalWrikeData} setFolderDictionary={setFolderDictionary} />
       )}

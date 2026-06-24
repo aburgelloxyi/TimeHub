@@ -26,6 +26,20 @@ export const guessFieldsFromTask = (linkedTask, jobOptions = [], extraText = "")
     if (!projectText) projectText = titleText.split(/[_|-]/)[0]?.trim() || "";
   }
 
+  // Derive film title: folder immediately before "DIGITAL" in the path, or
+  // fall back to the pre-enriched projectName, or first segment of task title
+  let filmTitle = linkedTask.projectName || "";
+  if (!filmTitle && pathText) {
+    const parts = pathText.split("/");
+    const digIdx = parts.findIndex((p) => p.trim() === "DIGITAL");
+    if (digIdx > 0 && parts[digIdx - 1]) {
+      filmTitle = decodeURIComponent(parts[digIdx - 1])
+        .replace(/[_|-]/g, " ")
+        .trim();
+    }
+  }
+  if (!filmTitle) filmTitle = titleText.split(/[_|-]/)[0]?.trim() || "";
+
   let customFieldsText = "";
   if (linkedTask.customFields) {
     customFieldsText = linkedTask.customFields
@@ -82,10 +96,33 @@ export const guessFieldsFromTask = (linkedTask, jobOptions = [], extraText = "")
     }
   }
 
+  // --- Client guess (same rules as Legacy pull) ---
+  const pathUpper = pathText.toUpperCase();
+  const titleUpper = titleText.toUpperCase();
+  let client = "";
+
+  if (pathUpper.includes("UNIVERSAL")) {
+    const terr = (guessedTerritory || "").toUpperCase();
+    if (terr === "UK" || terr === "UNITED KINGDOM") client = "Universal Pictures UK";
+    else if (terr === "AUSTRALIA" || terr === "AU" || terr === "AUS") client = "Universal Pictures Australia";
+    else client = "Universal Pictures International";
+  } else if (pathUpper.includes("PARAMOUNT")) {
+    client = "Paramount Pictures";
+  } else if (pathUpper.includes("SONY")) {
+    client = "Sony Pictures";
+  }
+
+  if (!filmTitle || titleUpper.includes("SHOWREEL") || titleUpper.includes("INTERNAL") || titleUpper.includes("PITCH")) {
+    filmTitle = filmTitle || "XYi Unbilled";
+    if (!client) client = "Internal";
+  }
+
   return {
     jobNumber: guessedJob || "⚠️ Unassigned",
     territory: guessedTerritory || "⚠️ Unassigned",
     category: "⚠️ Unassigned",
     notes: linkedTask.title || "",
+    filmTitle,
+    client,
   };
 };

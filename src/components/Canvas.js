@@ -86,7 +86,8 @@ const parseFormatting = (text) => {
   return html;
 };
 
-export default function CampaignCanvas({ wrikeData = [] }) {
+export default function CampaignCanvas({ wrikeData = [], triggerToast: _triggerToast }) {
+  const triggerToast = _triggerToast ?? ((msg) => console.warn("Toast:", msg));
   const [campaigns, setCampaigns] = useState(INITIAL_CAMPAIGNS);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [selectedMatrix, setSelectedMatrix] = useState(null);
@@ -382,13 +383,13 @@ export default function CampaignCanvas({ wrikeData = [] }) {
       if (result.id === "action-new") setIsModalOpen(true);
       if (result.id === "action-copy") {
         navigator.clipboard.writeText(JSON.stringify(campaigns, null, 2));
-        alert("Canvas Data copied to clipboard!");
+        triggerToast("Canvas data copied to clipboard!", "success");
       }
       if (result.id === "action-dark") {
         document.documentElement.classList.toggle("dark-theme");
       }
       if (result.id === "action-sync") {
-        alert("Wrike Sync triggered! (Placeholder)");
+        triggerToast("Wrike Sync triggered! (Placeholder)");
       }
       return;
     }

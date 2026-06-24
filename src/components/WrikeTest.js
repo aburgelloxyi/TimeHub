@@ -14,11 +14,14 @@ import { FILM_MAPPINGS, MOTION_TEAM_NAME_MAP } from "../constants.js";
 
 export default function WrikeTest({
   wrikeData,
-  setWrikeData,
+  syncNow,
+  isSyncing,
+  lastSynced,
+  syncError,
   setFolderDictionary,
 }) {
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState(null);
+  const loading = isSyncing;
+  const error = syncError;
 
   const [apiToken, setApiToken] = useState(() => {
     return localStorage.getItem("wrike_personal_token") || "";
@@ -483,7 +486,7 @@ export default function WrikeTest({
 
           <div className="flex gap-3 w-full sm:w-auto">
             <button
-              onClick={fetchWrikeData}
+              onClick={syncNow}
               disabled={loading}
               className="flex items-center justify-center gap-2 bg-[#122027] hover:bg-slate-800 text-white px-6 py-3 rounded-xl font-bold transition-all shadow-sm active:scale-95 disabled:opacity-50"
             >

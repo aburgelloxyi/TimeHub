@@ -12,11 +12,11 @@ import TodaysList from "./components/TodaysList";
 import CampaignCanvas from "./components/Canvas";
 import WrikeTest from "./components/WrikeTest";
 import LegacyTimesheet from "./components/LegacyTimesheets";
+import { useWrikeCache } from "./hooks/useWrikeCache";
 
 export default function App() {
   const [activePage, setActivePage] = useState("timesheet");
-  const [globalWrikeData, setGlobalWrikeData] = useState([]);
-  const [folderDictionary, setFolderDictionary] = useState({});
+  const { tasks: globalWrikeData, isSyncing, lastSynced, syncError, syncNow } = useWrikeCache();
 
   // Global toast — available to all pages
   const [globalToast, setGlobalToast] = useState({ show: false, message: "", type: "error" });
@@ -30,13 +30,10 @@ export default function App() {
   }, [globalToast.show]);
 
   // Only MATRIX tasks go to the Canvas
-  const filteredData = useMemo(() => {
-    if (!globalWrikeData || !folderDictionary) return [];
-
-    return globalWrikeData.filter((task) =>
-      task.title?.toUpperCase().includes("MATRIX")
-    );
-  }, [globalWrikeData, folderDictionary]);
+  const filteredData = useMemo(
+    () => globalWrikeData.filter((task) => task.title?.toUpperCase().includes("MATRIX")),
+    [globalWrikeData]
+  );
 
   // --- Global command palette ---
   const [isPaletteOpen, setIsPaletteOpen] = useState(false);
@@ -263,7 +260,7 @@ export default function App() {
       </div>
       {activePage === "canvas" && <CampaignCanvas wrikeData={filteredData} triggerToast={triggerToast} />}
       {activePage === "wriketest" && (
-        <WrikeTest wrikeData={globalWrikeData} setWrikeData={setGlobalWrikeData} setFolderDictionary={setFolderDictionary} />
+        <WrikeTest wrikeData={globalWrikeData} syncNow={syncNow} isSyncing={isSyncing} lastSynced={lastSynced} syncError={syncError} />
       )}
       {activePage === "legacy" && <LegacyTimesheet wrikeData={globalWrikeData} />}
     </div>

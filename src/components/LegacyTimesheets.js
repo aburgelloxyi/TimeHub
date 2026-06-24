@@ -1243,16 +1243,31 @@ export default function LegacyTimesheet({ wrikeData }) {
       const existingTimelogIds = await fetchExistingTimelogIds(wrikeUserId);
 
       const newRows = [];
+      const dayNames = ["Sunday","Monday","Tuesday","Wednesday","Thursday","Friday","Saturday"];
 
+      // Group logs by taskId + dayOfWeek so we sum hours before rounding.
+      // 2 × 2-min logs for the same task → 4 min total → 0.5h, not 0.5 + 0.5 = 1h.
+      const grouped = {};
       logs.forEach((log) => {
         if (existingTimelogIds.has(log.id)) return;
+        const [ly, lm, ld] = log.trackedDate.split("T")[0].split("-").map(Number);
+        const logDate = new Date(ly, lm - 1, ld);
+        const dayOfWeek = dayNames[logDate.getDay()];
+        if (frozenDays[dayOfWeek]) return;
+        const key = `${log.taskId}_${dayOfWeek}`;
+        if (!grouped[key]) {
+          grouped[key] = { log, logDate, dayOfWeek, totalHours: 0, notes: "" };
+        }
+        grouped[key].totalHours += log.hours;
+        if (!grouped[key].notes && log.comment) grouped[key].notes = log.comment;
+      });
 
+      Object.values(grouped).forEach(({ log, logDate, dayOfWeek, totalHours, notes }) => {
         const task = currentTasks.find((t) => t.id === log.taskId);
         const guessed = guessFieldsFromTask(task);
 
         let client = "";
         let filmTitle = task?.projectName || "";
-        // Normalize all-caps folder names (e.g. "THE ODYSSEY" → "The Odyssey")
         if (filmTitle && filmTitle === filmTitle.toUpperCase() && filmTitle !== filmTitle.toLowerCase()) {
           filmTitle = filmTitle.replace(/\w\S*/g, (w) => w[0].toUpperCase() + w.slice(1).toLowerCase());
         }
@@ -1260,48 +1275,19 @@ export default function LegacyTimesheet({ wrikeData }) {
 
         if (task) {
           const pathUpper = (task.extractedPathData || "").toUpperCase();
-
           if (pathUpper.includes("UNIVERSAL")) {
             const terr = (guessed.territory || "").toUpperCase();
-            if (terr === "UK" || terr === "UNITED KINGDOM")
-              client = "Universal Pictures UK";
-            else if (terr === "AUSTRALIA" || terr === "AU" || terr === "AUS")
-              client = "Universal Pictures Australia";
+            if (terr === "UK" || terr === "UNITED KINGDOM") client = "Universal Pictures UK";
+            else if (terr === "AUSTRALIA" || terr === "AU" || terr === "AUS") client = "Universal Pictures Australia";
             else client = "Universal Pictures International";
-          } else if (pathUpper.includes("PARAMOUNT"))
-            client = "Paramount Pictures";
+          } else if (pathUpper.includes("PARAMOUNT")) client = "Paramount Pictures";
           else if (pathUpper.includes("SONY")) client = "Sony Pictures";
         }
 
-        if (
-          !filmTitle ||
-          filmTitle === "Unknown Project" ||
-          searchTitle.includes("SHOWREEL") ||
-          searchTitle.includes("INTERNAL") ||
-          searchTitle.includes("PITCH")
-        ) {
+        if (!filmTitle || filmTitle === "Unknown Project" || searchTitle.includes("SHOWREEL") || searchTitle.includes("INTERNAL") || searchTitle.includes("PITCH")) {
           filmTitle = "XYi Unbilled";
           if (!client) client = "Internal";
         }
-
-        const dayNames = [
-          "Sunday",
-          "Monday",
-          "Tuesday",
-          "Wednesday",
-          "Thursday",
-          "Friday",
-          "Saturday",
-        ];
-        // Use the log's own trackedDate parsed in local time (avoids UTC-midnight shift)
-        const [ly, lm, ld] = log.trackedDate
-          .split("T")[0]
-          .split("-")
-          .map(Number);
-        const logDate = new Date(ly, lm - 1, ld);
-        const dayOfWeek = dayNames[logDate.getDay()];
-
-        if (frozenDays[dayOfWeek]) return;
 
         newRows.push({
           id: Date.now() + Math.floor(Math.random() * 1000),
@@ -1310,15 +1296,15 @@ export default function LegacyTimesheet({ wrikeData }) {
           dayOfWeek,
           date: logDate.toLocaleDateString("en-GB"),
           jobNumber: guessed.jobNumber,
-          client: client,
-          filmTitle: filmTitle,
+          client,
+          filmTitle,
           projectDescription: guessed.notes,
           territory: guessed.territory,
           category: guessed.category,
           clientAmends: false,
-          notes: log.comment || task?.title || "",
+          notes: notes || task?.title || "",
           is3D: false,
-          timeSpent: getTimesheetValue(log.hours),
+          timeSpent: getTimesheetValue(totalHours),
           additionalTime: "none",
         });
       });

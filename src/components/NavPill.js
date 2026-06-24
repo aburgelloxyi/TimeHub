@@ -47,7 +47,7 @@ export default function ApplePillNav({ activePage, setActivePage }) {
   }, [activePage]);
 
   return (
-    <div className="flex justify-center w-full pt-8">
+    <div className="flex justify-center w-full pt-3">
       {/* THE CONTAINER: Fully rounded, subtle border, tight padding */}
       <nav
         ref={navRef}

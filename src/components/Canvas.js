@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback } from "react";
 import { supabase } from "../lib/supabaseClient";
+import { getFilmName } from "../lib/wrikeEnrich";
 import {
   Layout,
   Sparkles,
@@ -82,8 +83,6 @@ export default function CampaignCanvas({ wrikeData = [], triggerToast: _triggerT
 
   // --- ACCORDION ANIMATION & SCROLL STATE ---
   const [expandedCampId, setExpandedCampId] = useState(null);
-  const [closingCampId, setClosingCampId] = useState(null);
-  const accordionRef = useRef(null);
 
   // --- SIDE PANEL STATE ---
   const [showFoldersPanel, setShowFoldersPanel] = useState(false);
@@ -151,19 +150,12 @@ export default function CampaignCanvas({ wrikeData = [], triggerToast: _triggerT
     if (!isPaletteOpen) setPaletteSearch("");
   }, [isPaletteOpen]);
 
-  // --- SMART AUTO-SCROLL EFFECT ---
+  // --- ESCAPE KEY TO CLOSE CAMPAIGN MODAL ---
   useEffect(() => {
-    if (expandedCampId && accordionRef.current) {
-      const timer = setTimeout(() => {
-        const yOffset = -40;
-        const elementTop = accordionRef.current.getBoundingClientRect().top;
-        const targetPosition = elementTop + window.scrollY + yOffset;
-        window.scrollTo({ top: targetPosition, behavior: "smooth" });
-      }, 350);
-
-      return () => clearTimeout(timer);
-    }
-  }, [expandedCampId]);
+    const onKey = (e) => { if (e.key === "Escape") setExpandedCampId(null); };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
 
   useEffect(() => {
     if (!wrikeData || wrikeData.length === 0) return;
@@ -209,6 +201,7 @@ export default function CampaignCanvas({ wrikeData = [], triggerToast: _triggerT
           notes: [],
           matrices: [],
           links: [],
+          lastMatrixUpdate: 0,
         };
       }
 
@@ -263,6 +256,10 @@ export default function CampaignCanvas({ wrikeData = [], triggerToast: _triggerT
           title: task.title,
           tableHtml: tableHtml,
         });
+        const taskTs = task.updatedDate ? new Date(task.updatedDate).getTime() : 0;
+        if (taskTs > wrikeGroupedCampaigns[campaignTitle].lastMatrixUpdate) {
+          wrikeGroupedCampaigns[campaignTitle].lastMatrixUpdate = taskTs;
+        }
       }
     });
 
@@ -396,49 +393,12 @@ export default function CampaignCanvas({ wrikeData = [], triggerToast: _triggerT
 
   // --- REBUILT "BREATHE" ACCORDION TOGGLE (WITH ANCHORING) ---
   const handleToggleCamp = (id) => {
-    const anchorScrollTop = () => {
-      if (accordionRef.current) {
-        const yOffset = -40;
-        const elementTop = accordionRef.current.getBoundingClientRect().top;
-        window.scrollTo({
-          top: elementTop + window.scrollY + yOffset,
-          behavior: "smooth",
-        });
-      }
-    };
-
-    if (expandedCampId === id) {
-      anchorScrollTop();
-      setClosingCampId(id);
-      setExpandedCampId(null);
-      setTimeout(() => {
-        setClosingCampId(null);
-        setShowFoldersPanel(false);
-      }, 400);
-    } else if (expandedCampId) {
-      anchorScrollTop();
-      setClosingCampId(expandedCampId);
-      setExpandedCampId(null);
-      setShowFoldersPanel(false);
-
-      setTimeout(() => {
-        setClosingCampId(null);
-        setExpandedCampId(id);
-      }, 400);
-    } else {
-      setExpandedCampId(id);
-      setClosingCampId(null);
-      setShowFoldersPanel(false);
-    }
+    setExpandedCampId((prev) => (prev === id ? null : id));
+    setShowFoldersPanel(false);
   };
 
-  const activeCampId = expandedCampId || closingCampId;
-  const activeCamp = activeCampId
-    ? campaigns.find((c) => c.id === activeCampId)
-    : null;
-  const activeCover = activeCamp
-    ? covers[activeCamp.id] || CAMPAIGN_COVERS[activeCamp.id]
-    : null;
+  const activeCamp = expandedCampId ? campaigns.find((c) => c.id === expandedCampId) : null;
+  const activeCover = activeCamp ? covers[activeCamp.id] || CAMPAIGN_COVERS[activeCamp.id] : null;
 
   const handleSaveNewCampaign = () => {
     if (!newCampaignTitle.trim()) return;
@@ -787,7 +747,7 @@ export default function CampaignCanvas({ wrikeData = [], triggerToast: _triggerT
         </div>
       )}
 
-      <div className="max-w-[1800px] mx-auto px-4 sm:px-6 pt-8 space-y-6">
+      <div className="max-w-[1800px] mx-auto px-4 sm:px-6 pt-8">
         <header className="bg-white shadow-sm border border-[#dce4ec] rounded-[2rem] p-6 sm:px-8 flex flex-col md:flex-row items-start md:items-center justify-between gap-5 relative overflow-hidden">
           <div className="flex items-center gap-4">
             <div className="bg-gradient-to-br from-[#12a0e1] to-[#1cc1a5] p-3.5 rounded-2xl text-white shadow-lg shadow-[#12a0e1]/20">
@@ -821,76 +781,99 @@ export default function CampaignCanvas({ wrikeData = [], triggerToast: _triggerT
             Loading campaigns from cache…
           </div>
         )}
-        <div className="flex flex-wrap justify-center gap-8 sm:gap-12 py-10 px-4 max-w-5xl mx-auto">
-          {campaigns.map((camp) => {
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-4 mt-6 py-8 px-6 max-w-6xl mx-auto w-full">
+          {[...campaigns].sort((a, b) => (b.lastMatrixUpdate || 0) - (a.lastMatrixUpdate || 0)).map((camp) => {
             const hasCover = covers[camp.id] || CAMPAIGN_COVERS[camp.id];
             const isExpanded = expandedCampId === camp.id;
+            const hasMatrix = camp.matrices?.length > 0;
+            const updatedTs = camp.lastMatrixUpdate;
+            const isActive = updatedTs && (Date.now() - updatedTs) < 14 * 24 * 60 * 60 * 1000;
+            const relativeDate = (ts) => {
+              if (!ts) return null;
+              const days = Math.floor((Date.now() - ts) / 86400000);
+              if (days === 0) return "Today";
+              if (days === 1) return "Yesterday";
+              if (days < 7) return `${days}d ago`;
+              if (days < 30) return `${Math.floor(days / 7)}w ago`;
+              return `${Math.floor(days / 30)}mo ago`;
+            };
 
             return (
               <button
                 key={camp.id}
                 onClick={() => handleToggleCamp(camp.id)}
-                className="group flex flex-col items-center w-28 sm:w-36 gap-3 transition-all outline-none shrink-0"
+                className="group relative rounded-2xl overflow-hidden outline-none transition-all duration-300 text-left aspect-[2/3] shadow-md hover:shadow-2xl hover:-translate-y-1"
+                style={{
+                  background: hasCover ? "#122027" : generateGradient(camp.title),
+                  filter: isActive ? "none" : "grayscale(60%) brightness(0.75)",
+                  transition: "filter 0.3s ease, transform 0.3s ease, box-shadow 0.3s ease",
+                }}
+                onMouseEnter={e => { if (!isActive) e.currentTarget.style.filter = "none"; }}
+                onMouseLeave={e => { if (!isActive) e.currentTarget.style.filter = "grayscale(60%) brightness(0.75)"; }}
               >
-                <div
-                  className={`w-24 h-24 sm:w-32 sm:h-32 rounded-[2.5rem] shadow-md transition-all duration-300 border border-slate-100/50 flex flex-col items-center justify-center relative overflow-hidden ${
-                    isExpanded
-                      ? "ring-4 ring-[#12a0e1] ring-offset-4 ring-offset-slate-100 scale-105"
-                      : "group-hover:shadow-2xl group-hover:-translate-y-2"
-                  }`}
-                  style={{
-                    background: hasCover
-                      ? "#fff"
-                      : generateGradient(camp.title),
-                  }}
-                >
-                  {hasCover ? (
-                    <>
-                      <img
-                        src={hasCover}
-                        alt={camp.title}
-                        className="absolute inset-0 w-full h-full object-cover transition-transform duration-500 group-hover:scale-110"
-                      />
-                    </>
-                  ) : (
-                    <div className="text-white group-hover:scale-110 transition-transform duration-300 drop-shadow-md">
-                      <Film className="w-8 h-8 sm:w-10 sm:h-10 opacity-90" />
-                    </div>
-                  )}
+                {/* Poster image — translateZ forces a compositing layer so overflow-hidden clips the scale on all corners */}
+                {hasCover && (
+                  <div className="absolute inset-0 overflow-hidden rounded-2xl [transform:translateZ(0)]">
+                    <img
+                      src={hasCover}
+                      alt={camp.title}
+                      className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-105"
+                    />
+                  </div>
+                )}
+
+                {/* No-cover icon */}
+                {!hasCover && (
+                  <div className="absolute inset-0 flex items-center justify-center">
+                    <Film className="w-10 h-10 text-white/30" />
+                  </div>
+                )}
+
+                {/* Bottom gradient overlay */}
+                <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/20 to-transparent" />
+
+                {/* Selected ring */}
+                {isExpanded && (
+                  <div className="absolute inset-0 ring-4 ring-inset ring-[#12a0e1] rounded-2xl pointer-events-none" />
+                )}
+
+                {/* Top badges row */}
+                <div className="absolute top-2.5 left-2.5 right-2.5 flex justify-between items-start">
+                  {/* Matrix status dot — green only if updated within last 2 weeks */}
+                  {(() => {
+                    const recentlyUpdated = updatedTs && (Date.now() - updatedTs) < 14 * 24 * 60 * 60 * 1000;
+                    return hasMatrix && recentlyUpdated
+                      ? <span className="w-2 h-2 rounded-full mt-0.5 bg-emerald-400 shadow-[0_0_6px_2px_rgba(52,211,153,0.5)]" />
+                      : null;
+                  })()}
+                  {/* Updated badge */}
+                  {updatedTs ? (
+                    <span className="text-[10px] font-bold bg-black/40 backdrop-blur-sm text-white/80 px-2 py-0.5 rounded-full">
+                      {relativeDate(updatedTs)}
+                    </span>
+                  ) : null}
                 </div>
-                <span
-                  className={`text-sm font-bold text-center line-clamp-2 leading-snug transition-colors ${
-                    isExpanded
-                      ? "text-[#12a0e1]"
-                      : "text-[#122027] group-hover:text-[#12a0e1]"
-                  }`}
-                >
-                  {camp.title}
-                </span>
+
+                {/* Title at bottom */}
+                <div className="absolute bottom-0 left-0 right-0 p-3">
+                  <p className={`text-sm font-black leading-tight text-white drop-shadow transition-colors line-clamp-2 ${isExpanded ? "text-[#12a0e1]" : ""}`}>
+                    {camp.title}
+                  </p>
+                </div>
               </button>
             );
           })}
         </div>
 
-        {/* --- THE MASTER ACCORDION --- */}
-        <div
-          ref={accordionRef}
-          className={`w-full max-w-8xl mx-auto grid transition-all duration-500 ease-[cubic-bezier(0.4,0,0.32,1)] ${
-            expandedCampId || closingCampId
-              ? "grid-rows-[1fr] opacity-100 mb-12"
-              : "grid-rows-[0fr] opacity-0 mb-0 pointer-events-none"
-          }`}
-        >
-          <div className="overflow-visible">
-            {activeCamp && (
-              <div
-                className={`bg-white rounded-[2rem] w-full shadow-2xl flex flex-col border border-[#dce4ec] relative h-[80vh] min-h-[500px] transition-all duration-500 ease-out ${
-                  closingCampId
-                    ? "animate-accordion-close"
-                    : "animate-accordion-open"
-                }`}
-              >
-                {/* Dynamic Banner Header */}
+        {/* --- CAMPAIGN DETAIL MODAL --- */}
+        {activeCamp && (
+          <div
+            className="fixed inset-0 z-[9998] flex items-center justify-center p-4 sm:p-8 bg-black/60 backdrop-blur-sm animate-in fade-in duration-200"
+            onClick={(e) => { if (e.target === e.currentTarget) setExpandedCampId(null); }}
+          >
+            <div className="bg-white rounded-[2rem] w-full max-w-[92vw] xl:max-w-7xl shadow-2xl flex flex-col border border-[#dce4ec] relative h-[90vh] animate-in zoom-in-95 duration-200">
+
+              {/* Dynamic Banner Header */}
                 <div
                   className="h-40 sm:h-56 w-full relative shrink-0 flex items-end p-6 sm:p-8 rounded-t-[2rem] overflow-hidden"
                   style={{
@@ -1403,12 +1386,12 @@ export default function CampaignCanvas({ wrikeData = [], triggerToast: _triggerT
                     </a>
                   </div>
                 </div>
-              </div>
-            )}
+            </div>
           </div>
-        </div>
+        )}
 
         {/* Campaign Generation Creation Overlay Modal */}
+
         {isModalOpen && (
           <div className="fixed inset-0 bg-[#122027]/60 backdrop-blur-sm flex items-center justify-center z-[200] p-4">
             <div className="bg-white rounded-[24px] shadow-2xl w-full max-w-md overflow-hidden border border-[#dce4ec] animate-in zoom-in-95 duration-200">

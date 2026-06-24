@@ -1513,7 +1513,7 @@ export default function LegacyTimesheet({ wrikeData }) {
   }`;
 
   return (
-    <div className="min-h-screen bg-slate-100 p-4 font-sans selection:bg-[#12a0e1]/30">
+    <div className="min-h-screen bg-slate-100 px-4 pt-8 pb-4 font-sans selection:bg-[#12a0e1]/30">
       {/* Toast */}
       {toast.show && (
         <div className={`fixed top-5 right-5 z-[99999] flex items-center gap-3 px-5 py-3.5 rounded-2xl shadow-2xl text-sm font-bold transition-all animate-in fade-in slide-in-from-top-2 duration-300 ${

@@ -12,9 +12,28 @@ const SearchableSelect = ({
   getPrefix,
   isGrouped = false,
   alignRight = false,
+  // Optional shared-dropdown props (same pattern as LegacyTimesheets)
+  // When provided, only one dropdown can be open at a time across siblings.
+  dropdownId,
+  activeDropdown,
+  setActiveDropdown,
 }) => {
-  const [isOpen, setIsOpen] = useState(false);
+  const [localOpen, setLocalOpen] = useState(false);
   const [searchTerm, setSearchTerm] = useState(value);
+
+  // Shared mode: open when this ID is active; local mode: use own state
+  const isShared = dropdownId !== undefined && activeDropdown !== undefined && setActiveDropdown !== undefined;
+  const isOpen = isShared ? activeDropdown === dropdownId : localOpen;
+
+  const openDropdown = () => {
+    if (isShared) setActiveDropdown(dropdownId);
+    else setLocalOpen(true);
+  };
+  const closeDropdown = () => {
+    if (isShared) setActiveDropdown(null);
+    else setLocalOpen(false);
+  };
+  const toggleDropdown = () => (isOpen ? closeDropdown() : openDropdown());
 
   useEffect(() => setSearchTerm(value), [value]);
 
@@ -47,7 +66,7 @@ const SearchableSelect = ({
   };
 
   return (
-    <div className="relative w-full flex-1">
+    <div className={`relative w-full flex-1 ${isOpen ? "z-[999999]" : "z-20"}`}>
       <style>{`
         @keyframes shine {
           0% { transform: translateX(-150%) skewX(-15deg); }
@@ -62,7 +81,7 @@ const SearchableSelect = ({
             <button
               type="button"
               key={filter}
-              onClick={() => { setSearchTerm(filter); setIsOpen(true); }}
+              onClick={() => { setSearchTerm(filter); openDropdown(); }}
               disabled={disabled}
               className="relative overflow-hidden px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider bg-[#12a0e1]/10 hover:bg-[#12a0e1]/20 text-[#12a0e1] rounded-md border border-[#12a0e1]/20 transition-colors disabled:opacity-50"
             >
@@ -77,13 +96,17 @@ const SearchableSelect = ({
 
       {isOpen && (
         <div
-          className="fixed inset-0 z-10"
-          onClick={() => { setIsOpen(false); onChange(searchTerm); }}
+          className="fixed inset-0 z-40"
+          onMouseDown={(e) => {
+            e.stopPropagation();
+            closeDropdown();
+            onChange(searchTerm);
+          }}
         />
       )}
 
       <div
-        className={`relative flex items-center bg-white border focus-within:ring-2 focus-within:ring-[#12a0e1]/20 focus-within:border-[#12a0e1] transition-all rounded-xl z-20 ${
+        className={`relative flex items-center bg-white border focus-within:ring-2 focus-within:ring-[#12a0e1]/20 focus-within:border-[#12a0e1] transition-all rounded-xl z-50 ${
           disabled
             ? "opacity-60 bg-slate-50"
             : "hover:border-slate-300 border-[#dce4ec] shadow-sm"
@@ -101,23 +124,23 @@ const SearchableSelect = ({
         <input
           type="text"
           value={searchTerm}
-          onChange={(e) => { setSearchTerm(e.target.value); setIsOpen(true); }}
-          onFocus={() => setIsOpen(true)}
+          onChange={(e) => { setSearchTerm(e.target.value); openDropdown(); }}
+          onFocus={() => { if (!disabled) openDropdown(); }}
           placeholder={placeholder}
           disabled={disabled}
           className="w-full py-2.5 px-2 bg-transparent text-sm text-[#122027] outline-none placeholder:text-[#768994]"
         />
         <div
           className="pr-3.5 pl-1.5 text-[#768994] cursor-pointer"
-          onClick={() => !disabled && setIsOpen(!isOpen)}
+          onClick={() => !disabled && toggleDropdown()}
         >
-          <ChevronDown className="w-4 h-4" />
+          <ChevronDown className={`w-4 h-4 transition-transform duration-200 ${isOpen ? "rotate-180" : ""}`} />
         </div>
       </div>
 
       {isOpen && !disabled && (
         <div
-          className={`absolute top-full mt-2 bg-white/95 backdrop-blur-xl border border-[#dce4ec] rounded-xl shadow-xl z-30 max-h-80 overflow-y-auto overscroll-contain animate-in fade-in slide-in-from-top-2 duration-200 w-full sm:min-w-[600px] md:min-w-[750px] lg:min-w-[900px] ${
+          className={`absolute top-full mt-2 bg-white/95 backdrop-blur-xl border border-[#dce4ec] rounded-xl shadow-xl z-[999999] max-h-80 overflow-y-auto overscroll-contain animate-in fade-in slide-in-from-top-2 duration-200 w-full sm:min-w-[600px] md:min-w-[750px] lg:min-w-[900px] ${
             alignRight ? "right-0" : "left-0"
           }`}
         >
@@ -135,7 +158,7 @@ const SearchableSelect = ({
                         <button
                           type="button"
                           key={i}
-                          onClick={() => { setSearchTerm(opt); onChange(opt); setIsOpen(false); }}
+                          onClick={() => { setSearchTerm(opt); onChange(opt); closeDropdown(); }}
                           className="w-full text-left px-3 py-2 text-xs text-[#323b43] hover:bg-[#12a0e1]/10 hover:text-[#12a0e1] transition-colors rounded-lg flex items-center group/item"
                           title={opt}
                         >
@@ -164,7 +187,7 @@ const SearchableSelect = ({
                   <button
                     type="button"
                     key={i}
-                    onClick={() => { setSearchTerm(opt); onChange(opt); setIsOpen(false); }}
+                    onClick={() => { setSearchTerm(opt); onChange(opt); closeDropdown(); }}
                     className="w-full text-left px-3 py-2 text-xs text-[#323b43] hover:bg-[#12a0e1]/10 hover:text-[#12a0e1] transition-colors rounded-lg truncate flex items-center"
                     title={opt}
                   >

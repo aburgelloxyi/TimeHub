@@ -1,4 +1,6 @@
 import React, { useState, useEffect } from "react";
+import { useLegacyRows } from "../hooks/useLegacyRows";
+import { setWrikeUserId as stampWrikeUserId } from "../lib/supabaseClient";
 import {
   RefreshCw,
   XCircle,
@@ -380,10 +382,7 @@ export default function LegacyTimesheet({ wrikeData }) {
     return localStorage.getItem("xyi_legacy_activeDay") || "Monday";
   });
 
-  const [rows, setRows] = useState(() => {
-    const saved = localStorage.getItem("xyi_legacy_rows");
-    return saved ? JSON.parse(saved) : [];
-  });
+  // useLegacyRows is initialised after showToast below
 
   const [frozenDays, setFrozenDays] = useState(() => {
     const saved = localStorage.getItem("xyi_legacy_frozenDays");
@@ -394,9 +393,7 @@ export default function LegacyTimesheet({ wrikeData }) {
     localStorage.setItem("xyi_legacy_activeDay", activeDay);
   }, [activeDay]);
 
-  useEffect(() => {
-    localStorage.setItem("xyi_legacy_rows", JSON.stringify(rows));
-  }, [rows]);
+  // rows are now synced to Supabase via useLegacyRows
 
   useEffect(() => {
     localStorage.setItem("xyi_legacy_frozenDays", JSON.stringify(frozenDays));
@@ -418,6 +415,9 @@ export default function LegacyTimesheet({ wrikeData }) {
   // --- Toast ---
   const [toast, setToast] = useState({ show: false, message: "", type: "error" });
   const showToast = (message, type = "error") => setToast({ show: true, message, type });
+
+  // Initialised here so showToast is available to pass in
+  const { rows, setRows, loading: rowsLoading, addRow, addRows, updateRow, deleteRow } = useLegacyRows(showToast, wrikeUserId);
   useEffect(() => {
     if (!toast.show) return;
     const t = setTimeout(() => setToast({ show: false, message: "", type: "error" }), 4000);
@@ -455,26 +455,23 @@ export default function LegacyTimesheet({ wrikeData }) {
   // --- Add blank row ---
   const handleAddRow = () => {
     if (frozenDays[activeDay]) return;
-    setRows((prev) => [
-      ...prev,
-      {
-        id: Date.now() + Math.random(),
-        taskId: null,
-        dayOfWeek: activeDay,
-        jobNumber: "",
-        client: "",
-        filmTitle: "",
-        projectDescription: "",
-        country: "",
-        category: "",
-        clientAmends: false,
-        moreInfo: "",
-        is3D: false,
-        timeSpent: "none",
-        additionalTime: "none",
-        isSaved: false,
-      },
-    ]);
+    addRow({
+      id: Date.now() + Math.floor(Math.random() * 1000),
+      taskId: null,
+      dayOfWeek: activeDay,
+      jobNumber: "",
+      client: "",
+      filmTitle: "",
+      projectDescription: "",
+      country: "",
+      category: "",
+      clientAmends: false,
+      moreInfo: "",
+      is3D: false,
+      timeSpent: "none",
+      additionalTime: "none",
+      isSaved: false,
+    });
   };
 
   const [isWrikeModalOpen, setIsWrikeModalOpen] = useState(false);
@@ -498,6 +495,7 @@ export default function LegacyTimesheet({ wrikeData }) {
               `${user.firstName || ""} ${user.lastName || ""}`.trim()
             );
             setWrikeUserId(user.id);
+            stampWrikeUserId(user.id);
           }
         })
         .catch(() => console.error("Failed to fetch user name"));
@@ -988,35 +986,29 @@ export default function LegacyTimesheet({ wrikeData }) {
       return { ...prev, [groupName]: groupTasks };
     });
 
-    setRows((prevRows) =>
-      prevRows.map((r) =>
-        r.taskId === taskId ? { ...r, category: newCategory } : r
-      )
-    );
+    rows
+      .filter((r) => r.taskId === taskId)
+      .forEach((r) => updateRow(r.id, "category", newCategory));
   };
 
   const handleModalTimeChange = (task, dayOfWeek, value) => {
-    const existingRowIndex = rows.findIndex(
+    const existingRow = rows.find(
       (r) => r.taskId === task.id && r.dayOfWeek === dayOfWeek
     );
 
     if (value === "none") {
-      if (existingRowIndex >= 0 && !rows[existingRowIndex].isSaved) {
-        setRows((prev) => prev.filter((_, idx) => idx !== existingRowIndex));
+      if (existingRow && !existingRow.isSaved) {
+        deleteRow(existingRow.id);
       }
       return;
     }
 
-    if (existingRowIndex >= 0) {
-      setRows((prev) => {
-        const next = [...prev];
-        next[existingRowIndex].timeSpent = value;
-        next[existingRowIndex].category = task.wrikeCategory;
-        return next;
-      });
+    if (existingRow) {
+      updateRow(existingRow.id, "timeSpent", value);
+      updateRow(existingRow.id, "category", task.wrikeCategory);
     } else {
       const newRow = {
-        id: Date.now() + Math.random(),
+        id: Date.now() + Math.floor(Math.random() * 1000),
         taskId: task.id,
         dayOfWeek,
         jobNumber: task.wrikeJob,
@@ -1032,7 +1024,7 @@ export default function LegacyTimesheet({ wrikeData }) {
         additionalTime: "none",
         isSaved: false,
       };
-      setRows((prev) => [...prev, newRow]);
+      addRow(newRow);
     }
   };
 
@@ -1237,7 +1229,7 @@ export default function LegacyTimesheet({ wrikeData }) {
       const newRows = [];
 
       logs.forEach((log) => {
-        if (rows.some((r) => r.id === log.id)) return;
+        if (rows.some((r) => r.wrikeTimelogId === log.id)) return;
 
         const task = currentTasks.find((t) => t.id === log.taskId);
         const guessed = guessFieldsFromTask(task);
@@ -1292,7 +1284,8 @@ export default function LegacyTimesheet({ wrikeData }) {
         if (frozenDays[dayOfWeek]) return;
 
         newRows.push({
-          id: log.id,
+          id: Date.now() + Math.floor(Math.random() * 1000),
+          wrikeTimelogId: log.id,
           taskId: task?.id,
           dayOfWeek,
           jobNumber: guessed.jobNumber,
@@ -1311,7 +1304,7 @@ export default function LegacyTimesheet({ wrikeData }) {
       });
 
       if (newRows.length > 0) {
-        setRows((prev) => [...newRows, ...prev]);
+        addRows(newRows);
         showToast(`Pulled ${newRows.length} row${newRows.length !== 1 ? "s" : ""} from Wrike.`, "success");
       } else {
         showToast("No new or unfrozen times found for today.");
@@ -1463,28 +1456,19 @@ export default function LegacyTimesheet({ wrikeData }) {
     }
   };
 
-  const updateRow = (id, field, value) => {
+  // updateRow(id, field, value) and deleteRow(id) are provided by useLegacyRows
+  const handleUpdateRow = (id, field, value) => {
     if (frozenDays[activeDay]) return;
-
-    setRows((prev) =>
-      prev.map((row) => {
-        if (row.id === id) {
-          const updatedRow = { ...row, [field]: value };
-          if (field === "jobNumber" && value && value.includes(",")) {
-            updatedRow.projectDescription = value
-              .substring(value.indexOf(",") + 1)
-              .trim();
-          }
-          return updatedRow;
-        }
-        return row;
-      })
-    );
+    // Auto-fill projectDescription from jobNumber if it contains a comma
+    if (field === "jobNumber" && value && value.includes(",")) {
+      updateRow(id, "projectDescription", value.substring(value.indexOf(",") + 1).trim());
+    }
+    updateRow(id, field, value);
   };
 
-  const deleteRow = (id) => {
+  const handleDeleteRow = (id) => {
     if (frozenDays[activeDay]) return;
-    setRows((prev) => prev.filter((row) => row.id !== id));
+    deleteRow(id);
   };
 
   const toggleFreeze = () => {
@@ -2125,7 +2109,7 @@ export default function LegacyTimesheet({ wrikeData }) {
                   <td className="p-2 border-r border-slate-100 align-middle min-w-[240px]">
                     <div className="flex items-start gap-2 pl-1">
                       <button
-                        onClick={() => deleteRow(row.id)}
+                        onClick={() => handleDeleteRow(row.id)}
                         disabled={isDayFrozen}
                         className={`mt-1.5 transition-opacity ${
                           isDayFrozen
@@ -2146,7 +2130,7 @@ export default function LegacyTimesheet({ wrikeData }) {
                           options={DEFAULT_JOBS}
                           value={row.jobNumber}
                           onChange={(val) =>
-                            updateRow(row.id, "jobNumber", val)
+                            handleUpdateRow(row.id, "jobNumber", val)
                           }
                           placeholder="Select Job..."
                           isGrouped={true}
@@ -2190,7 +2174,7 @@ export default function LegacyTimesheet({ wrikeData }) {
                       rows={2}
                       value={row.projectDescription}
                       onChange={(e) =>
-                        updateRow(row.id, "projectDescription", e.target.value)
+                        handleUpdateRow(row.id, "projectDescription", e.target.value)
                       }
                       className={textAreaClass}
                       placeholder="Project description..."
@@ -2202,7 +2186,7 @@ export default function LegacyTimesheet({ wrikeData }) {
                     <TableSearchableSelect
                       options={TERRITORIES}
                       value={row.country}
-                      onChange={(val) => updateRow(row.id, "country", val)}
+                      onChange={(val) => handleUpdateRow(row.id, "country", val)}
                       placeholder="Country"
                       getPrefix={(val) => TERRITORY_FLAGS[val]}
                       dropdownId={`country-${row.id}`}
@@ -2217,7 +2201,7 @@ export default function LegacyTimesheet({ wrikeData }) {
                     <TableSearchableSelect
                       options={CATEGORIES}
                       value={row.category}
-                      onChange={(val) => updateRow(row.id, "category", val)}
+                      onChange={(val) => handleUpdateRow(row.id, "category", val)}
                       placeholder="Category"
                       isGrouped={true}
                       dropdownId={`category-${row.id}`}
@@ -2233,7 +2217,7 @@ export default function LegacyTimesheet({ wrikeData }) {
                       type="checkbox"
                       checked={row.clientAmends}
                       onChange={(e) =>
-                        updateRow(row.id, "clientAmends", e.target.checked)
+                        handleUpdateRow(row.id, "clientAmends", e.target.checked)
                       }
                       className={`w-4 h-4 rounded text-[#12a0e1] focus:ring-[#12a0e1] ${
                         isDayFrozen
@@ -2247,7 +2231,7 @@ export default function LegacyTimesheet({ wrikeData }) {
                   <td className="p-2 border-r border-slate-100 align-middle w-[140px]">
                     <textarea
                       value={row.moreInfo || ""}
-                      onChange={(e) => updateRow(row.id, "moreInfo", e.target.value)}
+                      onChange={(e) => handleUpdateRow(row.id, "moreInfo", e.target.value)}
                       placeholder="Notes…"
                       rows={2}
                       disabled={isDayFrozen}
@@ -2264,7 +2248,7 @@ export default function LegacyTimesheet({ wrikeData }) {
                       type="checkbox"
                       checked={row.is3D}
                       onChange={(e) =>
-                        updateRow(row.id, "is3D", e.target.checked)
+                        handleUpdateRow(row.id, "is3D", e.target.checked)
                       }
                       className={`w-4 h-4 rounded text-[#12a0e1] focus:ring-[#12a0e1] ${
                         isDayFrozen
@@ -2279,7 +2263,7 @@ export default function LegacyTimesheet({ wrikeData }) {
                     <TableSearchableSelect
                       options={TIME_OPTIONS}
                       value={row.timeSpent}
-                      onChange={(val) => updateRow(row.id, "timeSpent", val)}
+                      onChange={(val) => handleUpdateRow(row.id, "timeSpent", val)}
                       placeholder="none"
                       dropdownId={`time-${row.id}`}
                       activeDropdown={activeDropdown}
@@ -2293,7 +2277,7 @@ export default function LegacyTimesheet({ wrikeData }) {
                       options={TIME_OPTIONS}
                       value={row.additionalTime}
                       onChange={(val) =>
-                        updateRow(row.id, "additionalTime", val)
+                        handleUpdateRow(row.id, "additionalTime", val)
                       }
                       placeholder="none"
                       dropdownId={`addTime-${row.id}`}

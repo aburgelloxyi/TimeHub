@@ -29,6 +29,7 @@ export function useTaskActions(state) {
     editingTaskId, setEditingTaskId, editTaskForm,
     editingTimeId, setEditingTimeId, editTimeForm,
     setShowRecentJobsModal, recentTaskDraft, setRecentTaskDraft,
+    wrikeUser,
   } = state;
 
   // --- Timer toggle ---
@@ -97,50 +98,88 @@ export function useTaskActions(state) {
   };
 
   // --- Pull Wrike time ---
+  // wrikeData is optional — used as a cache if already loaded, otherwise
+  // we fetch only the specific task IDs that appear in today's timelogs.
   const handlePullWrikeTime = async (wrikeData) => {
     const token = localStorage.getItem("wrike_personal_token");
     if (!token) return triggerToast("Please enter your Wrike token in the Wrike API tab first.");
-    if (!wrikeData?.length) return triggerToast("Please fetch Wrike data in the API tab first so we can match tasks.");
+
+    const wrikeUserId = state.wrikeUser?.id;
+    if (!wrikeUserId) return triggerToast("Loading your Wrike profile — please wait a moment.");
 
     state.setIsPullingTime(true);
 
     try {
+      const dayNames = ["Sunday","Monday","Tuesday","Wednesday","Thursday","Friday","Saturday"];
+      const now = new Date();
+      const todayStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
+
+      const headers = { Authorization: `Bearer ${token}` };
+      const fieldsParam = encodeURIComponent("[customFields,description]");
+
+      // Fetch timelogs (contacts-scoped = same endpoint as Legacy, more reliable)
+      // and active timers in parallel
       const [timelogsRes, timersRes] = await Promise.all([
-        fetch("https://www.wrike.com/api/v4/timelogs?me=true", {
-          headers: { Authorization: `Bearer ${token}` },
-        }),
-        fetch("https://www.wrike.com/api/v4/timers", {
-          headers: { Authorization: `Bearer ${token}` },
-        }),
+        fetch(`https://www.wrike.com/api/v4/contacts/${wrikeUserId}/timelogs`, { headers }),
+        fetch("https://www.wrike.com/api/v4/timers", { headers }),
       ]);
 
       const logs = (await timelogsRes.json()).data || [];
       const activeTimers = (await timersRes.json()).data || [];
 
-      let newTasksCount = 0;
-      const newTasks = [];
-      const dayNames = ["Sunday","Monday","Tuesday","Wednesday","Thursday","Friday","Saturday"];
+      // Filter to today using local date string (avoids UTC-midnight shift)
+      const todayLogs = logs.filter((l) => l.trackedDate?.split("T")[0] === todayStr);
+      const todayTimers = activeTimers.filter((t) => t.updatedDate?.split("T")[0] === todayStr);
 
-      const todayStart = new Date();
-      todayStart.setHours(0, 0, 0, 0);
-      const cutoffTime = todayStart.getTime();
+      // Build a task lookup map — seed from wrikeData if already available
+      const taskMap = {};
+      (wrikeData || []).forEach((t) => { taskMap[t.id] = t; });
 
-      const parseAndGuessFields = (taskId, commentText, fallBackTitle) => {
-        const linkedTask = wrikeData.find((t) => t.id === taskId);
-        const guessed = guessFieldsFromTask(linkedTask, jobOptions);
-        return { ...guessed, notes: commentText || guessed.notes || fallBackTitle };
+      // Fetch only the task IDs we don't already have
+      const neededIds = [...new Set([
+        ...todayLogs.map((l) => l.taskId),
+        ...todayTimers.map((t) => t.taskId),
+      ])].filter((id) => id && !taskMap[id]);
+
+      if (neededIds.length > 0) {
+        // Fetch each task individually with a bare fallback — same pattern as
+        // handleOpenWrikeModal in Legacy (batch path-param can 403/404 silently)
+        await Promise.all(neededIds.map(async (taskId) => {
+          try {
+            let res = await fetch(
+              `https://www.wrike.com/api/v4/tasks/${taskId}?fields=${fieldsParam}`,
+              { headers }
+            );
+            if (!res.ok) {
+              res = await fetch(`https://www.wrike.com/api/v4/tasks/${taskId}`, { headers });
+            }
+            if (res.ok) {
+              const json = await res.json();
+              if (json.data) json.data.forEach((t) => { taskMap[t.id] = t; });
+            } else {
+              console.warn(`Could not fetch task ${taskId}: ${res.status}`);
+            }
+          } catch (err) {
+            console.warn(`Failed to fetch task ${taskId}:`, err);
+          }
+        }));
+      }
+
+      const guessFields = (taskId, commentText, fallbackTitle) => {
+        // Pass comment as extraText so territory aliases (e.g. UAE) in comments are resolved
+        const guessed = guessFieldsFromTask(taskMap[taskId], jobOptions, commentText || "");
+        return { ...guessed, notes: commentText || guessed.notes || fallbackTitle };
       };
 
-      logs.forEach((log) => {
-        const logDate = new Date(log.trackedDate);
-        if (logDate.getTime() < cutoffTime) return;
+      const newTasks = [];
+
+      todayLogs.forEach((log) => {
         if (tasks.some((t) => t.wrikeTimelogId === log.id)) return;
-
-        const fields = parseAndGuessFields(log.taskId, log.comment, "Wrike Timelog");
+        const fields = guessFields(log.taskId, log.comment, "Wrike Timelog");
+        const logDate = new Date(log.trackedDate);
         const logDayName = dayNames[logDate.getDay()];
-
         newTasks.push({
-          id: Date.now() + Math.random(),
+          id: Date.now() + Math.floor(Math.random() * 1000),
           wrikeTimelogId: log.id,
           ...fields,
           dayOfWeek: DAYS_OF_WEEK.includes(logDayName) ? logDayName : "Monday",
@@ -149,46 +188,37 @@ export function useTaskActions(state) {
           date: logDate.toLocaleDateString(),
           timeLogged: logDate.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
         });
-        newTasksCount++;
       });
 
-      activeTimers.forEach((timer) => {
+      todayTimers.forEach((timer) => {
         const timerUniqueId = `timer-${timer.taskId}-${timer.updatedDate}`;
         if (tasks.some((t) => t.wrikeTimelogId === timerUniqueId)) return;
-
+        const fields = guessFields(timer.taskId, "", "Wrike Live Timer");
         const logDate = new Date(timer.updatedDate);
-        if (logDate.getTime() < cutoffTime) return;
-
-        const accumulatedSeconds = Math.floor((timer.accumulatedMins || 0) * 60);
-        const safeSeconds = accumulatedSeconds > 0 ? accumulatedSeconds : 60;
-        const fields = parseAndGuessFields(timer.taskId, "", "Wrike Live Timer");
         const logDayName = dayNames[logDate.getDay()];
-
+        const accumulatedSeconds = Math.floor((timer.accumulatedMins || 0) * 60);
         newTasks.push({
-          id: Date.now() + Math.random(),
+          id: Date.now() + Math.floor(Math.random() * 1000),
           wrikeTimelogId: timerUniqueId,
           ...fields,
           notes: `${fields.notes} [Live Wrike Timer ⏱️]`,
           dayOfWeek: DAYS_OF_WEEK.includes(logDayName) ? logDayName : "Monday",
-          rawSeconds: safeSeconds,
+          rawSeconds: accumulatedSeconds > 0 ? accumulatedSeconds : 60,
           additionalSeconds: 0,
           date: logDate.toLocaleDateString(),
           timeLogged: logDate.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
         });
-        newTasksCount++;
       });
 
-      if (newTasksCount > 0) {
+      if (newTasks.length > 0) {
         addTasks(newTasks);
-        triggerToast(`Pulled ${newTasksCount} entries from today!`, "success");
+        triggerToast(`Pulled ${newTasks.length} entr${newTasks.length === 1 ? "y" : "ies"} from today!`, "success");
 
         const needingTriage = newTasks.filter((t) => t.category === "⚠️ Unassigned");
         if (needingTriage.length > 0) {
           const uniqueBatches = [];
           needingTriage.forEach((t) => {
-            const match = uniqueBatches.find(
-              (b) => b.jobNumber === t.jobNumber && b.territory === t.territory
-            );
+            const match = uniqueBatches.find((b) => b.jobNumber === t.jobNumber && b.territory === t.territory);
             if (match) match.taskIds.push(t.id);
             else uniqueBatches.push({ jobNumber: t.jobNumber, territory: t.territory, taskIds: [t.id], sampleTitle: t.notes });
           });
@@ -198,7 +228,7 @@ export function useTaskActions(state) {
         triggerToast("No new timelogs found for today.");
       }
     } catch (err) {
-      triggerToast("Failed to fetch data segments: " + err.message);
+      triggerToast("Failed to pull Wrike times: " + err.message);
     } finally {
       state.setIsPullingTime(false);
     }

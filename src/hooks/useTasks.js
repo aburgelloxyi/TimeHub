@@ -1,49 +1,103 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import { supabase } from "../lib/supabaseClient";
 
-// Supabase uses snake_case columns; your app uses camelCase.
-// These two functions translate between them so nothing else has to change.
+// --- Translators ---
 
 const toDb = (task) => ({
   id: task.id,
-  job_number: task.jobNumber,
-  territory: task.territory,
-  category: task.category,
-  notes: task.notes,
-  day_of_week: task.dayOfWeek,
-  raw_seconds: task.rawSeconds ?? 0,
-  additional_seconds: task.additionalSeconds ?? 0,
-  date: task.date,
-  time_logged: task.timeLogged,
+  source: task.source || "tracker",
+  wrike_user_id: task.wrikeUserId ?? null,
+  // Shared
+  job_number: task.jobNumber ?? null,
+  category: task.category ?? null,
+  day_of_week: task.dayOfWeek ?? null,
+  date: task.date ?? null,
+  time_logged: task.timeLogged ?? null,
+  // Tracker fields
+  territory: task.territory ?? null,
+  notes: task.notes ?? null,
+  raw_seconds: task.rawSeconds ?? null,
+  additional_seconds: task.additionalSeconds ?? null,
   wrike_timelog_id: task.wrikeTimelogId ?? null,
+  // Legacy fields
+  country: task.country ?? null,
+  film_title: task.filmTitle ?? null,
+  client: task.client ?? null,
+  project_description: task.projectDescription ?? null,
+  more_info: task.moreInfo ?? null,
+  time_spent: task.timeSpent ?? null,
+  additional_time: task.additionalTime ?? null,
+  client_amends: task.clientAmends ?? false,
+  is_3d: task.is3D ?? false,
+  is_saved: task.isSaved ?? false,
+  task_id: task.taskId ?? null,
 });
 
 const fromDb = (row) => ({
   id: row.id,
+  source: row.source || "tracker",
+  wrikeUserId: row.wrike_user_id,
+  // Shared
   jobNumber: row.job_number,
-  territory: row.territory,
   category: row.category,
-  notes: row.notes,
   dayOfWeek: row.day_of_week,
-  rawSeconds: row.raw_seconds ?? 0,
-  additionalSeconds: row.additional_seconds ?? 0,
   date: row.date,
   timeLogged: row.time_logged,
+  // Tracker fields
+  territory: row.territory,
+  notes: row.notes,
+  rawSeconds: row.raw_seconds ?? 0,
+  additionalSeconds: row.additional_seconds ?? 0,
   wrikeTimelogId: row.wrike_timelog_id,
+  // Legacy fields
+  country: row.country,
+  filmTitle: row.film_title,
+  client: row.client,
+  projectDescription: row.project_description,
+  moreInfo: row.more_info,
+  timeSpent: row.time_spent,
+  additionalTime: row.additional_time,
+  clientAmends: row.client_amends ?? false,
+  is3D: row.is_3d ?? false,
+  isSaved: row.is_saved ?? false,
+  taskId: row.task_id,
 });
 
-export function useTasks(triggerToast) {
+/**
+ * Supabase-backed task store.
+ *
+ * @param triggerToast  Toast callback
+ * @param source        "tracker" | "legacy" | null (no filter)
+ * @param wrikeUserId   The Wrike user ID — used to scope reads/writes to the
+ *                      current user. Falls back to localStorage on each render
+ *                      so subsequent page loads are instant (no waiting for the
+ *                      Wrike API call to complete before tasks appear).
+ */
+export function useTasks(triggerToast, source = null, wrikeUserId = null) {
   const [tasks, setTasks] = useState([]);
   const [loading, setLoading] = useState(true);
 
-  // --- Load all tasks on mount ---
+  // Prop takes priority; localStorage is the fast-path for subsequent loads
+  // (already set by setWrikeUserId() on a previous visit).
+  const effectiveUid = useMemo(
+    () => wrikeUserId || localStorage.getItem("wrike_user_id") || null,
+    [wrikeUserId]
+  );
+
+  // Stable ref so insert/update callbacks always stamp the latest user ID
+  // without needing to be re-created (avoids cascading re-renders).
+  const uidRef = useRef(effectiveUid);
+  useEffect(() => { uidRef.current = effectiveUid; }, [effectiveUid]);
+
+  // Re-fetch when source or user ID changes
   useEffect(() => {
     const fetchTasks = async () => {
       setLoading(true);
-      const { data, error } = await supabase
-        .from("tasks")
-        .select("*")
-        .order("id", { ascending: false });
+      let query = supabase.from("tasks").select("*").order("id", { ascending: false });
+      if (source) query = query.eq("source", source);
+      if (effectiveUid) query = query.eq("wrike_user_id", effectiveUid);
+
+      const { data, error } = await query;
 
       if (error) {
         console.error("Failed to load tasks:", error);
@@ -55,134 +109,99 @@ export function useTasks(triggerToast) {
     };
 
     fetchTasks();
-  }, []);
+  }, [source, effectiveUid]);
 
-  // --- Add a single task ---
   const addTask = useCallback(async (task) => {
-    // Optimistic update — show it instantly, sync in background
-    setTasks((prev) => [task, ...prev]);
-
-    const { error } = await supabase.from("tasks").insert(toDb(task));
-
+    const t = { ...task, wrikeUserId: task.wrikeUserId ?? uidRef.current };
+    setTasks((prev) => [t, ...prev]);
+    const { error } = await supabase.from("tasks").insert(toDb(t));
     if (error) {
       console.error("Failed to save task:", error);
-      triggerToast?.("Saved locally but failed to sync. Try again.");
-      // Roll back the optimistic update
-      setTasks((prev) => prev.filter((t) => t.id !== task.id));
+      triggerToast?.("Saved locally but failed to sync.");
+      setTasks((prev) => prev.filter((x) => x.id !== t.id));
     }
   }, []);
 
-  // --- Add multiple tasks at once (Wrike pull) ---
   const addTasks = useCallback(async (newTasks) => {
-    setTasks((prev) => [...newTasks, ...prev]);
-
-    const { error } = await supabase.from("tasks").insert(newTasks.map(toDb));
-
+    const stamped = newTasks.map((t) => ({ ...t, wrikeUserId: t.wrikeUserId ?? uidRef.current }));
+    setTasks((prev) => [...stamped, ...prev]);
+    const { error } = await supabase.from("tasks").insert(stamped.map(toDb));
     if (error) {
       console.error("Failed to save tasks:", error);
-      triggerToast?.("Some tasks failed to sync. Try pulling again.");
-      setTasks((prev) =>
-        prev.filter((t) => !newTasks.some((nt) => nt.id === t.id))
-      );
+      triggerToast?.("Some tasks failed to sync.");
+      setTasks((prev) => prev.filter((t) => !stamped.some((s) => s.id === t.id)));
     }
   }, []);
 
-  // --- Update one or more fields on a task ---
   const updateTask = useCallback(async (id, changes) => {
-    setTasks((prev) =>
-      prev.map((t) => (t.id === id ? { ...t, ...changes } : t))
-    );
+    setTasks((prev) => prev.map((t) => (t.id === id ? { ...t, ...changes } : t)));
 
-    // Translate only the changed fields to snake_case
+    const KEY_MAP = {
+      jobNumber: "job_number", territory: "territory", category: "category",
+      notes: "notes", dayOfWeek: "day_of_week", rawSeconds: "raw_seconds",
+      additionalSeconds: "additional_seconds",
+      country: "country", filmTitle: "film_title", client: "client",
+      projectDescription: "project_description", moreInfo: "more_info",
+      timeSpent: "time_spent", additionalTime: "additional_time",
+      clientAmends: "client_amends", is3D: "is_3d", isSaved: "is_saved",
+    };
+
     const dbChanges = {};
-    if ("jobNumber" in changes) dbChanges.job_number = changes.jobNumber;
-    if ("territory" in changes) dbChanges.territory = changes.territory;
-    if ("category" in changes) dbChanges.category = changes.category;
-    if ("notes" in changes) dbChanges.notes = changes.notes;
-    if ("dayOfWeek" in changes) dbChanges.day_of_week = changes.dayOfWeek;
-    if ("rawSeconds" in changes) dbChanges.raw_seconds = changes.rawSeconds;
-    if ("additionalSeconds" in changes) dbChanges.additional_seconds = changes.additionalSeconds;
+    for (const [key, val] of Object.entries(changes)) {
+      if (KEY_MAP[key]) dbChanges[KEY_MAP[key]] = val;
+    }
 
     const { error } = await supabase.from("tasks").update(dbChanges).eq("id", id);
-
     if (error) {
       console.error("Failed to update task:", error);
       triggerToast?.("Update failed to sync.");
     }
   }, []);
 
-  // --- Update multiple tasks at once (batch group edit) ---
   const updateTasks = useCallback(async (ids, changes) => {
-    setTasks((prev) =>
-      prev.map((t) => (ids.includes(t.id) ? { ...t, ...changes } : t))
-    );
-
+    setTasks((prev) => prev.map((t) => (ids.includes(t.id) ? { ...t, ...changes } : t)));
+    const KEY_MAP = {
+      jobNumber: "job_number", territory: "territory", category: "category",
+      country: "country", filmTitle: "film_title", client: "client",
+      projectDescription: "project_description", moreInfo: "more_info",
+    };
     const dbChanges = {};
-    if ("jobNumber" in changes) dbChanges.job_number = changes.jobNumber;
-    if ("territory" in changes) dbChanges.territory = changes.territory;
-    if ("category" in changes) dbChanges.category = changes.category;
-
-    // Supabase doesn't batch-update multiple rows by ID list in one call cleanly,
-    // so we do them in parallel — still fast, just a few simultaneous requests
-    const results = await Promise.all(
-      ids.map((id) =>
-        supabase.from("tasks").update(dbChanges).eq("id", id)
-      )
-    );
-
-    const failed = results.some((r) => r.error);
-    if (failed) {
-      triggerToast?.("Some updates failed to sync.");
+    for (const [key, val] of Object.entries(changes)) {
+      if (KEY_MAP[key]) dbChanges[KEY_MAP[key]] = val;
     }
+    const results = await Promise.all(
+      ids.map((id) => supabase.from("tasks").update(dbChanges).eq("id", id))
+    );
+    if (results.some((r) => r.error)) triggerToast?.("Some updates failed to sync.");
   }, []);
 
-  // --- Delete one or more tasks ---
   const deleteTasks = useCallback(async (ids) => {
     setTasks((prev) => prev.filter((t) => !ids.includes(t.id)));
-
     const { error } = await supabase.from("tasks").delete().in("id", ids);
-
     if (error) {
-      console.error("Failed to delete tasks:", error);
+      console.error("Failed to delete:", error);
       triggerToast?.("Delete failed to sync.");
     }
   }, []);
 
-  // --- Import/merge a batch (from JSON paste) ---
   const importTasks = useCallback(async (incoming) => {
     const existingIds = new Set(tasks.map((t) => t.id));
-    const newTasks = incoming.filter((t) => !existingIds.has(t.id));
-
-    if (newTasks.length === 0) {
-      triggerToast?.("No new tasks found in the pasted data.");
-      return 0;
-    }
-
-    setTasks((prev) => [...newTasks, ...prev]);
-
-    const { error } = await supabase.from("tasks").insert(newTasks.map(toDb));
-
+    const stamped = incoming
+      .filter((t) => !existingIds.has(t.id))
+      .map((t) => ({ ...t, wrikeUserId: t.wrikeUserId ?? uidRef.current }));
+    if (stamped.length === 0) { triggerToast?.("No new tasks found."); return 0; }
+    setTasks((prev) => [...stamped, ...prev]);
+    const { error } = await supabase.from("tasks").insert(stamped.map(toDb));
     if (error) {
-      console.error("Import failed:", error);
       triggerToast?.("Import failed to sync.");
-      setTasks((prev) =>
-        prev.filter((t) => !newTasks.some((nt) => nt.id === t.id))
-      );
+      setTasks((prev) => prev.filter((t) => !stamped.some((s) => s.id === t.id)));
       return 0;
     }
-
-    return newTasks.length;
+    return stamped.length;
   }, [tasks]);
 
   return {
-    tasks,
-    setTasks, // escape hatch — used by triage/timer increments that update locally
-    loading,
-    addTask,
-    addTasks,
-    updateTask,
-    updateTasks,
-    deleteTasks,
-    importTasks,
+    tasks, setTasks, loading,
+    addTask, addTasks, updateTask, updateTasks, deleteTasks, importTasks,
   };
 }

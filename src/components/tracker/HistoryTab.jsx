@@ -22,6 +22,7 @@ export default function HistoryTab({
   startEditingNote, saveEditedNote,
   toggleHistoryTimer, setItemToDelete,
 }) {
+  const [activeDropdown, setActiveDropdown] = React.useState(null);
   if (loading) {
     return (
       <div className="py-24 flex flex-col items-center justify-center text-[#768994] text-center">
@@ -79,9 +80,9 @@ export default function HistoryTab({
           {editingGroupId === key && (
             <div className="bg-slate-50 px-5 py-4 border-b border-[#dce4ec] space-y-3 relative z-30">
               <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-                <SearchableSelect options={jobOptions} value={editGroupForm.jobNumber} onChange={(v) => setEditGroupForm({ ...editGroupForm, jobNumber: v })} placeholder="Search Job String..." icon={Film} isGrouped={true} />
-                <SearchableSelect options={TERRITORIES} value={editGroupForm.territory} onChange={(v) => setEditGroupForm({ ...editGroupForm, territory: v })} placeholder="Search Territory..." getPrefix={(val) => TERRITORY_FLAGS[val]} />
-                <SearchableSelect options={CATEGORIES} value={editGroupForm.category} onChange={(v) => setEditGroupForm({ ...editGroupForm, category: v })} placeholder="Search Category..." icon={Tag} isGrouped={true} alignRight={true} />
+                <SearchableSelect options={jobOptions} value={editGroupForm.jobNumber} onChange={(v) => setEditGroupForm({ ...editGroupForm, jobNumber: v })} placeholder="Search Job String..." icon={Film} isGrouped={true} dropdownId="hist-job" activeDropdown={activeDropdown} setActiveDropdown={setActiveDropdown} />
+                <SearchableSelect options={TERRITORIES} value={editGroupForm.territory} onChange={(v) => setEditGroupForm({ ...editGroupForm, territory: v })} placeholder="Search Territory..." getPrefix={(val) => TERRITORY_FLAGS[val]} dropdownId="hist-territory" activeDropdown={activeDropdown} setActiveDropdown={setActiveDropdown} />
+                <SearchableSelect options={CATEGORIES} value={editGroupForm.category} onChange={(v) => setEditGroupForm({ ...editGroupForm, category: v })} placeholder="Search Category..." icon={Tag} isGrouped={true} alignRight={true} dropdownId="hist-category" activeDropdown={activeDropdown} setActiveDropdown={setActiveDropdown} />
               </div>
               <div className="flex justify-end gap-2 pt-2">
                 <button onClick={() => setEditingGroupId(null)} className="px-4 py-2 text-xs font-bold text-[#768994] hover:bg-slate-200 rounded-lg transition-colors">Cancel</button>

@@ -48,14 +48,17 @@ export default function Tracker({ wrikeData }) {
 
   // isPullingTime lives here since it's UI feedback only
   const [isPullingTime, setIsPullingTime] = React.useState(false);
+  const [activeDropdown, setActiveDropdown] = React.useState(null);
 
-  // Tasks are Supabase-backed via useTasks
-  const { tasks, setTasks, loading: tasksLoading, addTask, addTasks, updateTask, updateTasks, deleteTasks, importTasks } = useTasks(triggerToast);
-
-  const stateWithPull = { ...state, tasks, setTasks, addTask, addTasks, updateTask, updateTasks, deleteTasks, importTasks, isPullingTime, setIsPullingTime };
-  const actions = useTaskActions(stateWithPull);
+  // Must be before useTasks so wrikeUser.id is available to scope the query
   const { wrikeUser, userStats, handleFetchLifetimeStats, myActiveWrikeTasks, myCompletedWrikeTasks } =
     useWrikeUser(wrikeData, triggerToast);
+
+  // Tasks are Supabase-backed via useTasks — scoped to this Wrike user
+  const { tasks, setTasks, loading: tasksLoading, addTask, addTasks, updateTask, updateTasks, deleteTasks, importTasks } = useTasks(triggerToast, null, wrikeUser?.id);
+
+  const stateWithPull = { ...state, tasks, setTasks, addTask, addTasks, updateTask, updateTasks, deleteTasks, importTasks, isPullingTime, setIsPullingTime, wrikeUser };
+  const actions = useTaskActions(stateWithPull);
 
   // Lottie script loader
   useEffect(() => {
@@ -67,20 +70,34 @@ export default function Tracker({ wrikeData }) {
     }
   }, []);
 
+  // Normalise a task regardless of whether it came from Tracker or Legacy
+  const getTerritory = (t) => t.territory || t.country || "Unknown Territory";
+  const getRawSeconds = (t) => {
+    if (t.rawSeconds) return t.rawSeconds;
+    if (t.timeSpent && t.timeSpent !== "none") return Math.round(parseFloat(t.timeSpent) * 3600);
+    return 0;
+  };
+  const getAddSeconds = (t) => {
+    if (t.additionalSeconds) return t.additionalSeconds;
+    if (t.additionalTime && t.additionalTime !== "none") return Math.round(parseFloat(t.additionalTime) * 3600);
+    return 0;
+  };
+
   // Derived data
   const currentFilteredTasks = tasks.filter((t) => t.dayOfWeek === selectedDay);
-  const totalSecondsAllWeek = tasks.reduce((sum, t) => sum + t.rawSeconds + (t.additionalSeconds || 0), 0);
+  const totalSecondsAllWeek = tasks.reduce((sum, t) => sum + getRawSeconds(t) + getAddSeconds(t), 0);
   const getSecondsForDay = (day) =>
-    tasks.filter((t) => t.dayOfWeek === day).reduce((sum, t) => sum + t.rawSeconds + (t.additionalSeconds || 0), 0);
+    tasks.filter((t) => t.dayOfWeek === day).reduce((sum, t) => sum + getRawSeconds(t) + getAddSeconds(t), 0);
 
   const consolidatedGroups = currentFilteredTasks.reduce((acc, task) => {
-    const key = `${task.jobNumber}|||${task.territory}|||${task.category}`;
+    const territory = getTerritory(task);
+    const key = `${task.jobNumber}|||${territory}|||${task.category}`;
     if (!acc[key]) {
-      acc[key] = { jobNumber: task.jobNumber || "Unknown Job", territory: task.territory || "Unknown Territory", category: task.category || "Unknown Category", tasks: [], totalRaw: 0, totalAdd: 0 };
+      acc[key] = { jobNumber: task.jobNumber || "Unknown Job", territory, category: task.category || "Unknown Category", tasks: [], totalRaw: 0, totalAdd: 0 };
     }
     acc[key].tasks.push(task);
-    acc[key].totalRaw += task.rawSeconds || 0;
-    acc[key].totalAdd += task.additionalSeconds || 0;
+    acc[key].totalRaw += getRawSeconds(task);
+    acc[key].totalAdd += getAddSeconds(task);
     return acc;
   }, {});
 
@@ -231,7 +248,7 @@ export default function Tracker({ wrikeData }) {
                         Keep Selection
                       </label>
                     </div>
-                    <SearchableSelect options={jobOptions} value={jobNumber} onChange={setJobNumber} placeholder="Type to search or add..." icon={Film} disabled={isRunning && entryMode === "timer"} quickFilters={["DOOH","Titles","Print","Digital","Internal"]} isGrouped={true} alignRight={false} />
+                    <SearchableSelect options={jobOptions} value={jobNumber} onChange={setJobNumber} placeholder="Type to search or add..." icon={Film} disabled={isRunning && entryMode === "timer"} quickFilters={["DOOH","Titles","Print","Digital","Internal"]} isGrouped={true} alignRight={false} dropdownId="tracker-job" activeDropdown={activeDropdown} setActiveDropdown={setActiveDropdown} />
                   </div>
                   {/* Country */}
                   <div>
@@ -244,7 +261,7 @@ export default function Tracker({ wrikeData }) {
                         Keep
                       </label>
                     </div>
-                    <SearchableSelect options={TERRITORIES} value={territory} onChange={setTerritory} placeholder="Search..." disabled={isRunning && entryMode === "timer"} getPrefix={(val) => TERRITORY_FLAGS[val]} isGrouped={false} alignRight={false} />
+                    <SearchableSelect options={TERRITORIES} value={territory} onChange={setTerritory} placeholder="Search..." disabled={isRunning && entryMode === "timer"} getPrefix={(val) => TERRITORY_FLAGS[val]} isGrouped={false} alignRight={false} dropdownId="tracker-territory" activeDropdown={activeDropdown} setActiveDropdown={setActiveDropdown} />
                   </div>
                   {/* Category */}
                   <div>
@@ -257,7 +274,7 @@ export default function Tracker({ wrikeData }) {
                         Keep
                       </label>
                     </div>
-                    <SearchableSelect options={CATEGORIES} value={category} onChange={setCategory} placeholder="Search..." disabled={isRunning && entryMode === "timer"} isGrouped={true} alignRight={true} />
+                    <SearchableSelect options={CATEGORIES} value={category} onChange={setCategory} placeholder="Search..." disabled={isRunning && entryMode === "timer"} isGrouped={true} alignRight={true} dropdownId="tracker-category" activeDropdown={activeDropdown} setActiveDropdown={setActiveDropdown} />
                   </div>
                   {/* Notes */}
                   <div className="md:col-span-2">

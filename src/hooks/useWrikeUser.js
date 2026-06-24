@@ -1,4 +1,5 @@
 import { useState, useEffect, useMemo } from "react";
+import { setWrikeUserId } from "../lib/supabaseClient";
 
 /**
  * Fetches the current Wrike user from the personal token in localStorage.
@@ -22,10 +23,9 @@ export function useWrikeUser(wrikeData, triggerToast) {
         })
         .then((json) => {
           if (json.data?.length > 0) {
-            setWrikeUser({
-              id: json.data[0].id,
-              firstName: json.data[0].firstName,
-            });
+            const { id, firstName } = json.data[0];
+            setWrikeUser({ id, firstName });
+            setWrikeUserId(id); // stamp onto anon session + localStorage
           }
         })
         .catch((err) => {

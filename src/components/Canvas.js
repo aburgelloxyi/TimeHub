@@ -206,6 +206,8 @@ export default function CampaignCanvas({ wrikeData = [], folderCampaigns = [], t
   const [isAddFolderOpen, setIsAddFolderOpen] = useState(false);
   const [newFolderName, setNewFolderName] = useState("");
   const [deletingFolderId, setDeletingFolderId] = useState(null);
+  const [editingSourceFolderId, setEditingSourceFolderId] = useState(null);
+  const [editSourceText, setEditSourceText] = useState("");
   const [previewAsset, setPreviewAsset] = useState(null); // image/PDF lightbox
   const [previewList, setPreviewList] = useState([]);      // siblings to flick through
 
@@ -752,6 +754,13 @@ export default function CampaignCanvas({ wrikeData = [], folderCampaigns = [], t
     setNewFolderName("");
     setIsAddFolderOpen(false);
     await supabase.from("dooh_folders").insert(folder);
+  };
+
+  const handleSaveSource = async (folderId, value) => {
+    const v = value.trim();
+    setDoohFolders((prev) => prev.map((f) => (f.id === folderId ? { ...f, source_path: v || null } : f)));
+    setEditingSourceFolderId(null);
+    await supabase.from("dooh_folders").update({ source_path: v || null }).eq("id", folderId);
   };
 
   const handleDeleteFolder = async (folderId) => {
@@ -1493,6 +1502,54 @@ export default function CampaignCanvas({ wrikeData = [], folderCampaigns = [], t
                   className="hidden"
                   onChange={(e) => { handleUploadFiles(selectedCountry, e.target.files, currentFolderId); e.target.value = ""; }}
                 />
+
+                {/* Source path for the current folder */}
+                {currentFolderId && (() => {
+                  const cf = foldersAll.find((f) => f.id === currentFolderId);
+                  if (!cf) return null;
+                  const src = cf.source_path || "";
+                  const isUrl = /^https?:\/\//i.test(src);
+                  const editing = editingSourceFolderId === cf.id;
+                  return (
+                    <div className="mb-6 flex items-center gap-2 bg-white border border-[#dce4ec] rounded-2xl px-4 py-2.5 shadow-sm">
+                      <Link2 className="w-4 h-4 text-[#12a0e1] shrink-0" />
+                      <span className="text-[10px] font-black text-[#768994] uppercase tracking-widest shrink-0">Source</span>
+                      {editing ? (
+                        <>
+                          <input
+                            autoFocus
+                            value={editSourceText}
+                            onChange={(e) => setEditSourceText(e.target.value)}
+                            onKeyDown={(e) => { if (e.key === "Enter") handleSaveSource(cf.id, editSourceText); if (e.key === "Escape") setEditingSourceFolderId(null); }}
+                            placeholder="/Volumes/… or https://drive.google.com/…"
+                            className="flex-1 min-w-0 px-2.5 py-1.5 rounded-lg border border-[#dce4ec] focus:border-[#12a0e1] outline-none text-sm font-medium text-[#122027]"
+                          />
+                          <button onClick={() => handleSaveSource(cf.id, editSourceText)} className="p-1.5 bg-[#12a0e1] hover:bg-[#0f88c0] text-white rounded-lg transition-colors shrink-0"><Check className="w-4 h-4" /></button>
+                          <button onClick={() => setEditingSourceFolderId(null)} className="p-1.5 bg-slate-100 hover:bg-slate-200 text-[#122027] rounded-lg transition-colors shrink-0"><X className="w-4 h-4" /></button>
+                        </>
+                      ) : (
+                        <>
+                          {src
+                            ? <code className="flex-1 min-w-0 truncate text-sm font-medium text-[#122027]">{src}</code>
+                            : <span className="flex-1 min-w-0 text-sm text-[#768994] italic">No source path set</span>}
+                          {src && (
+                            <button
+                              onClick={() => { navigator.clipboard?.writeText(src); triggerToast("Source path copied", "success"); }}
+                              title="Copy" className="p-1.5 text-[#768994] hover:text-[#12a0e1] hover:bg-slate-50 rounded-lg transition-colors shrink-0"
+                            ><Copy className="w-4 h-4" /></button>
+                          )}
+                          {src && isUrl && (
+                            <a href={src} target="_blank" rel="noopener noreferrer" title="Open" className="p-1.5 text-[#768994] hover:text-[#12a0e1] hover:bg-slate-50 rounded-lg transition-colors shrink-0"><ExternalLink className="w-4 h-4" /></a>
+                          )}
+                          <button
+                            onClick={() => { setEditSourceText(src); setEditingSourceFolderId(cf.id); }}
+                            title={src ? "Edit" : "Add source path"} className="p-1.5 text-[#768994] hover:text-[#12a0e1] hover:bg-slate-50 rounded-lg transition-colors shrink-0"
+                          ><Edit2 className="w-4 h-4" /></button>
+                        </>
+                      )}
+                    </div>
+                  );
+                })()}
 
                 {/* Folders at this level */}
                 {subFolders.length > 0 && (

@@ -22,7 +22,20 @@ import {
   Command,
   Zap,
   Moon,
+  Pin,
+  Globe,
+  Upload,
+  ChevronLeft,
+  Loader2,
+  Image as ImageIcon,
 } from "lucide-react";
+
+// Convert a 2-letter ISO country code (e.g. "GB", "PL") into its flag emoji.
+const codeToFlag = (cc) => {
+  const code = (cc || "").trim().toUpperCase();
+  if (!/^[A-Z]{2}$/.test(code)) return "";
+  return code.replace(/./g, (c) => String.fromCodePoint(127397 + c.charCodeAt(0)));
+};
 
 const INITIAL_CAMPAIGNS = [];
 
@@ -129,6 +142,21 @@ export default function CampaignCanvas({ wrikeData = [], folderCampaigns = [], t
   const [editingCampTitleId, setEditingCampTitleId] = useState(null);
   const [editCampTitleText, setEditCampTitleText] = useState("");
 
+  // --- PINNED CAMPAIGNS ---
+  const [pinnedIds, setPinnedIds] = useState([]);
+
+  // --- DOOH SPECS ---
+  const [doohCountries, setDoohCountries] = useState([]);
+  const [countryAssets, setCountryAssets] = useState({}); // { [countryId]: [asset] }
+  const [selectedCountry, setSelectedCountry] = useState(null);
+  const [isAddCountryOpen, setIsAddCountryOpen] = useState(false);
+  const [newCountryName, setNewCountryName] = useState("");
+  const [newCountryCode, setNewCountryCode] = useState("");
+  const [uploadingCountry, setUploadingCountry] = useState(null);
+  const [deletingAssetId, setDeletingAssetId] = useState(null);
+  const [deletingCountryId, setDeletingCountryId] = useState(null);
+  const countryFileInputRef = useRef(null);
+
   const [editingNote, setEditingNote] = useState({
     campId: null,
     noteId: null,
@@ -172,6 +200,29 @@ export default function CampaignCanvas({ wrikeData = [], folderCampaigns = [], t
             }));
           return toAdd.length ? [...prev, ...toAdd] : prev;
         });
+      }
+
+      // Pinned campaigns
+      const { data: pinData } = await supabase.from("canvas_pinned_campaigns").select("campaign_id");
+      if (pinData?.length) setPinnedIds(pinData.map((r) => r.campaign_id));
+
+      // DOOH Specs — countries + their assets
+      const { data: countryData } = await supabase
+        .from("dooh_countries")
+        .select("*")
+        .order("created_at", { ascending: true });
+      if (countryData?.length) setDoohCountries(countryData);
+
+      const { data: assetData } = await supabase
+        .from("dooh_assets")
+        .select("*")
+        .order("created_at", { ascending: true });
+      if (assetData?.length) {
+        const byCountry = {};
+        assetData.forEach((a) => {
+          (byCountry[a.country_id] ||= []).push(a);
+        });
+        setCountryAssets(byCountry);
       }
     })();
   }, []);
@@ -562,6 +613,86 @@ export default function CampaignCanvas({ wrikeData = [], folderCampaigns = [], t
     setExpandedCampId(null);
     setDeletingCampId(null);
     await supabase.from("canvas_manual_campaigns").delete().eq("id", campId);
+  };
+
+  // --- PIN / UNPIN ---
+  const togglePin = async (campId) => {
+    const isPinned = pinnedIds.includes(campId);
+    setPinnedIds((prev) => (isPinned ? prev.filter((id) => id !== campId) : [...prev, campId]));
+    if (isPinned) {
+      await supabase.from("canvas_pinned_campaigns").delete().eq("campaign_id", campId);
+    } else {
+      await supabase.from("canvas_pinned_campaigns").insert({ campaign_id: campId });
+    }
+  };
+
+  // --- DOOH SPECS HANDLERS ---
+  const handleAddCountry = async () => {
+    const name = newCountryName.trim();
+    if (!name) return;
+    const id = `country-${name.toLowerCase().replace(/[^a-z0-9]+/g, "-")}-${Date.now().toString(36)}`;
+    const flag = codeToFlag(newCountryCode) || "🌐";
+    const country = { id, name, flag };
+    setDoohCountries((prev) => [...prev, country]);
+    setNewCountryName("");
+    setNewCountryCode("");
+    setIsAddCountryOpen(false);
+    await supabase.from("dooh_countries").insert(country);
+  };
+
+  const handleDeleteCountry = async (countryId) => {
+    const assets = countryAssets[countryId] || [];
+    setDoohCountries((prev) => prev.filter((c) => c.id !== countryId));
+    setCountryAssets((prev) => {
+      const next = { ...prev };
+      delete next[countryId];
+      return next;
+    });
+    setSelectedCountry(null);
+    setDeletingCountryId(null);
+    // Remove stored files, then the rows
+    const paths = assets.map((a) => a.storage_path).filter(Boolean);
+    if (paths.length) await supabase.storage.from("dooh-specs").remove(paths);
+    await supabase.from("dooh_assets").delete().eq("country_id", countryId);
+    await supabase.from("dooh_countries").delete().eq("id", countryId);
+  };
+
+  const handleUploadFiles = async (countryId, fileList) => {
+    const files = Array.from(fileList || []);
+    if (!files.length) return;
+    setUploadingCountry(countryId);
+    for (const file of files) {
+      try {
+        const ext = file.name.includes(".") ? file.name.split(".").pop() : "bin";
+        const id = `asset-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+        const path = `${countryId}/${id}.${ext}`;
+        const { error: upErr } = await supabase.storage
+          .from("dooh-specs")
+          .upload(path, file, { cacheControl: "3600", upsert: false });
+        if (upErr) {
+          triggerToast(`Upload failed: ${upErr.message}`);
+          continue;
+        }
+        const { data: pub } = supabase.storage.from("dooh-specs").getPublicUrl(path);
+        const type = file.type.startsWith("image/") ? "image" : "document";
+        const asset = { id, country_id: countryId, type, name: file.name, url: pub.publicUrl, storage_path: path };
+        await supabase.from("dooh_assets").insert(asset);
+        setCountryAssets((prev) => ({ ...prev, [countryId]: [...(prev[countryId] || []), asset] }));
+      } catch (err) {
+        triggerToast(`Upload error: ${err.message}`);
+      }
+    }
+    setUploadingCountry(null);
+  };
+
+  const handleDeleteAsset = async (asset) => {
+    setCountryAssets((prev) => ({
+      ...prev,
+      [asset.country_id]: (prev[asset.country_id] || []).filter((a) => a.id !== asset.id),
+    }));
+    setDeletingAssetId(null);
+    if (asset.storage_path) await supabase.storage.from("dooh-specs").remove([asset.storage_path]);
+    await supabase.from("dooh_assets").delete().eq("id", asset.id);
   };
 
   const handleCloseModal = () => {
@@ -968,6 +1099,11 @@ export default function CampaignCanvas({ wrikeData = [], folderCampaigns = [], t
             (s) => grouped[s]?.length > 0 || s === "Misc" || s === "Others"
           );
 
+          // Pinned campaigns (preserve pin order)
+          const pinnedCamps = pinnedIds
+            .map((id) => campaigns.find((c) => c.id === id))
+            .filter(Boolean);
+
           // --- Reusable campaign card ---
           const renderCampaignCard = (camp, index = 0) => {
             const hasCover = covers[camp.id] || CAMPAIGN_COVERS[camp.id];
@@ -1106,6 +1242,149 @@ export default function CampaignCanvas({ wrikeData = [], folderCampaigns = [], t
             );
           }
 
+          // ============ COUNTRY DETAIL VIEW (a DOOH country is open) ============
+          if (selectedCountry) {
+            const country = doohCountries.find((c) => c.id === selectedCountry);
+            if (!country) { setSelectedCountry(null); return null; }
+            const assets = countryAssets[selectedCountry] || [];
+            const images = assets.filter((a) => a.type === "image");
+            const docs = assets.filter((a) => a.type !== "image");
+            const isUploading = uploadingCountry === selectedCountry;
+
+            return (
+              <div key={`country-${selectedCountry}`} className="mt-2 py-4 px-6 w-full">
+                {/* Country banner */}
+                <div className="relative rounded-3xl overflow-hidden p-6 sm:p-7 mb-8 shadow-md animate-in fade-in slide-in-from-top-4 zoom-in-95 duration-500 bg-gradient-to-br from-[#122027] via-[#1b3a4b] to-[#12506e]">
+                  <div className="relative flex items-center justify-between gap-4 flex-wrap">
+                    <div className="flex items-center gap-4">
+                      <button
+                        onClick={() => setSelectedCountry(null)}
+                        className="flex items-center gap-1.5 bg-white/10 hover:bg-white/20 backdrop-blur-md text-white/90 px-3 py-1.5 rounded-xl text-[11px] font-black uppercase tracking-widest border border-white/20 transition-colors"
+                      >
+                        <ChevronLeft className="w-3.5 h-3.5" /> DOOH Specs
+                      </button>
+                      <div className="flex items-center gap-3">
+                        <span className="text-5xl leading-none drop-shadow">{country.flag}</span>
+                        <div>
+                          <h2 className="text-3xl sm:text-4xl font-black text-white tracking-tight leading-none">{country.name}</h2>
+                          <p className="text-[11px] font-bold text-white/70 uppercase tracking-widest mt-1.5">
+                            {assets.length} {assets.length === 1 ? "item" : "items"} · Screen specs
+                          </p>
+                        </div>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <button
+                        onClick={() => countryFileInputRef.current?.click()}
+                        disabled={isUploading}
+                        className="flex items-center gap-2 bg-[#12a0e1] hover:bg-[#0f88c0] disabled:opacity-60 text-white px-4 py-2.5 rounded-xl font-black text-xs uppercase tracking-widest border border-white/10 transition-colors active:scale-95 shadow-md"
+                      >
+                        {isUploading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Upload className="w-4 h-4" />}
+                        {isUploading ? "Uploading…" : "Add files"}
+                      </button>
+                      {deletingCountryId === country.id ? (
+                        <div className="flex items-center gap-1.5">
+                          <span className="text-xs font-bold text-rose-200 whitespace-nowrap">Delete country?</span>
+                          <button onClick={() => handleDeleteCountry(country.id)} className="p-2 bg-rose-500 hover:bg-rose-600 text-white rounded-lg transition-colors"><Check className="w-4 h-4" /></button>
+                          <button onClick={() => setDeletingCountryId(null)} className="p-2 bg-white/10 hover:bg-white/20 text-white rounded-lg transition-colors"><X className="w-4 h-4" /></button>
+                        </div>
+                      ) : (
+                        <button
+                          onClick={() => setDeletingCountryId(country.id)}
+                          title="Delete country"
+                          className="p-2.5 bg-white/10 hover:bg-rose-500/80 text-white rounded-xl border border-white/20 transition-colors"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                </div>
+
+                <input
+                  ref={countryFileInputRef}
+                  type="file"
+                  multiple
+                  accept="image/*,.pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt"
+                  className="hidden"
+                  onChange={(e) => { handleUploadFiles(selectedCountry, e.target.files); e.target.value = ""; }}
+                />
+
+                {assets.length === 0 && !isUploading && (
+                  <button
+                    onClick={() => countryFileInputRef.current?.click()}
+                    className="w-full border-2 border-dashed border-[#dce4ec] hover:border-[#12a0e1] rounded-3xl py-20 flex flex-col items-center justify-center gap-3 text-[#768994] hover:text-[#12a0e1] transition-colors"
+                  >
+                    <Upload className="w-10 h-10" />
+                    <p className="text-sm font-black">Add screen specs for {country.name}</p>
+                    <p className="text-xs">Click to upload images or documents</p>
+                  </button>
+                )}
+
+                {/* Images */}
+                {images.length > 0 && (
+                  <div className="mb-8">
+                    <h3 className="text-xs font-black text-[#768994] uppercase tracking-widest mb-3 flex items-center gap-2">
+                      <ImageIcon className="w-4 h-4" /> Images
+                    </h3>
+                    <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4">
+                      {images.map((asset) => (
+                        <div key={asset.id} className="group relative rounded-2xl overflow-hidden aspect-square bg-slate-100 border border-[#dce4ec] shadow-sm">
+                          <a href={asset.url} target="_blank" rel="noopener noreferrer">
+                            <img src={asset.url} alt={asset.name} className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-105" />
+                          </a>
+                          <div className="absolute inset-x-0 bottom-0 p-2 bg-gradient-to-t from-black/70 to-transparent pointer-events-none">
+                            <p className="text-[10px] font-bold text-white truncate">{asset.name}</p>
+                          </div>
+                          {deletingAssetId === asset.id ? (
+                            <div className="absolute top-2 right-2 flex items-center gap-1">
+                              <button onClick={() => handleDeleteAsset(asset)} className="p-1.5 bg-rose-500 hover:bg-rose-600 text-white rounded-lg shadow"><Check className="w-3.5 h-3.5" /></button>
+                              <button onClick={() => setDeletingAssetId(null)} className="p-1.5 bg-white/90 hover:bg-white text-[#122027] rounded-lg shadow"><X className="w-3.5 h-3.5" /></button>
+                            </div>
+                          ) : (
+                            <button onClick={() => setDeletingAssetId(asset.id)} className="absolute top-2 right-2 p-1.5 bg-black/40 hover:bg-rose-500 text-white rounded-lg opacity-0 group-hover:opacity-100 transition-opacity backdrop-blur-sm"><Trash2 className="w-3.5 h-3.5" /></button>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* Documents */}
+                {docs.length > 0 && (
+                  <div className="mb-8">
+                    <h3 className="text-xs font-black text-[#768994] uppercase tracking-widest mb-3 flex items-center gap-2">
+                      <FileText className="w-4 h-4" /> Documents
+                    </h3>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+                      {docs.map((asset) => (
+                        <div key={asset.id} className="group relative flex items-center gap-3 bg-white border border-[#dce4ec] rounded-2xl p-3 shadow-sm hover:border-[#12a0e1]/40 hover:shadow transition-all">
+                          <a href={asset.url} target="_blank" rel="noopener noreferrer" className="flex items-center gap-3 min-w-0 flex-1">
+                            <div className="shrink-0 w-10 h-10 rounded-xl bg-[#12a0e1]/10 text-[#12a0e1] flex items-center justify-center">
+                              <FileText className="w-5 h-5" />
+                            </div>
+                            <div className="min-w-0">
+                              <p className="text-sm font-bold text-[#122027] truncate">{asset.name}</p>
+                              <p className="text-[11px] text-[#768994] font-medium">Open document →</p>
+                            </div>
+                          </a>
+                          {deletingAssetId === asset.id ? (
+                            <div className="flex items-center gap-1 shrink-0">
+                              <button onClick={() => handleDeleteAsset(asset)} className="p-1.5 bg-rose-500 hover:bg-rose-600 text-white rounded-lg"><Check className="w-3.5 h-3.5" /></button>
+                              <button onClick={() => setDeletingAssetId(null)} className="p-1.5 bg-slate-100 hover:bg-slate-200 text-[#122027] rounded-lg"><X className="w-3.5 h-3.5" /></button>
+                            </div>
+                          ) : (
+                            <button onClick={() => setDeletingAssetId(asset.id)} className="shrink-0 p-2 text-[#768994] hover:text-rose-500 hover:bg-rose-50 rounded-lg opacity-0 group-hover:opacity-100 transition-all"><Trash2 className="w-4 h-4" /></button>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+            );
+          }
+
           // ============ GALLERY VIEW (studio cards) ============
           return (
             <div key="studio-gallery" className="mt-2 py-4 px-6 w-full">
@@ -1164,6 +1443,73 @@ export default function CampaignCanvas({ wrikeData = [], folderCampaigns = [], t
                   );
                 })}
               </div>
+
+              {/* ============ PINNED CAMPAIGNS ============ */}
+              {pinnedCamps.length > 0 && (
+                <section className="mt-10 animate-in fade-in slide-in-from-bottom-4 duration-500">
+                  <div className="flex items-center gap-2.5 mb-4 px-1">
+                    <div className="w-9 h-9 rounded-xl bg-amber-100 text-amber-600 flex items-center justify-center shadow-sm">
+                      <Pin className="w-5 h-5 fill-current" />
+                    </div>
+                    <div>
+                      <h2 className="text-lg font-black text-[#122027] tracking-tight leading-none">Pinned</h2>
+                      <p className="text-[11px] font-bold text-[#768994] uppercase tracking-widest mt-1">Quick access · {pinnedCamps.length}</p>
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 xl:grid-cols-6 gap-4">
+                    {pinnedCamps.map((camp, i) => (
+                      <div key={`pin-${camp.id}`} className="relative group/pin">
+                        {renderCampaignCard(camp, i)}
+                        <button
+                          onClick={(e) => { e.stopPropagation(); togglePin(camp.id); }}
+                          title="Unpin"
+                          className="absolute top-2.5 left-2.5 z-20 p-1.5 rounded-lg bg-amber-400/95 hover:bg-amber-400 text-[#122027] shadow opacity-0 group-hover/pin:opacity-100 transition-opacity backdrop-blur-sm"
+                        >
+                          <Pin className="w-3.5 h-3.5 fill-current" />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                </section>
+              )}
+
+              {/* ============ DOOH SPECS ============ */}
+              <section className="mt-10 animate-in fade-in slide-in-from-bottom-4 duration-500">
+                <div className="flex items-center gap-2.5 mb-4 px-1">
+                  <div className="w-9 h-9 rounded-xl bg-[#12a0e1]/10 text-[#12a0e1] flex items-center justify-center shadow-sm">
+                    <Globe className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <h2 className="text-lg font-black text-[#122027] tracking-tight leading-none">DOOH Specs</h2>
+                    <p className="text-[11px] font-bold text-[#768994] uppercase tracking-widest mt-1">Screen specs by country · {doohCountries.length}</p>
+                  </div>
+                </div>
+                <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-6 gap-4">
+                  {doohCountries.map((country, i) => {
+                    const count = (countryAssets[country.id] || []).length;
+                    return (
+                      <button
+                        key={country.id}
+                        onClick={() => { setSelectedStudio(null); setSelectedCountry(country.id); window.scrollTo({ top: 0, behavior: "smooth" }); }}
+                        className="group relative rounded-2xl overflow-hidden aspect-[4/3] outline-none shadow-md hover:shadow-2xl hover:-translate-y-1 bg-gradient-to-br from-[#1b3a4b] to-[#12506e] flex flex-col items-center justify-center p-4 animate-in fade-in slide-in-from-bottom-4 zoom-in-95"
+                        style={{ transition: "transform 0.6s cubic-bezier(0.16,1,0.3,1), box-shadow 0.6s cubic-bezier(0.16,1,0.3,1)", animationDelay: `${i * 50}ms`, animationFillMode: "both" }}
+                      >
+                        <span className="text-5xl leading-none drop-shadow-md transition-transform duration-500 group-hover:scale-110">{country.flag}</span>
+                        <p className="mt-3 text-sm font-black text-white tracking-tight text-center leading-tight">{country.name}</p>
+                        <span className="absolute top-2.5 right-2.5 text-[10px] font-black bg-white/15 backdrop-blur-md text-white px-2 py-0.5 rounded-full border border-white/25">{count}</span>
+                      </button>
+                    );
+                  })}
+                  {/* Add country card */}
+                  <button
+                    onClick={() => setIsAddCountryOpen(true)}
+                    className="group rounded-2xl aspect-[4/3] border-2 border-dashed border-[#dce4ec] hover:border-[#12a0e1] flex flex-col items-center justify-center gap-2 text-[#768994] hover:text-[#12a0e1] transition-colors outline-none"
+                  >
+                    <Plus className="w-7 h-7" />
+                    <span className="text-xs font-black uppercase tracking-widest">Add country</span>
+                  </button>
+                </div>
+              </section>
             </div>
           );
         })()}
@@ -1283,12 +1629,25 @@ export default function CampaignCanvas({ wrikeData = [], folderCampaigns = [], t
                       </div>
                     </div>
 
-                    <button
-                      onClick={() => handleToggleCamp(activeCamp.id)}
-                      className="p-2.5 bg-white/10 hover:bg-white/20 text-white rounded-full transition-colors backdrop-blur-md border border-white/20 mb-2 sm:mb-0"
-                    >
-                      <X className="w-5 h-5" />
-                    </button>
+                    <div className="flex items-center gap-2 mb-2 sm:mb-0">
+                      <button
+                        onClick={() => togglePin(activeCamp.id)}
+                        title={pinnedIds.includes(activeCamp.id) ? "Unpin from quick access" : "Pin for quick access"}
+                        className={`p-2.5 rounded-full transition-colors backdrop-blur-md border ${
+                          pinnedIds.includes(activeCamp.id)
+                            ? "bg-amber-400/90 hover:bg-amber-400 text-[#122027] border-amber-300"
+                            : "bg-white/10 hover:bg-white/20 text-white border-white/20"
+                        }`}
+                      >
+                        <Pin className={`w-5 h-5 ${pinnedIds.includes(activeCamp.id) ? "fill-current" : ""}`} />
+                      </button>
+                      <button
+                        onClick={() => handleToggleCamp(activeCamp.id)}
+                        className="p-2.5 bg-white/10 hover:bg-white/20 text-white rounded-full transition-colors backdrop-blur-md border border-white/20"
+                      >
+                        <X className="w-5 h-5" />
+                      </button>
+                    </div>
                   </div>
                 </div>
 
@@ -1841,6 +2200,63 @@ export default function CampaignCanvas({ wrikeData = [], folderCampaigns = [], t
                   className="px-6 py-2.5 bg-[#12a0e1] hover:bg-[#0f88c0] text-white text-xs font-black uppercase tracking-widest rounded-xl shadow-md hover:shadow-[#12a0e1]/20 transition-all active:scale-95"
                 >
                   Save Campaign
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* ADD COUNTRY MODAL */}
+        {isAddCountryOpen && (
+          <div
+            className="fixed inset-0 bg-[#122027]/60 backdrop-blur-sm flex items-center justify-center z-[9999] p-4"
+            onClick={(e) => { if (e.target === e.currentTarget) setIsAddCountryOpen(false); }}
+          >
+            <div className="bg-white rounded-[24px] shadow-2xl w-full max-w-md overflow-hidden border border-[#dce4ec] animate-in zoom-in-95 duration-200">
+              <div className="p-6 sm:p-7 bg-gradient-to-br from-[#122027] via-[#1b3a4b] to-[#12506e] flex items-center gap-4">
+                <span className="text-4xl leading-none drop-shadow">{codeToFlag(newCountryCode) || "🌐"}</span>
+                <div>
+                  <h2 className="text-2xl font-black text-white tracking-tight leading-none">Add Country</h2>
+                  <p className="text-[11px] font-bold text-white/70 uppercase tracking-widest mt-1.5">DOOH screen specs</p>
+                </div>
+              </div>
+              <div className="p-6 sm:p-7 space-y-4">
+                <div>
+                  <label className="text-xs font-black text-[#768994] uppercase tracking-widest">Country name</label>
+                  <input
+                    autoFocus
+                    value={newCountryName}
+                    onChange={(e) => setNewCountryName(e.target.value)}
+                    onKeyDown={(e) => { if (e.key === "Enter") handleAddCountry(); }}
+                    placeholder="e.g. United Kingdom"
+                    className="mt-1.5 w-full px-4 py-2.5 rounded-xl border border-[#dce4ec] focus:border-[#12a0e1] outline-none text-sm font-bold text-[#122027]"
+                  />
+                </div>
+                <div>
+                  <label className="text-xs font-black text-[#768994] uppercase tracking-widest">ISO code <span className="font-bold normal-case text-[10px] opacity-70">(optional — for the flag, e.g. GB, PL, AE)</span></label>
+                  <input
+                    value={newCountryCode}
+                    onChange={(e) => setNewCountryCode(e.target.value.slice(0, 2))}
+                    onKeyDown={(e) => { if (e.key === "Enter") handleAddCountry(); }}
+                    placeholder="GB"
+                    maxLength={2}
+                    className="mt-1.5 w-full px-4 py-2.5 rounded-xl border border-[#dce4ec] focus:border-[#12a0e1] outline-none text-sm font-bold text-[#122027] uppercase"
+                  />
+                </div>
+              </div>
+              <div className="px-6 sm:px-7 pb-6 flex justify-end gap-2">
+                <button
+                  onClick={() => { setIsAddCountryOpen(false); setNewCountryName(""); setNewCountryCode(""); }}
+                  className="px-5 py-2.5 text-[#768994] hover:text-[#122027] text-xs font-black uppercase tracking-widest rounded-xl hover:bg-slate-100 transition-colors"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={handleAddCountry}
+                  disabled={!newCountryName.trim()}
+                  className="px-6 py-2.5 bg-[#12a0e1] hover:bg-[#0f88c0] disabled:opacity-50 text-white text-xs font-black uppercase tracking-widest rounded-xl shadow-md transition-all active:scale-95"
+                >
+                  Add Country
                 </button>
               </div>
             </div>

@@ -126,6 +126,8 @@ export default function CampaignCanvas({ wrikeData = [], folderCampaigns = [], t
   const [newCampaignTitle, setNewCampaignTitle] = useState("");
   const [newCampaignLink, setNewCampaignLink] = useState("");
   const [deletingCampId, setDeletingCampId] = useState(null);
+  const [editingCampTitleId, setEditingCampTitleId] = useState(null);
+  const [editCampTitleText, setEditCampTitleText] = useState("");
 
   const [editingNote, setEditingNote] = useState({
     campId: null,
@@ -545,6 +547,14 @@ export default function CampaignCanvas({ wrikeData = [], folderCampaigns = [], t
       wrike_link: newCampaign.wrikeLink,
     });
     handleCloseModal();
+  };
+
+  const handleRenameCampaign = async (campId, newTitle) => {
+    const trimmed = newTitle.trim();
+    if (!trimmed) return;
+    setCampaigns((prev) => prev.map((c) => c.id === campId ? { ...c, title: trimmed } : c));
+    setEditingCampTitleId(null);
+    await supabase.from("canvas_manual_campaigns").update({ title: trimmed }).eq("id", campId);
   };
 
   const handleDeleteCampaign = async (campId) => {
@@ -1197,9 +1207,36 @@ export default function CampaignCanvas({ wrikeData = [], folderCampaigns = [], t
                         <Film className="w-8 h-8" />
                       </div>
                       <div>
-                        <h2 className="text-3xl sm:text-4xl font-black text-white tracking-tight drop-shadow-md leading-none mb-1">
-                          {activeCamp.title}
-                        </h2>
+                        {activeCamp.isManual && editingCampTitleId === activeCamp.id ? (
+                          <form
+                            onSubmit={(e) => { e.preventDefault(); handleRenameCampaign(activeCamp.id, editCampTitleText); }}
+                            className="flex items-center gap-2 mb-1"
+                          >
+                            <input
+                              autoFocus
+                              value={editCampTitleText}
+                              onChange={(e) => setEditCampTitleText(e.target.value)}
+                              onBlur={() => handleRenameCampaign(activeCamp.id, editCampTitleText)}
+                              onKeyDown={(e) => { if (e.key === "Escape") setEditingCampTitleId(null); }}
+                              className="text-3xl sm:text-4xl font-black text-white tracking-tight leading-none bg-white/15 backdrop-blur-sm border border-white/30 rounded-xl px-3 py-1 outline-none focus:border-white/60 w-full"
+                            />
+                          </form>
+                        ) : (
+                          <h2
+                            className="text-3xl sm:text-4xl font-black text-white tracking-tight drop-shadow-md leading-none mb-1 flex items-center gap-2 group/title"
+                          >
+                            {activeCamp.title}
+                            {activeCamp.isManual && (
+                              <button
+                                onClick={() => { setEditingCampTitleId(activeCamp.id); setEditCampTitleText(activeCamp.title); }}
+                                className="opacity-0 group-hover/title:opacity-60 hover:!opacity-100 transition-opacity p-1"
+                                title="Rename"
+                              >
+                                <Edit2 className="w-4 h-4 text-white" />
+                              </button>
+                            )}
+                          </h2>
+                        )}
                         <p className="text-xs font-bold text-white/70 uppercase tracking-widest flex items-center gap-2 mt-1">
                           Campaign Command Centre
                           <button

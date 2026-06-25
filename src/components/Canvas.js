@@ -207,12 +207,18 @@ export default function CampaignCanvas({ wrikeData = [], folderCampaigns = [], t
   const [newFolderName, setNewFolderName] = useState("");
   const [deletingFolderId, setDeletingFolderId] = useState(null);
   const [previewAsset, setPreviewAsset] = useState(null); // image/PDF lightbox
+  const [previewList, setPreviewList] = useState([]);      // siblings to flick through
 
   const isPdfAsset = (a) => /\.pdf($|\?)/i.test(a?.name || a?.url || "");
-  const openPreview = (asset) => {
-    if (asset.type === "image" || isPdfAsset(asset)) setPreviewAsset(asset);
-    else window.open(asset.url, "_blank", "noopener");
+  const openPreview = (asset, list = []) => {
+    if (asset.type === "image" || isPdfAsset(asset)) {
+      setPreviewList(list);
+      setPreviewAsset(asset);
+    } else {
+      window.open(asset.url, "_blank", "noopener");
+    }
   };
+  const previewIndex = previewAsset ? previewList.findIndex((a) => a.id === previewAsset.id) : -1;
 
   const [editingNote, setEditingNote] = useState({
     campId: null,
@@ -334,13 +340,18 @@ export default function CampaignCanvas({ wrikeData = [], folderCampaigns = [], t
     return () => window.removeEventListener("keydown", onKey);
   }, []);
 
-  // --- ESCAPE KEY TO CLOSE FILE PREVIEW ---
+  // --- KEYBOARD CONTROLS FOR FILE PREVIEW (Esc / ← / →) ---
   useEffect(() => {
     if (!previewAsset) return;
-    const onKey = (e) => { if (e.key === "Escape") setPreviewAsset(null); };
+    const onKey = (e) => {
+      if (e.key === "Escape") return setPreviewAsset(null);
+      const i = previewList.findIndex((a) => a.id === previewAsset.id);
+      if (e.key === "ArrowLeft" && i > 0) setPreviewAsset(previewList[i - 1]);
+      if (e.key === "ArrowRight" && i >= 0 && i < previewList.length - 1) setPreviewAsset(previewList[i + 1]);
+    };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [previewAsset]);
+  }, [previewAsset, previewList]);
 
   useEffect(() => {
     if (!wrikeData || wrikeData.length === 0) return;
@@ -1377,6 +1388,8 @@ export default function CampaignCanvas({ wrikeData = [], folderCampaigns = [], t
             const assetsHere = allAssets.filter((a) => (a.folder_id || null) === (currentFolderId || null));
             const images = assetsHere.filter((a) => a.type === "image");
             const docs = assetsHere.filter((a) => a.type !== "image");
+            // Items that open in the lightbox (images + PDFs), in display order
+            const previewable = [...images, ...docs.filter(isPdfAsset)];
             const isUploading = uploadingCountry === selectedCountry;
 
             // Count immediate children (folders + files) for a folder card badge
@@ -1537,7 +1550,7 @@ export default function CampaignCanvas({ wrikeData = [], folderCampaigns = [], t
                     <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4">
                       {images.map((asset) => (
                         <div key={asset.id} className="group relative rounded-2xl overflow-hidden aspect-square bg-slate-100 border border-[#dce4ec] shadow-sm">
-                          <button type="button" onClick={() => openPreview(asset)} className="absolute inset-0 w-full h-full cursor-zoom-in">
+                          <button type="button" onClick={() => openPreview(asset, previewable)} className="absolute inset-0 w-full h-full cursor-zoom-in">
                             <img src={asset.url} alt={asset.name} className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-105" />
                           </button>
                           <div className="absolute inset-x-0 bottom-0 p-2 bg-gradient-to-t from-black/70 to-transparent pointer-events-none">
@@ -1566,7 +1579,7 @@ export default function CampaignCanvas({ wrikeData = [], folderCampaigns = [], t
                     <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
                       {docs.map((asset) => (
                         <div key={asset.id} className="group relative flex items-center gap-3 bg-white border border-[#dce4ec] rounded-2xl p-3 shadow-sm hover:border-[#12a0e1]/40 hover:shadow transition-all">
-                          <button type="button" onClick={() => openPreview(asset)} className="flex items-center gap-3 min-w-0 flex-1 text-left cursor-pointer">
+                          <button type="button" onClick={() => openPreview(asset, previewable)} className="flex items-center gap-3 min-w-0 flex-1 text-left cursor-pointer">
                             <div className="shrink-0 w-10 h-10 rounded-xl bg-[#12a0e1]/10 text-[#12a0e1] flex items-center justify-center">
                               <FileText className="w-5 h-5" />
                             </div>
@@ -2539,6 +2552,11 @@ export default function CampaignCanvas({ wrikeData = [], folderCampaigns = [], t
                   {previewAsset.type === "image" ? <ImageIcon className="w-4 h-4" /> : <FileText className="w-4 h-4" />}
                 </div>
                 <p className="font-bold truncate">{previewAsset.name}</p>
+                {previewList.length > 1 && previewIndex >= 0 && (
+                  <span className="shrink-0 text-[11px] font-bold text-white/60 bg-white/10 border border-white/15 px-2 py-0.5 rounded-full">
+                    {previewIndex + 1} / {previewList.length}
+                  </span>
+                )}
               </div>
               <div className="flex items-center gap-2 shrink-0">
                 <a
@@ -2564,21 +2582,43 @@ export default function CampaignCanvas({ wrikeData = [], folderCampaigns = [], t
                 </button>
               </div>
             </div>
-            <div className="flex-1 min-h-0 rounded-2xl overflow-hidden bg-white/5 border border-white/10 flex items-center justify-center">
+            <div className="relative flex-1 min-h-0 rounded-2xl overflow-hidden bg-white/5 border border-white/10 flex items-center justify-center">
               {previewAsset.type === "image" ? (
                 <img
+                  key={previewAsset.id}
                   src={previewAsset.url}
                   alt={previewAsset.name}
-                  className="max-h-full max-w-full object-contain animate-in zoom-in-95 duration-200"
+                  className="max-h-full max-w-full object-contain animate-in fade-in zoom-in-95 duration-200"
                   onClick={(e) => e.stopPropagation()}
                 />
               ) : (
                 <iframe
+                  key={previewAsset.id}
                   src={previewAsset.url}
                   title={previewAsset.name}
                   className="w-full h-full bg-white"
                   onClick={(e) => e.stopPropagation()}
                 />
+              )}
+
+              {/* Prev / Next */}
+              {previewIndex > 0 && (
+                <button
+                  onClick={(e) => { e.stopPropagation(); setPreviewAsset(previewList[previewIndex - 1]); }}
+                  title="Previous (←)"
+                  className="absolute left-3 top-1/2 -translate-y-1/2 p-3 rounded-full bg-black/50 hover:bg-black/70 text-white border border-white/20 backdrop-blur-sm transition-colors"
+                >
+                  <ChevronLeft className="w-6 h-6" />
+                </button>
+              )}
+              {previewIndex >= 0 && previewIndex < previewList.length - 1 && (
+                <button
+                  onClick={(e) => { e.stopPropagation(); setPreviewAsset(previewList[previewIndex + 1]); }}
+                  title="Next (→)"
+                  className="absolute right-3 top-1/2 -translate-y-1/2 p-3 rounded-full bg-black/50 hover:bg-black/70 text-white border border-white/20 backdrop-blur-sm transition-colors"
+                >
+                  <ChevronRight className="w-6 h-6" />
+                </button>
               )}
             </div>
           </div>

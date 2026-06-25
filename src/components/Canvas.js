@@ -28,6 +28,9 @@ import {
   ChevronLeft,
   Loader2,
   Image as ImageIcon,
+  FolderPlus,
+  ChevronRight,
+  Download,
 } from "lucide-react";
 
 // Convert a 2-letter ISO country code (e.g. "GB", "PL") into its flag emoji.
@@ -36,6 +39,46 @@ const codeToFlag = (cc) => {
   if (!/^[A-Z]{2}$/.test(code)) return "";
   return code.replace(/./g, (c) => String.fromCodePoint(127397 + c.charCodeAt(0)));
 };
+
+// Reverse: pull the 2-letter code back out of a flag emoji (regional indicators).
+// Returns "" for non-flag emojis (🏠 🌍 🌐 ⚽ 🎵) so they render as-is.
+const flagToCode = (flag) => {
+  if (!flag) return "";
+  const cps = [...flag].map((ch) => ch.codePointAt(0));
+  if (cps.length === 2 && cps.every((cp) => cp >= 127462 && cp <= 127487)) {
+    return cps.map((cp) => String.fromCharCode(cp - 127397)).join("").toLowerCase();
+  }
+  return "";
+};
+
+// Render a country flag as a real image (cross-platform — Windows can't draw
+// regional-indicator emoji). Falls back to the 2-letter code, or the raw emoji
+// for non-country entries.
+function CountryFlag({ flag, imgClass = "w-11 h-[30px]", textClass = "text-3xl" }) {
+  const code = flagToCode(flag);
+  if (!code) return <span className={`${textClass} leading-none`}>{flag}</span>;
+  return (
+    <span className={`relative inline-flex items-center justify-center shrink-0 ${imgClass}`}>
+      <img
+        src={`https://flagcdn.com/w160/${code}.png`}
+        alt=""
+        loading="lazy"
+        className={`${imgClass} rounded-[5px] object-cover ring-1 ring-black/10 shadow-sm`}
+        onError={(e) => {
+          e.currentTarget.style.display = "none";
+          const s = e.currentTarget.nextElementSibling;
+          if (s) s.style.display = "flex";
+        }}
+      />
+      <span
+        style={{ display: "none" }}
+        className={`absolute inset-0 rounded-[5px] bg-white/15 text-white items-center justify-center text-[11px] font-black tracking-wider`}
+      >
+        {code.toUpperCase()}
+      </span>
+    </span>
+  );
+}
 
 const INITIAL_CAMPAIGNS = [];
 
@@ -157,6 +200,20 @@ export default function CampaignCanvas({ wrikeData = [], folderCampaigns = [], t
   const [deletingCountryId, setDeletingCountryId] = useState(null);
   const countryFileInputRef = useRef(null);
 
+  // Nested folders inside a country
+  const [doohFolders, setDoohFolders] = useState([]); // { id, country_id, parent_id, name }
+  const [currentFolderId, setCurrentFolderId] = useState(null); // null = country root
+  const [isAddFolderOpen, setIsAddFolderOpen] = useState(false);
+  const [newFolderName, setNewFolderName] = useState("");
+  const [deletingFolderId, setDeletingFolderId] = useState(null);
+  const [previewAsset, setPreviewAsset] = useState(null); // image/PDF lightbox
+
+  const isPdfAsset = (a) => /\.pdf($|\?)/i.test(a?.name || a?.url || "");
+  const openPreview = (asset) => {
+    if (asset.type === "image" || isPdfAsset(asset)) setPreviewAsset(asset);
+    else window.open(asset.url, "_blank", "noopener");
+  };
+
   const [editingNote, setEditingNote] = useState({
     campId: null,
     noteId: null,
@@ -224,6 +281,12 @@ export default function CampaignCanvas({ wrikeData = [], folderCampaigns = [], t
         });
         setCountryAssets(byCountry);
       }
+
+      const { data: folderData } = await supabase
+        .from("dooh_folders")
+        .select("*")
+        .order("created_at", { ascending: true });
+      if (folderData?.length) setDoohFolders(folderData);
     })();
   }, []);
 
@@ -270,6 +333,14 @@ export default function CampaignCanvas({ wrikeData = [], folderCampaigns = [], t
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, []);
+
+  // --- ESCAPE KEY TO CLOSE FILE PREVIEW ---
+  useEffect(() => {
+    if (!previewAsset) return;
+    const onKey = (e) => { if (e.key === "Escape") setPreviewAsset(null); };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [previewAsset]);
 
   useEffect(() => {
     if (!wrikeData || wrikeData.length === 0) return;
@@ -648,16 +719,70 @@ export default function CampaignCanvas({ wrikeData = [], folderCampaigns = [], t
       delete next[countryId];
       return next;
     });
+    setDoohFolders((prev) => prev.filter((f) => f.country_id !== countryId));
     setSelectedCountry(null);
+    setCurrentFolderId(null);
     setDeletingCountryId(null);
     // Remove stored files, then the rows
     const paths = assets.map((a) => a.storage_path).filter(Boolean);
     if (paths.length) await supabase.storage.from("dooh-specs").remove(paths);
     await supabase.from("dooh_assets").delete().eq("country_id", countryId);
+    await supabase.from("dooh_folders").delete().eq("country_id", countryId);
     await supabase.from("dooh_countries").delete().eq("id", countryId);
   };
 
-  const handleUploadFiles = async (countryId, fileList) => {
+  // --- DOOH FOLDERS ---
+  const handleAddFolder = async () => {
+    const name = newFolderName.trim();
+    if (!name || !selectedCountry) return;
+    const id = `folder-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+    const folder = { id, country_id: selectedCountry, parent_id: currentFolderId, name };
+    setDoohFolders((prev) => [...prev, folder]);
+    setNewFolderName("");
+    setIsAddFolderOpen(false);
+    await supabase.from("dooh_folders").insert(folder);
+  };
+
+  const handleDeleteFolder = async (folderId) => {
+    // Collect the folder and every descendant folder
+    const toDelete = new Set([folderId]);
+    let changed = true;
+    while (changed) {
+      changed = false;
+      for (const f of doohFolders) {
+        if (f.parent_id && toDelete.has(f.parent_id) && !toDelete.has(f.id)) {
+          toDelete.add(f.id);
+          changed = true;
+        }
+      }
+    }
+    const folderIds = [...toDelete];
+    const assetsToDelete = Object.values(countryAssets)
+      .flat()
+      .filter((a) => a.folder_id && toDelete.has(a.folder_id));
+
+    setDoohFolders((prev) => prev.filter((f) => !toDelete.has(f.id)));
+    setCountryAssets((prev) => {
+      const next = {};
+      for (const [cid, list] of Object.entries(prev)) {
+        next[cid] = list.filter((a) => !(a.folder_id && toDelete.has(a.folder_id)));
+      }
+      return next;
+    });
+    setDeletingFolderId(null);
+    // If we're currently inside a folder being removed, climb to its parent
+    if (currentFolderId && toDelete.has(currentFolderId)) {
+      const f = doohFolders.find((x) => x.id === folderId);
+      setCurrentFolderId(f?.parent_id || null);
+    }
+
+    const paths = assetsToDelete.map((a) => a.storage_path).filter(Boolean);
+    if (paths.length) await supabase.storage.from("dooh-specs").remove(paths);
+    if (assetsToDelete.length) await supabase.from("dooh_assets").delete().in("id", assetsToDelete.map((a) => a.id));
+    await supabase.from("dooh_folders").delete().in("id", folderIds);
+  };
+
+  const handleUploadFiles = async (countryId, fileList, folderId = null) => {
     const files = Array.from(fileList || []);
     if (!files.length) return;
     setUploadingCountry(countryId);
@@ -665,7 +790,7 @@ export default function CampaignCanvas({ wrikeData = [], folderCampaigns = [], t
       try {
         const ext = file.name.includes(".") ? file.name.split(".").pop() : "bin";
         const id = `asset-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-        const path = `${countryId}/${id}.${ext}`;
+        const path = `${countryId}/${folderId || "root"}/${id}.${ext}`;
         const { error: upErr } = await supabase.storage
           .from("dooh-specs")
           .upload(path, file, { cacheControl: "3600", upsert: false });
@@ -675,7 +800,7 @@ export default function CampaignCanvas({ wrikeData = [], folderCampaigns = [], t
         }
         const { data: pub } = supabase.storage.from("dooh-specs").getPublicUrl(path);
         const type = file.type.startsWith("image/") ? "image" : "document";
-        const asset = { id, country_id: countryId, type, name: file.name, url: pub.publicUrl, storage_path: path };
+        const asset = { id, country_id: countryId, folder_id: folderId, type, name: file.name, url: pub.publicUrl, storage_path: path };
         await supabase.from("dooh_assets").insert(asset);
         setCountryAssets((prev) => ({ ...prev, [countryId]: [...(prev[countryId] || []), asset] }));
       } catch (err) {
@@ -1246,34 +1371,80 @@ export default function CampaignCanvas({ wrikeData = [], folderCampaigns = [], t
           if (selectedCountry) {
             const country = doohCountries.find((c) => c.id === selectedCountry);
             if (!country) { setSelectedCountry(null); return null; }
-            const assets = countryAssets[selectedCountry] || [];
-            const images = assets.filter((a) => a.type === "image");
-            const docs = assets.filter((a) => a.type !== "image");
+            const allAssets = countryAssets[selectedCountry] || [];
+            const foldersAll = doohFolders.filter((f) => f.country_id === selectedCountry);
+            const subFolders = foldersAll.filter((f) => (f.parent_id || null) === (currentFolderId || null));
+            const assetsHere = allAssets.filter((a) => (a.folder_id || null) === (currentFolderId || null));
+            const images = assetsHere.filter((a) => a.type === "image");
+            const docs = assetsHere.filter((a) => a.type !== "image");
             const isUploading = uploadingCountry === selectedCountry;
+
+            // Count immediate children (folders + files) for a folder card badge
+            const folderItemCount = (fid) =>
+              foldersAll.filter((f) => (f.parent_id || null) === fid).length +
+              allAssets.filter((a) => (a.folder_id || null) === fid).length;
+
+            // Breadcrumb path from root → current folder
+            const crumbs = [];
+            let cur = currentFolderId;
+            while (cur) {
+              const f = foldersAll.find((x) => x.id === cur);
+              if (!f) break;
+              crumbs.unshift(f);
+              cur = f.parent_id || null;
+            }
+
+            const isEmptyHere = subFolders.length === 0 && assetsHere.length === 0 && !isUploading;
 
             return (
               <div key={`country-${selectedCountry}`} className="mt-2 py-4 px-6 w-full">
                 {/* Country banner */}
                 <div className="relative rounded-3xl overflow-hidden p-6 sm:p-7 mb-8 shadow-md animate-in fade-in slide-in-from-top-4 zoom-in-95 duration-500 bg-gradient-to-br from-[#122027] via-[#1b3a4b] to-[#12506e]">
                   <div className="relative flex items-center justify-between gap-4 flex-wrap">
-                    <div className="flex items-center gap-4">
+                    <div className="flex items-center gap-4 min-w-0">
                       <button
-                        onClick={() => setSelectedCountry(null)}
-                        className="flex items-center gap-1.5 bg-white/10 hover:bg-white/20 backdrop-blur-md text-white/90 px-3 py-1.5 rounded-xl text-[11px] font-black uppercase tracking-widest border border-white/20 transition-colors"
+                        onClick={() => { setSelectedCountry(null); setCurrentFolderId(null); }}
+                        className="flex items-center gap-1.5 bg-white/10 hover:bg-white/20 backdrop-blur-md text-white/90 px-3 py-1.5 rounded-xl text-[11px] font-black uppercase tracking-widest border border-white/20 transition-colors shrink-0"
                       >
                         <ChevronLeft className="w-3.5 h-3.5" /> DOOH Specs
                       </button>
-                      <div className="flex items-center gap-3">
-                        <span className="text-5xl leading-none drop-shadow">{country.flag}</span>
-                        <div>
-                          <h2 className="text-3xl sm:text-4xl font-black text-white tracking-tight leading-none">{country.name}</h2>
-                          <p className="text-[11px] font-bold text-white/70 uppercase tracking-widest mt-1.5">
-                            {assets.length} {assets.length === 1 ? "item" : "items"} · Screen specs
+                      <div className="flex items-center gap-3 min-w-0">
+                        <CountryFlag flag={country.flag} imgClass="w-14 h-10" textClass="text-5xl" />
+                        <div className="min-w-0">
+                          {/* Breadcrumb */}
+                          <div className="flex items-center gap-1.5 flex-wrap mb-1">
+                            <button
+                              onClick={() => setCurrentFolderId(null)}
+                              className={`text-2xl sm:text-3xl font-black tracking-tight leading-none transition-colors ${currentFolderId ? "text-white/55 hover:text-white" : "text-white"}`}
+                            >
+                              {country.name}
+                            </button>
+                            {crumbs.map((f, idx) => (
+                              <React.Fragment key={f.id}>
+                                <ChevronRight className="w-4 h-4 text-white/40 shrink-0" />
+                                <button
+                                  onClick={() => setCurrentFolderId(f.id)}
+                                  className={`text-2xl sm:text-3xl font-black tracking-tight leading-none transition-colors ${idx === crumbs.length - 1 ? "text-white" : "text-white/55 hover:text-white"}`}
+                                >
+                                  {f.name}
+                                </button>
+                              </React.Fragment>
+                            ))}
+                          </div>
+                          <p className="text-[11px] font-bold text-white/70 uppercase tracking-widest">
+                            {subFolders.length > 0 && `${subFolders.length} ${subFolders.length === 1 ? "folder" : "folders"} · `}
+                            {assetsHere.length} {assetsHere.length === 1 ? "file" : "files"}
                           </p>
                         </div>
                       </div>
                     </div>
-                    <div className="flex items-center gap-2">
+                    <div className="flex items-center gap-2 shrink-0">
+                      <button
+                        onClick={() => { setNewFolderName(""); setIsAddFolderOpen(true); }}
+                        className="flex items-center gap-2 bg-white/10 hover:bg-white/20 text-white px-4 py-2.5 rounded-xl font-black text-xs uppercase tracking-widest border border-white/20 transition-colors active:scale-95"
+                      >
+                        <FolderPlus className="w-4 h-4" /> New folder
+                      </button>
                       <button
                         onClick={() => countryFileInputRef.current?.click()}
                         disabled={isUploading}
@@ -1307,18 +1478,54 @@ export default function CampaignCanvas({ wrikeData = [], folderCampaigns = [], t
                   multiple
                   accept="image/*,.pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt"
                   className="hidden"
-                  onChange={(e) => { handleUploadFiles(selectedCountry, e.target.files); e.target.value = ""; }}
+                  onChange={(e) => { handleUploadFiles(selectedCountry, e.target.files, currentFolderId); e.target.value = ""; }}
                 />
 
-                {assets.length === 0 && !isUploading && (
-                  <button
-                    onClick={() => countryFileInputRef.current?.click()}
-                    className="w-full border-2 border-dashed border-[#dce4ec] hover:border-[#12a0e1] rounded-3xl py-20 flex flex-col items-center justify-center gap-3 text-[#768994] hover:text-[#12a0e1] transition-colors"
-                  >
-                    <Upload className="w-10 h-10" />
-                    <p className="text-sm font-black">Add screen specs for {country.name}</p>
-                    <p className="text-xs">Click to upload images or documents</p>
-                  </button>
+                {/* Folders at this level */}
+                {subFolders.length > 0 && (
+                  <div className="mb-8">
+                    <h3 className="text-xs font-black text-[#768994] uppercase tracking-widest mb-3 flex items-center gap-2">
+                      <Folder className="w-4 h-4" /> Folders
+                    </h3>
+                    <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-6 gap-3">
+                      {subFolders.map((f) => (
+                        <div key={f.id} className="group relative">
+                          <button
+                            onClick={() => setCurrentFolderId(f.id)}
+                            className="w-full flex items-center gap-3 bg-white border border-[#dce4ec] rounded-2xl p-3.5 shadow-sm hover:border-[#12a0e1]/50 hover:shadow transition-all text-left"
+                          >
+                            <div className="shrink-0 w-10 h-10 rounded-xl bg-amber-100 text-amber-500 flex items-center justify-center">
+                              <Folder className="w-5 h-5 fill-current" />
+                            </div>
+                            <div className="min-w-0">
+                              <p className="text-sm font-black text-[#122027] truncate">{f.name}</p>
+                              <p className="text-[11px] text-[#768994] font-bold">{folderItemCount(f.id)} {folderItemCount(f.id) === 1 ? "item" : "items"}</p>
+                            </div>
+                          </button>
+                          {deletingFolderId === f.id ? (
+                            <div className="absolute top-2 right-2 flex items-center gap-1">
+                              <button onClick={() => handleDeleteFolder(f.id)} title="Delete folder + contents" className="p-1.5 bg-rose-500 hover:bg-rose-600 text-white rounded-lg shadow"><Check className="w-3.5 h-3.5" /></button>
+                              <button onClick={() => setDeletingFolderId(null)} className="p-1.5 bg-slate-100 hover:bg-slate-200 text-[#122027] rounded-lg shadow"><X className="w-3.5 h-3.5" /></button>
+                            </div>
+                          ) : (
+                            <button onClick={() => setDeletingFolderId(f.id)} title="Delete folder" className="absolute top-2 right-2 p-1.5 text-[#768994] hover:text-rose-500 hover:bg-rose-50 rounded-lg opacity-0 group-hover:opacity-100 transition-all"><Trash2 className="w-3.5 h-3.5" /></button>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {isEmptyHere && (
+                  <div className="w-full border-2 border-dashed border-[#dce4ec] rounded-3xl py-16 flex flex-col items-center justify-center gap-3 text-[#768994]">
+                    <Folder className="w-10 h-10 opacity-50" />
+                    <p className="text-sm font-black">This folder is empty</p>
+                    <p className="text-xs">Use “New folder” to organise sites, or “Add files” to upload specs</p>
+                    <div className="flex items-center gap-2 mt-2">
+                      <button onClick={() => { setNewFolderName(""); setIsAddFolderOpen(true); }} className="flex items-center gap-1.5 px-4 py-2 rounded-xl border border-[#dce4ec] hover:border-[#12a0e1] hover:text-[#12a0e1] text-xs font-black uppercase tracking-widest transition-colors"><FolderPlus className="w-4 h-4" /> New folder</button>
+                      <button onClick={() => countryFileInputRef.current?.click()} className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-[#12a0e1] hover:bg-[#0f88c0] text-white text-xs font-black uppercase tracking-widest transition-colors"><Upload className="w-4 h-4" /> Add files</button>
+                    </div>
+                  </div>
                 )}
 
                 {/* Images */}
@@ -1330,9 +1537,9 @@ export default function CampaignCanvas({ wrikeData = [], folderCampaigns = [], t
                     <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4">
                       {images.map((asset) => (
                         <div key={asset.id} className="group relative rounded-2xl overflow-hidden aspect-square bg-slate-100 border border-[#dce4ec] shadow-sm">
-                          <a href={asset.url} target="_blank" rel="noopener noreferrer">
+                          <button type="button" onClick={() => openPreview(asset)} className="absolute inset-0 w-full h-full cursor-zoom-in">
                             <img src={asset.url} alt={asset.name} className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-105" />
-                          </a>
+                          </button>
                           <div className="absolute inset-x-0 bottom-0 p-2 bg-gradient-to-t from-black/70 to-transparent pointer-events-none">
                             <p className="text-[10px] font-bold text-white truncate">{asset.name}</p>
                           </div>
@@ -1359,15 +1566,15 @@ export default function CampaignCanvas({ wrikeData = [], folderCampaigns = [], t
                     <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
                       {docs.map((asset) => (
                         <div key={asset.id} className="group relative flex items-center gap-3 bg-white border border-[#dce4ec] rounded-2xl p-3 shadow-sm hover:border-[#12a0e1]/40 hover:shadow transition-all">
-                          <a href={asset.url} target="_blank" rel="noopener noreferrer" className="flex items-center gap-3 min-w-0 flex-1">
+                          <button type="button" onClick={() => openPreview(asset)} className="flex items-center gap-3 min-w-0 flex-1 text-left cursor-pointer">
                             <div className="shrink-0 w-10 h-10 rounded-xl bg-[#12a0e1]/10 text-[#12a0e1] flex items-center justify-center">
                               <FileText className="w-5 h-5" />
                             </div>
                             <div className="min-w-0">
                               <p className="text-sm font-bold text-[#122027] truncate">{asset.name}</p>
-                              <p className="text-[11px] text-[#768994] font-medium">Open document →</p>
+                              <p className="text-[11px] text-[#768994] font-medium">{isPdfAsset(asset) ? "Preview →" : "Open →"}</p>
                             </div>
-                          </a>
+                          </button>
                           {deletingAssetId === asset.id ? (
                             <div className="flex items-center gap-1 shrink-0">
                               <button onClick={() => handleDeleteAsset(asset)} className="p-1.5 bg-rose-500 hover:bg-rose-600 text-white rounded-lg"><Check className="w-3.5 h-3.5" /></button>
@@ -1484,29 +1691,35 @@ export default function CampaignCanvas({ wrikeData = [], folderCampaigns = [], t
                     <p className="text-[11px] font-bold text-[#768994] uppercase tracking-widest mt-1">Screen specs by country · {doohCountries.length}</p>
                   </div>
                 </div>
-                <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-6 gap-4">
+                <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-6 xl:grid-cols-8 gap-3">
                   {doohCountries.map((country, i) => {
-                    const count = (countryAssets[country.id] || []).length;
+                    const count =
+                      doohFolders.filter((f) => f.country_id === country.id).length +
+                      (countryAssets[country.id] || []).length;
                     return (
                       <button
                         key={country.id}
-                        onClick={() => { setSelectedStudio(null); setSelectedCountry(country.id); window.scrollTo({ top: 0, behavior: "smooth" }); }}
-                        className="group relative rounded-2xl overflow-hidden aspect-[4/3] outline-none shadow-md hover:shadow-2xl hover:-translate-y-1 bg-gradient-to-br from-[#1b3a4b] to-[#12506e] flex flex-col items-center justify-center p-4 animate-in fade-in slide-in-from-bottom-4 zoom-in-95"
-                        style={{ transition: "transform 0.6s cubic-bezier(0.16,1,0.3,1), box-shadow 0.6s cubic-bezier(0.16,1,0.3,1)", animationDelay: `${i * 50}ms`, animationFillMode: "both" }}
+                        onClick={() => { setSelectedStudio(null); setSelectedCountry(country.id); setCurrentFolderId(null); window.scrollTo({ top: 0, behavior: "smooth" }); }}
+                        className="group relative rounded-xl overflow-hidden min-h-[104px] outline-none shadow-sm hover:shadow-lg hover:-translate-y-0.5 bg-gradient-to-br from-[#1b3a4b] to-[#12506e] flex flex-col items-center justify-center gap-2 px-2 py-3 animate-in fade-in zoom-in-95"
+                        style={{ transition: "transform 0.5s cubic-bezier(0.16,1,0.3,1), box-shadow 0.5s cubic-bezier(0.16,1,0.3,1)", animationDelay: `${Math.min(i, 24) * 25}ms`, animationFillMode: "both" }}
                       >
-                        <span className="text-5xl leading-none drop-shadow-md transition-transform duration-500 group-hover:scale-110">{country.flag}</span>
-                        <p className="mt-3 text-sm font-black text-white tracking-tight text-center leading-tight">{country.name}</p>
-                        <span className="absolute top-2.5 right-2.5 text-[10px] font-black bg-white/15 backdrop-blur-md text-white px-2 py-0.5 rounded-full border border-white/25">{count}</span>
+                        <span className="transition-transform duration-500 group-hover:scale-110">
+                          <CountryFlag flag={country.flag} imgClass="w-11 h-[30px]" textClass="text-3xl" />
+                        </span>
+                        <p className="text-[11px] font-bold text-white text-center leading-tight line-clamp-2 px-0.5">{country.name}</p>
+                        {count > 0 && (
+                          <span className="absolute top-1.5 right-1.5 text-[9px] font-black bg-white/15 backdrop-blur-md text-white w-5 h-5 flex items-center justify-center rounded-full border border-white/25">{count}</span>
+                        )}
                       </button>
                     );
                   })}
                   {/* Add country card */}
                   <button
                     onClick={() => setIsAddCountryOpen(true)}
-                    className="group rounded-2xl aspect-[4/3] border-2 border-dashed border-[#dce4ec] hover:border-[#12a0e1] flex flex-col items-center justify-center gap-2 text-[#768994] hover:text-[#12a0e1] transition-colors outline-none"
+                    className="group rounded-xl min-h-[104px] border-2 border-dashed border-[#dce4ec] hover:border-[#12a0e1] flex flex-col items-center justify-center gap-1.5 text-[#768994] hover:text-[#12a0e1] transition-colors outline-none"
                   >
-                    <Plus className="w-7 h-7" />
-                    <span className="text-xs font-black uppercase tracking-widest">Add country</span>
+                    <Plus className="w-6 h-6" />
+                    <span className="text-[10px] font-black uppercase tracking-widest">Add</span>
                   </button>
                 </div>
               </section>
@@ -2214,7 +2427,7 @@ export default function CampaignCanvas({ wrikeData = [], folderCampaigns = [], t
           >
             <div className="bg-white rounded-[24px] shadow-2xl w-full max-w-md overflow-hidden border border-[#dce4ec] animate-in zoom-in-95 duration-200">
               <div className="p-6 sm:p-7 bg-gradient-to-br from-[#122027] via-[#1b3a4b] to-[#12506e] flex items-center gap-4">
-                <span className="text-4xl leading-none drop-shadow">{codeToFlag(newCountryCode) || "🌐"}</span>
+                <CountryFlag flag={codeToFlag(newCountryCode) || "🌐"} imgClass="w-12 h-8" textClass="text-4xl" />
                 <div>
                   <h2 className="text-2xl font-black text-white tracking-tight leading-none">Add Country</h2>
                   <p className="text-[11px] font-bold text-white/70 uppercase tracking-widest mt-1.5">DOOH screen specs</p>
@@ -2259,6 +2472,114 @@ export default function CampaignCanvas({ wrikeData = [], folderCampaigns = [], t
                   Add Country
                 </button>
               </div>
+            </div>
+          </div>
+        )}
+
+        {/* NEW FOLDER MODAL */}
+        {isAddFolderOpen && (
+          <div
+            className="fixed inset-0 bg-[#122027]/60 backdrop-blur-sm flex items-center justify-center z-[9999] p-4"
+            onClick={(e) => { if (e.target === e.currentTarget) setIsAddFolderOpen(false); }}
+          >
+            <div className="bg-white rounded-[24px] shadow-2xl w-full max-w-md overflow-hidden border border-[#dce4ec] animate-in zoom-in-95 duration-200">
+              <div className="p-6 sm:p-7 bg-gradient-to-br from-[#122027] via-[#1b3a4b] to-[#12506e] flex items-center gap-4">
+                <div className="w-12 h-12 rounded-2xl bg-amber-400/90 text-[#122027] flex items-center justify-center shadow">
+                  <FolderPlus className="w-6 h-6" />
+                </div>
+                <div>
+                  <h2 className="text-2xl font-black text-white tracking-tight leading-none">New Folder</h2>
+                  <p className="text-[11px] font-bold text-white/70 uppercase tracking-widest mt-1.5">
+                    Inside {(() => {
+                      const f = doohFolders.find((x) => x.id === currentFolderId);
+                      return f ? f.name : doohCountries.find((c) => c.id === selectedCountry)?.name || "country";
+                    })()}
+                  </p>
+                </div>
+              </div>
+              <div className="p-6 sm:p-7">
+                <label className="text-xs font-black text-[#768994] uppercase tracking-widest">Folder name</label>
+                <input
+                  autoFocus
+                  value={newFolderName}
+                  onChange={(e) => setNewFolderName(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === "Enter") handleAddFolder(); if (e.key === "Escape") setIsAddFolderOpen(false); }}
+                  placeholder="e.g. LAGOH, Specs, Render Examples"
+                  className="mt-1.5 w-full px-4 py-2.5 rounded-xl border border-[#dce4ec] focus:border-[#12a0e1] outline-none text-sm font-bold text-[#122027]"
+                />
+              </div>
+              <div className="px-6 sm:px-7 pb-6 flex justify-end gap-2">
+                <button
+                  onClick={() => { setIsAddFolderOpen(false); setNewFolderName(""); }}
+                  className="px-5 py-2.5 text-[#768994] hover:text-[#122027] text-xs font-black uppercase tracking-widest rounded-xl hover:bg-slate-100 transition-colors"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={handleAddFolder}
+                  disabled={!newFolderName.trim()}
+                  className="px-6 py-2.5 bg-[#12a0e1] hover:bg-[#0f88c0] disabled:opacity-50 text-white text-xs font-black uppercase tracking-widest rounded-xl shadow-md transition-all active:scale-95"
+                >
+                  Create Folder
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* FILE PREVIEW LIGHTBOX (images + PDFs) */}
+        {previewAsset && (
+          <div
+            className="fixed inset-0 z-[10000] bg-black/85 backdrop-blur-sm flex flex-col p-3 sm:p-6 animate-in fade-in duration-200"
+            onClick={(e) => { if (e.target === e.currentTarget) setPreviewAsset(null); }}
+          >
+            <div className="flex items-center justify-between gap-3 mb-3 shrink-0">
+              <div className="flex items-center gap-2.5 min-w-0 text-white">
+                <div className="shrink-0 w-9 h-9 rounded-xl bg-white/10 border border-white/20 flex items-center justify-center">
+                  {previewAsset.type === "image" ? <ImageIcon className="w-4 h-4" /> : <FileText className="w-4 h-4" />}
+                </div>
+                <p className="font-bold truncate">{previewAsset.name}</p>
+              </div>
+              <div className="flex items-center gap-2 shrink-0">
+                <a
+                  href={previewAsset.url}
+                  download={previewAsset.name}
+                  className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-white/10 hover:bg-white/20 text-white text-xs font-bold border border-white/20 transition-colors"
+                >
+                  <Download className="w-4 h-4" /> <span className="hidden sm:inline">Download</span>
+                </a>
+                <a
+                  href={previewAsset.url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-white/10 hover:bg-white/20 text-white text-xs font-bold border border-white/20 transition-colors"
+                >
+                  <ExternalLink className="w-4 h-4" /> <span className="hidden sm:inline">Open</span>
+                </a>
+                <button
+                  onClick={() => setPreviewAsset(null)}
+                  className="p-2 rounded-xl bg-white/10 hover:bg-rose-500 text-white border border-white/20 transition-colors"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+            </div>
+            <div className="flex-1 min-h-0 rounded-2xl overflow-hidden bg-white/5 border border-white/10 flex items-center justify-center">
+              {previewAsset.type === "image" ? (
+                <img
+                  src={previewAsset.url}
+                  alt={previewAsset.name}
+                  className="max-h-full max-w-full object-contain animate-in zoom-in-95 duration-200"
+                  onClick={(e) => e.stopPropagation()}
+                />
+              ) : (
+                <iframe
+                  src={previewAsset.url}
+                  title={previewAsset.name}
+                  className="w-full h-full bg-white"
+                  onClick={(e) => e.stopPropagation()}
+                />
+              )}
             </div>
           </div>
         )}

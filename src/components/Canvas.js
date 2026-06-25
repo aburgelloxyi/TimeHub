@@ -123,6 +123,7 @@ export default function CampaignCanvas({ wrikeData = [], triggerToast: _triggerT
 
   // Save covers to Supabase whenever they change
   const saveCoverRef = useRef(null);
+  const linksLoadedRef = useRef(false);
   useEffect(() => {
     if (Object.keys(covers).length === 0) return;
     clearTimeout(saveCoverRef.current);
@@ -300,6 +301,30 @@ export default function CampaignCanvas({ wrikeData = [], triggerToast: _triggerT
       return updatedList;
     });
   }, [wrikeData]);
+
+  // --- LOAD PERSISTED LINKS FROM SUPABASE ---
+  useEffect(() => {
+    if (!campaigns.length || linksLoadedRef.current) return;
+    linksLoadedRef.current = true;
+    (async () => {
+      const { data } = await supabase.from("campaign_links").select("*");
+      if (!data?.length) return;
+      const map = {};
+      data.forEach((r) => {
+        if (!map[r.campaign_id]) map[r.campaign_id] = [];
+        map[r.campaign_id].push({ id: r.id, title: r.title, url: r.url, fromDb: true });
+      });
+      setCampaigns((prev) =>
+        prev.map((camp) => ({
+          ...camp,
+          links: [
+            ...(camp.links || []).filter((l) => !l.fromDb),
+            ...(map[camp.id] || []),
+          ],
+        }))
+      );
+    })();
+  }, [campaigns]);
 
   // --- COMMAND PALETTE SEARCH ENGINE WITH ACTIONS ---
   const paletteResults = React.useMemo(() => {
@@ -516,25 +541,25 @@ export default function CampaignCanvas({ wrikeData = [], triggerToast: _triggerT
     setEditingNote({ campId: null, noteId: null });
   };
 
-  const handleAddLink = (campId) => {
+  const handleAddLink = async (campId) => {
     if (!newLinkTitle.trim() || !newLinkUrl.trim()) return;
+    const { data } = await supabase
+      .from("campaign_links")
+      .insert({ campaign_id: campId, title: newLinkTitle, url: newLinkUrl })
+      .select()
+      .single();
+    const newLink = {
+      id: data?.id || `link-${Date.now()}`,
+      title: newLinkTitle,
+      url: newLinkUrl,
+      fromDb: !!data,
+    };
     setCampaigns((prev) =>
-      prev.map((camp) => {
-        if (camp.id === campId) {
-          return {
-            ...camp,
-            links: [
-              ...(camp.links || []),
-              {
-                id: `link-${Date.now()}`,
-                title: newLinkTitle,
-                url: newLinkUrl,
-              },
-            ],
-          };
-        }
-        return camp;
-      })
+      prev.map((camp) =>
+        camp.id === campId
+          ? { ...camp, links: [...(camp.links || []), newLink] }
+          : camp
+      )
     );
     setNewLinkTitle("");
     setNewLinkUrl("");
@@ -545,22 +570,27 @@ export default function CampaignCanvas({ wrikeData = [], triggerToast: _triggerT
     setEditLinkUrl(link.url);
   };
 
-  const handleSaveEditLink = (campId, linkId) => {
+  const handleSaveEditLink = async (campId, linkId) => {
     if (!editLinkTitle.trim() || !editLinkUrl.trim()) return;
+    const camp = campaigns.find((c) => c.id === campId);
+    const link = camp?.links?.find((l) => l.id === linkId);
+    if (link?.fromDb) {
+      await supabase
+        .from("campaign_links")
+        .update({ title: editLinkTitle, url: editLinkUrl })
+        .eq("id", linkId);
+    }
     setCampaigns((prev) =>
-      prev.map((camp) => {
-        if (camp.id === campId) {
-          return {
-            ...camp,
-            links: (camp.links || []).map((l) =>
-              l.id === linkId
-                ? { ...l, title: editLinkTitle, url: editLinkUrl }
-                : l
-            ),
-          };
-        }
-        return camp;
-      })
+      prev.map((camp) =>
+        camp.id === campId
+          ? {
+              ...camp,
+              links: (camp.links || []).map((l) =>
+                l.id === linkId ? { ...l, title: editLinkTitle, url: editLinkUrl } : l
+              ),
+            }
+          : camp
+      )
     );
     setEditingLink({ campId: null, linkId: null });
   };
@@ -568,17 +598,18 @@ export default function CampaignCanvas({ wrikeData = [], triggerToast: _triggerT
   const cancelEditingLink = () => {
     setEditingLink({ campId: null, linkId: null });
   };
-  const handleDeleteLink = (campId, linkId) => {
+  const handleDeleteLink = async (campId, linkId) => {
+    const camp = campaigns.find((c) => c.id === campId);
+    const link = camp?.links?.find((l) => l.id === linkId);
+    if (link?.fromDb) {
+      await supabase.from("campaign_links").delete().eq("id", linkId);
+    }
     setCampaigns((prev) =>
-      prev.map((camp) => {
-        if (camp.id === campId) {
-          return {
-            ...camp,
-            links: (camp.links || []).filter((l) => l.id !== linkId),
-          };
-        }
-        return camp;
-      })
+      prev.map((camp) =>
+        camp.id === campId
+          ? { ...camp, links: (camp.links || []).filter((l) => l.id !== linkId) }
+          : camp
+      )
     );
   };
 

@@ -5,6 +5,8 @@ import {
   filterToMotionTeam,
   hydrateMissingFolders,
   parseWrikeData,
+  getStudioName,
+  buildChildToParent,
 } from "../lib/wrikeEnrich";
 
 const FIELDS_FILTER = encodeURIComponent(
@@ -18,14 +20,29 @@ const LOOKBACK_MONTHS   = 2;                 // how far back the full refresh wi
 // Fetch folders, contacts, workflows from Wrike
 // ---------------------------------------------------------------------------
 async function fetchWrikeMeta(token) {
-  const [fRes, cRes, wRes] = await Promise.all([
-    fetch("https://www.wrike.com/api/v4/folders",  { headers: { Authorization: `Bearer ${token}` } }),
-    fetch("https://www.wrike.com/api/v4/contacts",  { headers: { Authorization: `Bearer ${token}` } }),
-    fetch("https://www.wrike.com/api/v4/workflows", { headers: { Authorization: `Bearer ${token}` } }),
-  ]);
+  const headers = { Authorization: `Bearer ${token}` };
 
+  // Paginate folders — childIds is NOT returned by default on the flat /folders
+  // list, so request it explicitly. We store childIds and build a reverse
+  // childToParent map for upward tree climbing (parentIds is never returned).
   const folderDictionary = {};
-  (await fRes.json()).data?.forEach((f) => { folderDictionary[f.id] = f; });
+  const FOLDER_FIELDS = encodeURIComponent("[childIds]");
+  let folderUrl = `https://www.wrike.com/api/v4/folders?fields=${FOLDER_FIELDS}`;
+  while (folderUrl) {
+    const fRes = await fetch(folderUrl, { headers });
+    if (!fRes.ok) { console.warn("[WrikeCache] folders fetch failed", fRes.status); break; }
+    const fJson = await fRes.json();
+    fJson.data?.forEach((f) => { folderDictionary[f.id] = { id: f.id, title: f.title, childIds: f.childIds || [] }; });
+    folderUrl = fJson.nextPageToken
+      ? `https://www.wrike.com/api/v4/folders?fields=${FOLDER_FIELDS}&nextPageToken=${fJson.nextPageToken}`
+      : null;
+  }
+  console.log(`[WrikeCache] folder dictionary loaded: ${Object.keys(folderDictionary).length} folders`);
+
+  const [cRes, wRes] = await Promise.all([
+    fetch("https://www.wrike.com/api/v4/contacts",  { headers }),
+    fetch("https://www.wrike.com/api/v4/workflows", { headers }),
+  ]);
 
   const contactDictionary = {};
   (await cRes.json()).data?.forEach((u) => {
@@ -76,39 +93,78 @@ async function fetchWrikeTasks(token, sinceIso) {
 // ---------------------------------------------------------------------------
 async function fetchTasksByIds(token, ids) {
   const out = [];
-  // The single-task endpoint /tasks/{id} returns the FULL task (incl. description)
-  // by default. The multi-id batch + fields combo 400s, so fetch one at a time.
   const headers = { Authorization: `Bearer ${token}` };
-  const descFields = encodeURIComponent("[description,customFields]");
-  for (const id of ids) {
-    let task = null;
-    // Attempt 1: explicit description field
+  // Batch up to 100 IDs per request — Wrike supports comma-separated IDs
+  // and returns description by default (no fields param needed).
+  const BATCH = 100;
+  for (let i = 0; i < ids.length; i += BATCH) {
+    const batch = ids.slice(i, i + BATCH);
     try {
-      const r = await fetch(`https://www.wrike.com/api/v4/tasks/${id}?fields=${descFields}`, { headers });
-      if (r.ok) task = (await r.json()).data?.[0];
-      else console.warn(`[WrikeCache] ${id} w/fields ${r.status}:`, await r.text().catch(() => ""));
-    } catch (e) { console.warn(`[WrikeCache] ${id} w/fields error`, e); }
-    // Attempt 2: no fields param (single-task GET returns description by default)
-    if (!task) {
-      try {
-        const r = await fetch(`https://www.wrike.com/api/v4/tasks/${id}`, { headers });
-        if (r.ok) task = (await r.json()).data?.[0];
-        else console.warn(`[WrikeCache] ${id} no-fields ${r.status}:`, await r.text().catch(() => ""));
-      } catch (e) { console.warn(`[WrikeCache] ${id} no-fields error`, e); }
+      const r = await fetch(`https://www.wrike.com/api/v4/tasks/${batch.join(",")}`, { headers });
+      if (r.ok) {
+        const tasks = (await r.json()).data || [];
+        out.push(...tasks);
+      } else {
+        // Batch failed — fall back to individual fetches for this batch
+        for (const id of batch) {
+          try {
+            const r2 = await fetch(`https://www.wrike.com/api/v4/tasks/${id}`, { headers });
+            if (r2.ok) {
+              const task = (await r2.json()).data?.[0];
+              if (task) out.push(task);
+            }
+          } catch (e) { console.warn(`[WrikeCache] refetch ${id} error`, e); }
+        }
+      }
+    } catch (e) {
+      console.warn(`[WrikeCache] batch refetch error`, e);
     }
-    if (task) out.push(task);
   }
   return out;
+}
+
+// ---------------------------------------------------------------------------
+// Root studio folders whose direct children are film/campaign folders
+// ---------------------------------------------------------------------------
+const STUDIO_FOLDER_TITLES = ["WARNER BROS", "SONY"];
+
+function deriveFolderCampaigns(folderDictionary) {
+  const campaigns = [];
+  const seen = new Set();
+  for (const folder of Object.values(folderDictionary)) {
+    if (!STUDIO_FOLDER_TITLES.includes(folder.title?.trim().toUpperCase())) continue;
+    for (const childId of folder.childIds || []) {
+      if (seen.has(childId)) continue;
+      seen.add(childId);
+      const child = folderDictionary[childId];
+      if (!child?.title) continue;
+      const title = child.title.trim();
+      if (!title || title.startsWith("_") || title.toUpperCase().includes("ARCHIVE") || title.toUpperCase().includes("TEMPLATE")) continue;
+      campaigns.push({
+        id: `folder-${childId}`,
+        folderId: childId,
+        title,
+        wrikeLink: `https://www.wrike.com/open.htm?id=${childId}`,
+        studioHint: "Others",
+        isFolder: true,
+        notes: [],
+        matrices: [],
+        links: [],
+      });
+    }
+  }
+  return campaigns;
 }
 
 // ---------------------------------------------------------------------------
 // Main hook
 // ---------------------------------------------------------------------------
 export function useWrikeCache() {
-  const [tasks, setTasks]           = useState([]);
-  const [isSyncing, setIsSyncing]   = useState(false);
-  const [lastSynced, setLastSynced] = useState(null);
-  const [syncError, setSyncError]   = useState(null);
+  const [tasks, setTasks]                       = useState([]);
+  const [folderCampaigns, setFolderCampaigns]   = useState([]);
+  const [isSyncing, setIsSyncing]               = useState(false);
+  const [lastSynced, setLastSynced]             = useState(null);
+  const [syncError, setSyncError]               = useState(null);
   const syncingRef = useRef(false);
 
   const wrikeUserId = localStorage.getItem("wrike_user_id");
@@ -155,43 +211,105 @@ export function useWrikeCache() {
         .single();
       if (meta?.last_synced_at) setLastSynced(new Date(meta.last_synced_at));
 
-      // --- SELF-HEAL: repair MATRIX tasks whose description (table) is missing ---
-      // These are old tasks outside the sync's updatedDate window, so the normal
-      // sync never re-touches them. Re-fetch their descriptions by ID directly.
+      // --- SELF-HEAL + STUDIO BACKFILL ---
+      // MATRIX tasks that predate parentIds in FIELDS_FILTER have parentIds=undefined.
+      // Re-fetch those by ID to get full data. Also re-fetch any still missing tableHtml.
+      // After repair, fetch a fresh folder dict if the Supabase copy is sparse, then
+      // backfill studioName on every task that still lacks it.
       if (token && loaded.length) {
         const broken = loaded.filter(
-          (t) => t.title?.toUpperCase().includes("MATRIX") && !t.tableHtml
+          (t) => t.title?.toUpperCase().includes("MATRIX") && (!t.tableHtml || !t.parentIds?.length)
         );
         if (broken.length > 0) {
-          console.log(`[WrikeCache] repairing ${broken.length} MATRIX tasks with missing tables`);
+          console.log(`[WrikeCache] repairing ${broken.length} MATRIX tasks (missing table/parentIds)`);
           const refetched = await fetchTasksByIds(token, broken.map((t) => t.id));
-          const descById = new Map(refetched.map((t) => [t.id, t.description]));
-          // Merge parsed description into the EXISTING cached task — preserves
-          // the already-correct projectName, assignees, status, etc.
+          const refetchedById = new Map(refetched.map((t) => [t.id, t]));
           const repaired = broken
-            .filter((t) => descById.get(t.id))
+            .filter((t) => refetchedById.get(t.id))
             .map((t) => {
-              const parsed = parseWrikeData(descById.get(t.id));
+              const full = refetchedById.get(t.id);
+              const parsed = parseWrikeData(full.description);
               return {
                 ...t,
-                tableHtml: parsed.tableHtml,
-                notesText: parsed.notesText,
+                parentIds: full.parentIds || t.parentIds,
+                tableHtml: parsed.tableHtml || t.tableHtml,
+                notesText: parsed.notesText || t.notesText,
                 extractedPathData: parsed.extractedPathData || t.extractedPathData,
               };
             });
-          console.log(`[WrikeCache] got descriptions for ${repaired.length}/${broken.length} tasks`);
           if (repaired.length) {
-            // Persist each repaired task (UPDATE by id — no dupe rows, fixes all partitions)
             for (const t of repaired) {
               await supabase.from("wrike_tasks_cache").update({ task_data: t }).eq("id", t.id);
             }
-            // Merge repaired tasks into state
             setTasks((prev) => {
               const m = new Map(prev.map((p) => [p.id, p]));
               repaired.forEach((t) => m.set(t.id, t));
               return [...m.values()];
             });
+            // Update loaded so the studio backfill below sees the repaired parentIds
+            repaired.forEach((t) => {
+              const idx = loaded.findIndex((l) => l.id === t.id);
+              if (idx >= 0) loaded[idx] = t;
+            });
             console.log(`[WrikeCache] repaired ${repaired.length} MATRIX tasks`);
+          }
+        }
+
+        // Get fresh folder dictionary. The cached Supabase copy may be unusable for
+        // tree-climbing if it predates the childIds fix (childIds absent or empty),
+        // so we build the reverse parent map and re-fetch whenever it comes out empty.
+        let fd = meta?.folder_dictionary || {};
+        let c2p = buildChildToParent(fd);
+        if (Object.keys(fd).length < 500 || Object.keys(c2p).length === 0) {
+          console.log("[WrikeCache] folder dict sparse or missing childIds — fetching fresh from Wrike");
+          const freshFd = {};
+          const FF = encodeURIComponent("[childIds]");
+          let folderUrl = `https://www.wrike.com/api/v4/folders?fields=${FF}`;
+          let logged = false;
+          while (folderUrl) {
+            try {
+              const fRes = await fetch(folderUrl, { headers: { Authorization: `Bearer ${token}` } });
+              if (!fRes.ok) { console.warn("[WrikeCache] folders fetch failed", fRes.status); break; }
+              const fJson = await fRes.json();
+              if (!logged && fJson.data?.[0]) {
+                console.log("[WrikeCache] sample folder:", JSON.stringify(fJson.data[0]));
+                logged = true;
+              }
+              fJson.data?.forEach((f) => { freshFd[f.id] = { id: f.id, title: f.title, childIds: f.childIds || [] }; });
+              folderUrl = fJson.nextPageToken
+                ? `https://www.wrike.com/api/v4/folders?fields=${FF}&nextPageToken=${fJson.nextPageToken}`
+                : null;
+            } catch { break; }
+          }
+          if (Object.keys(freshFd).length > 100) {
+            fd = freshFd;
+            c2p = buildChildToParent(fd);
+            console.log(`[WrikeCache] fresh folder dict: ${Object.keys(fd).length} folders`);
+            supabase.from("wrike_sync_meta").upsert({ folder_dictionary: fd });
+          }
+        }
+        console.log(`[WrikeCache] backfill: ${Object.keys(fd).length} folders, ${Object.keys(c2p).length} parent links`);
+        const derived = deriveFolderCampaigns(fd);
+        if (derived.length > 0) {
+          console.log(`[WrikeCache] folder campaigns derived: ${derived.length}`);
+          setFolderCampaigns(derived);
+        }
+
+        const needsStudio = loaded.filter((t) => !t.studioName);
+        if (needsStudio.length > 0 && Object.keys(fd).length > 100) {
+          const backfilled = needsStudio
+            .map((t) => ({ ...t, studioName: getStudioName(t, fd, c2p) }))
+            .filter((t) => t.studioName);
+          if (backfilled.length > 0) {
+            setTasks((prev) => {
+              const m = new Map(prev.map((p) => [p.id, p]));
+              backfilled.forEach((t) => m.set(t.id, t));
+              return [...m.values()];
+            });
+            backfilled.forEach((t) => {
+              supabase.from("wrike_tasks_cache").update({ task_data: t }).eq("id", t.id);
+            });
+            console.log(`[WrikeCache] studio backfilled ${backfilled.length} tasks`);
           }
         }
       }
@@ -245,7 +363,8 @@ export function useWrikeCache() {
 
       // Refresh folder/contact/status dicts if stale or missing
       const metaAge = now - lastSync;
-      const needsMetaRefresh = fullRefresh || metaAge > META_MAX_AGE_MS || !meta?.folder_dictionary;
+      const folderDictSize = Object.keys(meta?.folder_dictionary || {}).length;
+      const needsMetaRefresh = fullRefresh || metaAge > META_MAX_AGE_MS || !meta?.folder_dictionary || folderDictSize < 10;
 
       let folderDictionary  = meta?.folder_dictionary  || {};
       let contactDictionary = meta?.contact_dictionary || {};
@@ -283,8 +402,20 @@ export function useWrikeCache() {
         });
       }
 
+      // Build reverse childToParent map for upward BFS studio detection
+      const childToParent = buildChildToParent(folderDictionary);
+
+      // Derive folder-based campaigns from Warner Bros / Sony root folders
+      if (needsMetaRefresh) {
+        const derived = deriveFolderCampaigns(folderDictionary);
+        if (derived.length > 0) {
+          console.log(`[WrikeCache] folder campaigns (sync): ${derived.length}`);
+          setFolderCampaigns(derived);
+        }
+      }
+
       // Enrich the relevant set (parses description → tableHtml + notesText)
-      const filtered = enrichTasks(relevant, folderDictionary, contactDictionary, statusDictionary);
+      const filtered = enrichTasks(relevant, folderDictionary, contactDictionary, statusDictionary, childToParent);
 
       // Upsert to Supabase in batches
       if (filtered.length > 0) {
@@ -309,14 +440,35 @@ export function useWrikeCache() {
         status_dictionary:  needsMetaRefresh ? statusDictionary  : (meta?.status_dictionary  ?? {}),
       });
 
-      // Merge new tasks into state
-      if (filtered.length > 0) {
-        setTasks((prev) => {
-          const map = new Map(prev.map((t) => [t.id, t]));
-          filtered.forEach((t) => map.set(t.id, t));
-          return [...map.values()];
-        });
-      }
+      // Merge new tasks into state, then backfill studioName on any task still missing it.
+      // Archived tasks (outside the lookback window) are never re-enriched, so we use the
+      // live in-memory folderDictionary (always complete) rather than the Supabase-stored copy.
+      setTasks((prev) => {
+        const map = new Map(prev.map((t) => [t.id, t]));
+        filtered.forEach((t) => map.set(t.id, t));
+        const merged = [...map.values()];
+
+        const needsStudio = merged.filter((t) => !t.studioName);
+        if (needsStudio.length > 0 && Object.keys(folderDictionary).length > 0) {
+          const backfilled = [];
+          needsStudio.forEach((t) => {
+            const studio = getStudioName(t, folderDictionary, childToParent);
+            if (studio) {
+              const updated = { ...t, studioName: studio };
+              map.set(t.id, updated);
+              backfilled.push(updated);
+            }
+          });
+          if (backfilled.length > 0) {
+            console.log(`[WrikeCache] studio backfilled ${backfilled.length} tasks (sync)`);
+            backfilled.forEach((t) => {
+              supabase.from("wrike_tasks_cache").update({ task_data: t }).eq("id", t.id);
+            });
+          }
+        }
+
+        return [...map.values()];
+      });
 
       const syncedAt = new Date();
       setLastSynced(syncedAt);
@@ -338,5 +490,5 @@ export function useWrikeCache() {
 
   const syncNow = useCallback(() => sync({ fullRefresh: true }), [sync]);
 
-  return { tasks, isSyncing, lastSynced, syncError, syncNow };
+  return { tasks, folderCampaigns, isSyncing, lastSynced, syncError, syncNow };
 }

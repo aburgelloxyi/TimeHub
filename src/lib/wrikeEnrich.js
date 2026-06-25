@@ -134,6 +134,56 @@ export function getFilmName(task, folderDictionary, extractedPath = "") {
 }
 
 // ---------------------------------------------------------------------------
+// Climb the folder tree to find the studio for a task
+// ---------------------------------------------------------------------------
+const STUDIO_KEYWORDS = [
+  { studio: "Universal",  keywords: ["universal"] },
+  { studio: "Paramount",  keywords: ["paramount"] },
+  { studio: "Warner",     keywords: ["warner", "wbros", "wb"] },
+  { studio: "Disney",     keywords: ["disney", "marvel", "pixar", "lucasfilm"] },
+  { studio: "Sony",       keywords: ["sony", "columbia", "tristar"] },
+  { studio: "Netflix",    keywords: ["netflix"] },
+  { studio: "Apple",      keywords: ["apple"] },
+  { studio: "Amazon",     keywords: ["amazon", "mgm"] },
+];
+
+// Build a childId→parentId reverse map from a folderDictionary that has childIds.
+// Wrike's /v4/folders returns childIds (downward), not parentIds (upward), so we
+// invert the relationship to enable upward tree climbing.
+export function buildChildToParent(folderDictionary) {
+  const map = {};
+  for (const folder of Object.values(folderDictionary)) {
+    for (const childId of folder.childIds || []) {
+      map[childId] = folder.id;
+    }
+  }
+  return map;
+}
+
+export function getStudioName(task, folderDictionary, childToParent = {}) {
+  if (!task.parentIds?.length || !folderDictionary) return null;
+  const queue = [...task.parentIds];
+  const visited = new Set(queue);
+  while (queue.length > 0) {
+    const id = queue.shift();
+    const title = folderDictionary[id]?.title || "";
+    if (title) {
+      const lower = title.toLowerCase();
+      for (const { studio, keywords } of STUDIO_KEYWORDS) {
+        if (keywords.some((k) => lower.includes(k))) return studio;
+      }
+    }
+    // Climb to parent via reverse childIds map
+    const parentId = childToParent[id];
+    if (parentId && !visited.has(parentId)) {
+      visited.add(parentId);
+      queue.push(parentId);
+    }
+  }
+  return null;
+}
+
+// ---------------------------------------------------------------------------
 // Filter raw tasks down to Motion team relevance
 // ---------------------------------------------------------------------------
 export function filterToMotionTeam(tasks, folderDictionary, contactDictionary) {
@@ -172,7 +222,7 @@ export function filterToMotionTeam(tasks, folderDictionary, contactDictionary) {
 // ---------------------------------------------------------------------------
 // Enrich raw Wrike tasks with computed fields (film name, paths, status, etc.)
 // ---------------------------------------------------------------------------
-export function enrichTasks(rawTasks, folderDictionary, contactDictionary, statusDictionary) {
+export function enrichTasks(rawTasks, folderDictionary, contactDictionary, statusDictionary, childToParent = {}) {
   return rawTasks.map((task) => {
     const parsed = parseWrikeData(task.description);
     delete task.description;
@@ -183,6 +233,7 @@ export function enrichTasks(rawTasks, folderDictionary, contactDictionary, statu
       tableHtml: parsed.tableHtml,
       notesText: parsed.notesText,
       projectName: getFilmName(task, folderDictionary, parsed.extractedPathData),
+      studioName: getStudioName(task, folderDictionary, childToParent),
       assignees: (task.responsibleIds || [])
         .map((id) => contactDictionary[id] || "User")
         .join(", "),

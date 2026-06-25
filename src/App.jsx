@@ -16,7 +16,7 @@ import { useWrikeCache } from "./hooks/useWrikeCache";
 
 export default function App() {
   const [activePage, setActivePage] = useState("timesheet");
-  const { tasks: globalWrikeData, isSyncing, lastSynced, syncError, syncNow } = useWrikeCache();
+  const { tasks: globalWrikeData, folderCampaigns, isSyncing, lastSynced, syncError, syncNow } = useWrikeCache();
 
   // Global toast — available to all pages
   const [globalToast, setGlobalToast] = useState({ show: false, message: "", type: "error" });
@@ -258,7 +258,7 @@ export default function App() {
       <div className={activePage === "todayslist" ? "block" : "hidden"}>
         <TodaysList wrikeData={globalWrikeData} triggerToast={triggerToast} />
       </div>
-      {activePage === "canvas" && <CampaignCanvas wrikeData={filteredData} triggerToast={triggerToast} isLoading={!!localStorage.getItem("wrike_personal_token") && globalWrikeData.length === 0} />}
+      {activePage === "canvas" && <CampaignCanvas wrikeData={filteredData} folderCampaigns={folderCampaigns} triggerToast={triggerToast} isLoading={!!localStorage.getItem("wrike_personal_token") && globalWrikeData.length === 0} />}
       {activePage === "wriketest" && (
         <WrikeTest wrikeData={globalWrikeData} syncNow={syncNow} isSyncing={isSyncing} lastSynced={lastSynced} syncError={syncError} />
       )}

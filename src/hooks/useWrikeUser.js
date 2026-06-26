@@ -8,7 +8,11 @@ import { setWrikeUserId } from "../lib/supabaseClient";
 export function useWrikeUser(wrikeData, triggerToast) {
   const [wrikeUser, setWrikeUser] = useState(null);
   const [userStats, setUserStats] = useState({
-    month: 0, year: 0, allTime: 0, loading: false, fetched: false,
+    month: 0,
+    year: 0,
+    allTime: 0,
+    loading: false,
+    fetched: false,
   });
 
   useEffect(() => {
@@ -23,16 +27,22 @@ export function useWrikeUser(wrikeData, triggerToast) {
         })
         .then((json) => {
           if (json.data?.length > 0) {
-            const { id, firstName } = json.data[0];
+            const { id, firstName, lastName, profiles, avatarUrl } =
+              json.data[0]; // ← update destructure
             setWrikeUser({ id, firstName });
-            setWrikeUserId(id); // stamp onto anon session + localStorage
+            setWrikeUserId(id, {
+              firstName,
+              lastName,
+              email: profiles?.[0]?.email,
+              avatarUrl,
+            }); // ← pass profile data
           }
         })
         .catch((err) => {
           console.error("Failed to fetch Wrike user:", err.message);
         });
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const handleFetchLifetimeStats = async () => {
@@ -67,12 +77,20 @@ export function useWrikeUser(wrikeData, triggerToast) {
       let yearCount = 0;
 
       rawTasks.forEach((task) => {
-        const d = new Date(task.completedDate || task.updatedDate || task.createdDate || 0);
+        const d = new Date(
+          task.completedDate || task.updatedDate || task.createdDate || 0
+        );
         if (d >= thirtyDaysAgo) monthCount++;
         if (d >= startOfYear) yearCount++;
       });
 
-      setUserStats({ month: monthCount, year: yearCount, allTime: rawTasks.length, loading: false, fetched: true });
+      setUserStats({
+        month: monthCount,
+        year: yearCount,
+        allTime: rawTasks.length,
+        loading: false,
+        fetched: true,
+      });
       triggerToast("Lifetime stats synced!", "success");
     } catch (err) {
       setUserStats((prev) => ({ ...prev, loading: false }));
@@ -83,8 +101,9 @@ export function useWrikeUser(wrikeData, triggerToast) {
   const completedTasksCount = useMemo(() => {
     if (!wrikeData || !wrikeUser?.firstName) return 0;
     return wrikeData.filter(
-      (t) => t.assignees?.includes(wrikeUser.firstName) &&
-             (t.status === "Completed" || t.status === "Delivered")
+      (t) =>
+        t.assignees?.includes(wrikeUser.firstName) &&
+        (t.status === "Completed" || t.status === "Delivered")
     ).length;
   }, [wrikeData, wrikeUser]);
 
@@ -98,8 +117,9 @@ export function useWrikeUser(wrikeData, triggerToast) {
   const myCompletedWrikeTasks = useMemo(() => {
     if (!wrikeData || !wrikeUser?.firstName) return [];
     return wrikeData.filter(
-      (t) => (t.status === "Completed" || t.status === "Delivered") &&
-             t.assignees?.includes(wrikeUser.firstName)
+      (t) =>
+        (t.status === "Completed" || t.status === "Delivered") &&
+        t.assignees?.includes(wrikeUser.firstName)
     );
   }, [wrikeData, wrikeUser]);
 

@@ -5,6 +5,7 @@ import {
   Layout,
   Server,
   Database,
+  UserCircle,
 } from "lucide-react";
 
 // 1. THIS MUST LIVE OUTSIDE THE COMPONENT to prevent infinite loops!
@@ -12,8 +13,9 @@ const navItems = [
   { id: "timesheet", label: "Timesheeter", icon: TimerIcon },
   { id: "todayslist", label: "Motion Board", icon: LayoutList },
   { id: "canvas", label: "Digi Canvas", icon: Layout },
+  { id: "profile", label: "Profile", icon: UserCircle },
   { id: "wriketest", label: "Wriker", icon: Server },
-  { id: "legacy", label: "Legacy Sandbox", icon: Database }, // <-- Added new route
+  { id: "legacy", label: "Legacy Sandbox", icon: Database },
 ];
 
 export default function ApplePillNav({ activePage, setActivePage }) {

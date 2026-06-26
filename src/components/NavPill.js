@@ -7,8 +7,8 @@ const navItems = [
   { id: "timesheet", label: "Timesheeter", icon: TimerIcon },
   { id: "todayslist", label: "Motion Board", icon: LayoutList },
   { id: "canvas", label: "Digi Canvas", icon: Layout },
-  { id: "wriketest", label: "Wriker", icon: Server },
   { id: "legacy", label: "Legacy Sandbox", icon: Database },
+  // { id: "wriketest", label: "Wriker", icon: Server }, // dev only — re-enable when needed
 ];
 
 export default function ApplePillNav({ activePage, setActivePage }) {

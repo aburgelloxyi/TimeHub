@@ -19,6 +19,7 @@ import {
   FileDown,
   Trash2,
   RefreshCw,
+  Key,
 } from "lucide-react";
 import "./Timesheeter.css";
 import PillNav from "./components/NavPill";
@@ -35,6 +36,9 @@ import Profile from "./components/Profile";
 
 export default function App() {
   const [activePage, setActivePage] = useState("timesheet");
+  const [hasToken, setHasToken] = useState(
+    () => !!localStorage.getItem("wrike_personal_token")
+  );
   const {
     tasks: globalWrikeData,
     folderCampaigns,
@@ -298,6 +302,24 @@ export default function App() {
   return (
     <div className="min-h-screen bg-slate-100 transition-colors duration-300">
       <PillNav activePage={activePage} setActivePage={setActivePage} />
+
+      {/* Global no-token banner — shown on any page except profile/settings */}
+      {!hasToken && activePage !== "profile" && (
+        <div className="mx-auto max-w-[1400px] px-4 sm:px-6 mt-3">
+          <div className="bg-amber-50 border border-amber-200 rounded-2xl px-4 py-3 flex items-center gap-3">
+            <Key className="w-4 h-4 text-amber-600 shrink-0" />
+            <p className="text-xs font-bold text-amber-800 flex-1">
+              Wrike token not set — some features won't work until you add it.
+            </p>
+            <button
+              onClick={() => setActivePage("profile")}
+              className="text-xs font-black text-amber-600 hover:text-amber-800 underline underline-offset-2 shrink-0 transition-colors"
+            >
+              Add in Profile →
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Command palette */}
       {isPaletteOpen && (

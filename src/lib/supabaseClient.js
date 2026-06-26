@@ -51,17 +51,16 @@ export async function setWrikeUserId(id, profile = {}) {
     console.warn("Could not update Supabase user metadata:", err.message);
   }
   try {
-    await supabase.from("profiles").upsert(
-      {
-        wrike_user_id: id,
-        first_name: profile.firstName ?? null,
-        last_name: profile.lastName ?? null,
-        email: profile.email ?? null,
-        avatar_url: profile.avatarUrl ?? null,
-        updated_at: new Date().toISOString(),
-      },
-      { onConflict: "wrike_user_id" }
-    );
+    // Only include fields that actually have values — never overwrite existing
+    // data with nulls if profile info wasn't available at call time.
+    const update = { wrike_user_id: id, updated_at: new Date().toISOString() };
+    if (profile.firstName) update.first_name = profile.firstName;
+    if (profile.lastName) update.last_name = profile.lastName;
+    if (profile.email) update.email = profile.email;
+    if (profile.avatarUrl) update.avatar_url = profile.avatarUrl;
+    await supabase
+      .from("profiles")
+      .upsert(update, { onConflict: "wrike_user_id" });
   } catch (err) {
     console.warn("Could not upsert profile:", err.message);
   }

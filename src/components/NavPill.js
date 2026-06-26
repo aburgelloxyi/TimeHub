@@ -1,13 +1,19 @@
 import React, { useState, useEffect, useRef } from "react";
-import { TimerIcon, LayoutList, Layout, Server, Database } from "lucide-react";
+import {
+  TimerIcon,
+  LayoutList,
+  Layout,
+  Server,
+  Database,
+} from "lucide-react";
 import { supabase } from "../lib/supabaseClient";
 
 // Profile is excluded from the sliding pill nav — it sits as an avatar button
 const navItems = [
-  { id: "timesheet", label: "Timesheeter", icon: TimerIcon },
-  { id: "todayslist", label: "Motion Board", icon: LayoutList },
-  { id: "canvas", label: "Digi Canvas", icon: Layout },
-  { id: "legacy", label: "Legacy", icon: Database },
+  { id: "timesheet",  label: "Timesheeter",    icon: TimerIcon },
+  { id: "todayslist", label: "Motion Board",   icon: LayoutList },
+  { id: "canvas",     label: "Digi Canvas",    icon: Layout },
+  { id: "legacy",     label: "Legacy Sandbox", icon: Database },
   // { id: "wriketest", label: "Wriker", icon: Server }, // dev only — re-enable when needed
 ];
 
@@ -21,11 +27,7 @@ export default function ApplePillNav({ activePage, setActivePage }) {
   useEffect(() => {
     const uid = localStorage.getItem("wrike_user_id");
     if (!uid) return;
-    supabase
-      .from("profiles")
-      .select("first_name, last_name")
-      .eq("wrike_user_id", uid)
-      .single()
+    supabase.from("profiles").select("first_name, last_name").eq("wrike_user_id", uid).single()
       .then(({ data }) => {
         if (data) {
           const f = data.first_name?.[0] || "";
@@ -45,10 +47,7 @@ export default function ApplePillNav({ activePage, setActivePage }) {
       if (activeElement && navElement) {
         const navRect = navElement.getBoundingClientRect();
         const activeRect = activeElement.getBoundingClientRect();
-        setPillStyle({
-          left: activeRect.left - navRect.left,
-          width: activeRect.width,
-        });
+        setPillStyle({ left: activeRect.left - navRect.left, width: activeRect.width });
       } else if (activePage === "profile") {
         // Hide the sliding pill when profile is active
         setPillStyle({ left: 0, width: 0 });
@@ -63,7 +62,7 @@ export default function ApplePillNav({ activePage, setActivePage }) {
   const isProfile = activePage === "profile";
 
   return (
-    <div className="flex justify-center w-full pt-3">
+    <div className="flex justify-center w-full pt-6">
       <div className="flex items-center gap-2">
         {/* Main tool pill nav */}
         <nav
@@ -90,17 +89,11 @@ export default function ApplePillNav({ activePage, setActivePage }) {
                 onClick={() => setActivePage(item.id)}
                 className={`
                   relative z-10 flex items-center gap-2 px-5 py-2 text-[13px] font-bold rounded-full tracking-tight transition-colors duration-300
-                  ${
-                    isActive
-                      ? "text-[#122027]"
-                      : "text-[#768994] hover:text-[#122027]"
-                  }
+                  ${isActive ? "text-[#122027]" : "text-[#768994] hover:text-[#122027]"}
                 `}
               >
                 <Icon
-                  className={`w-4 h-4 transition-transform duration-500 ${
-                    isActive ? "scale-100 text-[#12a0e1]" : "scale-90"
-                  }`}
+                  className={`w-4 h-4 transition-transform duration-500 ${isActive ? "scale-100 text-[#12a0e1]" : "scale-90"}`}
                   strokeWidth={isActive ? 2.5 : 2}
                 />
                 {item.label}

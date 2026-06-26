@@ -984,13 +984,15 @@ export default function LegacyTimesheet({ wrikeData }) {
         let client = "";
         let filmTitle = task?.projectName || "";
         const searchTitle = (task?.title || "").toUpperCase();
-        // Check FILM_MAPPINGS using the job code
-        const _jobCodeMatch = (fields.jobNumber || "").match(
-          /([A-Z]{2,5}\d{1,4})/i
+        // Check FILM_MAPPINGS — match by value against jobNumber or filmTitle
+        const _filmMatch2 = Object.entries(FILM_MAPPINGS).find(
+          ([, v]) =>
+            (fields.jobNumber || "")
+              .toLowerCase()
+              .startsWith(v.toLowerCase()) ||
+            (filmTitle || "").toLowerCase().startsWith(v.toLowerCase())
         );
-        if (_jobCodeMatch && FILM_MAPPINGS[_jobCodeMatch[1].toUpperCase()]) {
-          filmTitle = FILM_MAPPINGS[_jobCodeMatch[1].toUpperCase()];
-        }
+        if (_filmMatch2) filmTitle = _filmMatch2[1];
 
         const pathUpper = (task.extractedPathData || "").toUpperCase();
 
@@ -1355,14 +1357,15 @@ export default function LegacyTimesheet({ wrikeData }) {
             );
           }
           const searchTitle = (task?.title || "").toUpperCase();
-          // Check FILM_MAPPINGS using the job code extracted from the job number
-          const jobCodeMatch = (guessed.jobNumber || "").match(
-            /([A-Z]{2,5}\d{1,4})/i
+          // Check FILM_MAPPINGS — match by value against jobNumber or filmTitle
+          const _filmMatch1 = Object.entries(FILM_MAPPINGS).find(
+            ([, v]) =>
+              (guessed.jobNumber || "")
+                .toLowerCase()
+                .startsWith(v.toLowerCase()) ||
+              (filmTitle || "").toLowerCase().startsWith(v.toLowerCase())
           );
-          if (jobCodeMatch) {
-            const code = jobCodeMatch[1].toUpperCase();
-            if (FILM_MAPPINGS[code]) filmTitle = FILM_MAPPINGS[code];
-          }
+          if (_filmMatch1) filmTitle = _filmMatch1[1];
 
           if (task) {
             const pathUpper = (task.extractedPathData || "").toUpperCase();

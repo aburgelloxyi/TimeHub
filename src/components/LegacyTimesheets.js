@@ -1481,32 +1481,40 @@ export default function LegacyTimesheet({ wrikeData }) {
   const currentDayRows = rows.filter((r) => r.dayOfWeek === activeDay);
   const isDayFrozen = frozenDays[activeDay] || false;
 
-  const [consolidatedView, setConsolidatedView] = useState(false);
+  const [consolidatedView, setConsolidatedView] = useState(true);
+  const [expandedSessions, setExpandedSessions] = useState({});
+  const toggleSessions = (rowKey) => setExpandedSessions((prev) => ({ ...prev, [rowKey]: !prev[rowKey] }));
 
   const consolidatedRows = useMemo(() => {
     const groups = {};
     currentDayRows.forEach((row) => {
       const key = `${row.jobNumber}|||${row.territory}|||${row.category}`;
       if (!groups[key]) {
-        groups[key] = { ...row, _timeSpent: 0, _additionalTime: 0, _notes: new Set(), _count: 0 };
+        groups[key] = { ...row, _rawSeconds: 0, _additionalSeconds: 0, _notes: new Set(), _count: 0 };
       }
-      const ts = row.timeSpent && row.timeSpent !== "none" ? parseFloat(row.timeSpent) : 0;
-      const at = row.additionalTime && row.additionalTime !== "none" ? parseFloat(row.additionalTime) : 0;
-      groups[key]._timeSpent += ts;
-      groups[key]._additionalTime += at;
+      // Sum raw seconds — never the already-rounded timeSpent values
+      groups[key]._rawSeconds += row.rawSeconds ?? 0;
+      groups[key]._additionalSeconds += row.additionalSeconds ?? 0;
       if (row.notes) groups[key]._notes.add(row.notes);
       groups[key]._count += 1;
+      if (!groups[key]._subRows) groups[key]._subRows = [];
+      groups[key]._subRows.push(row);
     });
+    const roundHalf = (v) => v > 0 ? Math.max(0.5, Math.round(v * 2) / 2).toString() : "none";
     return Object.values(groups).map((g) => ({
       ...g,
-      timeSpent: g._timeSpent > 0 ? g._timeSpent.toString() : "none",
-      additionalTime: g._additionalTime > 0 ? g._additionalTime.toString() : "none",
+      rawSeconds: g._rawSeconds,
+      additionalSeconds: g._additionalSeconds,
+      timeSpent: roundHalf(g._rawSeconds / 3600),
+      additionalTime: roundHalf(g._additionalSeconds / 3600),
       notes: [...g._notes].filter(Boolean).join(" | "),
+      _subRows: g._subRows || [],
     }));
   }, [currentDayRows]);
 
   const displayRows = consolidatedView ? consolidatedRows : currentDayRows;
   const rowsAreEditable = !isDayFrozen && !consolidatedView;
+  const showConsolidationWarning = !consolidatedView && currentDayRows.some((r, _, arr) => arr.filter((x) => x.jobNumber === r.jobNumber && x.territory === r.territory && x.category === r.category).length > 1);
 
   const textAreaClass = `w-full bg-transparent border border-transparent hover:border-slate-300 focus:border-[#12a0e1] focus:ring-2 focus:ring-[#12a0e1]/20 outline-none text-[12px] text-slate-800 font-medium p-2 transition-all rounded-md resize-none overflow-hidden leading-tight ${
     !rowsAreEditable ? "opacity-60 cursor-not-allowed" : ""
@@ -1970,7 +1978,7 @@ export default function LegacyTimesheet({ wrikeData }) {
       )}
 
       {/* --- STANDARD UI --- */}
-      <div className="max-w-[1600px] mx-auto bg-white shadow-2xl rounded-2xl relative min-h-[800px] flex flex-col border border-slate-200">
+      <div className="max-w-[1600px] mx-auto bg-white shadow-2xl rounded-2xl relative min-h-[calc(100vh-10rem)] flex flex-col border border-slate-200">
         {/* --- MODERN HEADER --- */}
         <div className="bg-slate-900 text-white p-6 flex justify-between items-center border-b border-slate-800 rounded-t-2xl">
           <div>
@@ -2079,7 +2087,7 @@ export default function LegacyTimesheet({ wrikeData }) {
           {/* Consolidated view toggle */}
           <div className="flex items-center gap-2">
             <Layers className={`w-3.5 h-3.5 ${consolidatedView ? "text-[#12a0e1]" : "text-slate-400"}`} />
-            <span className={`text-[11px] font-bold transition-colors ${consolidatedView ? "text-[#12a0e1]" : "text-slate-400"}`}>
+            <span className={`text-[11px] font-bold transition-colors ${consolidatedView ? "text-[#12a0e1]" : "text-slate-400"}`} title="Merges rows with same job/territory/category and sums raw time before rounding — more accurate than viewing individually">
               Consolidated
             </span>
             <button
@@ -2130,6 +2138,15 @@ export default function LegacyTimesheet({ wrikeData }) {
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
+              {showConsolidationWarning && (
+                <tr>
+                  <td colSpan={COLUMNS.length + 1} className="px-4 py-2 bg-amber-50 border-b border-amber-200">
+                    <p className="text-[11px] font-bold text-amber-700 flex items-center gap-2">
+                      ⚠️ Some rows share the same job/territory/category. Time totals may appear inflated due to per-row rounding — switch to <strong>Consolidated</strong> view for accurate totals.
+                    </p>
+                  </td>
+                </tr>
+              )}
               {displayRows.map((row) => (
                 <tr
                   key={row.id}
@@ -2176,11 +2193,39 @@ export default function LegacyTimesheet({ wrikeData }) {
                             <CheckCircle className="w-3 h-3" /> Wrike Synced
                           </span>
                         )}
-                        {consolidatedView && row._count > 1 && (
-                          <span className="text-[10px] font-bold text-[#12a0e1] ml-2 mt-0.5 flex items-center gap-1 opacity-80">
-                            <Layers className="w-3 h-3" /> {row._count} rows merged
-                          </span>
-                        )}
+                        {consolidatedView && row._count > 1 && (() => {
+                          const rowKey = `${row.jobNumber}|||${row.territory}|||${row.category}`;
+                          const isExpanded = expandedSessions[rowKey];
+                          const fmtSecs = (s) => {
+                            const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), sec = s % 60;
+                            return [h && `${h}h`, m && `${m}m`, sec && `${sec}s`].filter(Boolean).join(" ") || "0s";
+                          };
+                          return (
+                            <>
+                              <button
+                                onClick={() => toggleSessions(rowKey)}
+                                className="text-[10px] font-black text-[#12a0e1] bg-[#12a0e1]/10 border border-[#12a0e1]/20 hover:bg-[#12a0e1]/20 px-1.5 py-0.5 rounded-full ml-2 mt-1 flex items-center gap-1 shrink-0 transition-colors"
+                              >
+                                <Layers className="w-3 h-3" />
+                                {row._count} sessions
+                                <span className="opacity-60">{isExpanded ? "▲" : "▼"}</span>
+                              </button>
+                              {isExpanded && (
+                                <div className="ml-2 mt-1.5 space-y-1 border-l-2 border-[#12a0e1]/20 pl-2">
+                                  <p className="text-[9px] font-black text-[#768994] uppercase tracking-wider mb-1">Raw sessions — time summed before rounding</p>
+                                  {row._subRows.map((sub, i) => (
+                                    <div key={sub.id} className="flex items-center gap-2 text-[10px] text-slate-500">
+                                      <span className="font-bold text-slate-400">#{i + 1}</span>
+                                      <span className="font-bold text-[#122027]">{fmtSecs(sub.rawSeconds ?? 0)}</span>
+                                      {sub.notes && <span className="italic truncate max-w-[120px]">{sub.notes}</span>}
+                                      {sub.date && <span className="text-[9px] text-slate-400">{sub.date}</span>}
+                                    </div>
+                                  ))}
+                                </div>
+                              )}
+                            </>
+                          );
+                        })()}
                       </div>
                     </div>
                   </td>

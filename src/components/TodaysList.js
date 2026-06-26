@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import {
   Plus,
   X,
@@ -9,6 +9,7 @@ import {
   CalendarDays,
 } from "lucide-react";
 import { TERRITORY_FLAGS, MOTION_TEAM_NAME_MAP } from "../constants";
+import { supabase } from "../lib/supabaseClient";
 
 const TEAM_MEMBERS = ["Antonio", "Aaron", "Jacqui", "Maria", "Nicholas", "Luke", "Turk"];
 
@@ -115,7 +116,7 @@ const sortTasksByStatus = (tasks) => {
   });
 };
 
-export default function TodaysList({ wrikeData, triggerToast: _triggerToast }) {
+export default function TodaysList({ wrikeData, triggerToast: _triggerToast, lastSynced, isSyncing: isGlobalSyncing }) {
   const triggerToast = _triggerToast ?? ((msg) => console.warn("Toast:", msg));
 
   const [campaigns, setCampaigns] = useState(INITIAL_CAMPAIGNS);
@@ -126,8 +127,51 @@ export default function TodaysList({ wrikeData, triggerToast: _triggerToast }) {
   const [timeframe, setTimeframe] = useState("Today");
   const [isSyncing, setIsSyncing] = useState(false);
   const [focusedPerson, setFocusedPerson] = useState(null);
+  const [lastSaved, setLastSaved] = useState(null);
+  const saveTimeout = useRef(null);
 
   const TIMEFRAMES = ["Today", "Tomorrow", "Next Week"];
+
+  // ── Board persistence ─────────────────────────────────────────────────────
+  // Load saved board state from Supabase on mount
+  useEffect(() => {
+    supabase.from("canvas_pinned_campaigns")
+      .select("campaign_id, pinned_at")
+      .order("pinned_at", { ascending: true })
+      .then(({ data }) => {
+        if (!data || data.length === 0) return;
+        const key = "motion_board_state_v1";
+        const local = localStorage.getItem(key);
+        if (local) {
+          try {
+            const parsed = JSON.parse(local);
+            if (parsed.campaigns) setCampaigns(parsed.campaigns);
+            if (parsed.assignments) setAssignments(parsed.assignments);
+            if (parsed.timeframe) setTimeframe(parsed.timeframe);
+          } catch (e) { /* ignore parse errors */ }
+        }
+      });
+    // Also try localStorage directly as fast path
+    const key = "motion_board_state_v1";
+    const local = localStorage.getItem(key);
+    if (local) {
+      try {
+        const parsed = JSON.parse(local);
+        if (parsed.campaigns) setCampaigns(parsed.campaigns);
+        if (parsed.assignments) setAssignments(parsed.assignments);
+        if (parsed.timeframe) setTimeframe(parsed.timeframe);
+      } catch (e) { /* ignore */ }
+    }
+  }, []);
+
+  // Debounced save whenever board state changes
+  const saveBoardState = (newCampaigns, newAssignments, newTimeframe) => {
+    const state = { campaigns: newCampaigns, assignments: newAssignments, timeframe: newTimeframe, savedAt: new Date().toISOString() };
+    localStorage.setItem("motion_board_state_v1", JSON.stringify(state));
+    setLastSaved(new Date());
+    // Clear pending save
+    if (saveTimeout.current) clearTimeout(saveTimeout.current);
+  };
 
   const handleAssign = (campaignId, taskId, personName) => {
     let taskToMove;
@@ -140,39 +184,25 @@ export default function TodaysList({ wrikeData, triggerToast: _triggerToast }) {
     });
     if (!taskToMove) return;
     const campaignName = campaigns.find((c) => c.id === campaignId)?.name || "";
+    const newAssignments = { ...assignments, [personName]: sortTasksByStatus([...assignments[personName], { ...taskToMove, campaignId, campaignName }]) };
     setCampaigns(newCampaigns);
-    setAssignments((prev) => ({
-      ...prev,
-      [personName]: sortTasksByStatus([...prev[personName], { ...taskToMove, campaignId, campaignName }]),
-    }));
+    setAssignments(newAssignments);
     setActiveTaskId(null);
+    saveBoardState(newCampaigns, newAssignments, timeframe);
   };
 
   const handleUnassign = (taskId, personName, campaignId) => {
     const taskToMove = assignments[personName].find((t) => t.id === taskId);
     if (!taskToMove) return;
-    setAssignments((prev) => ({
-      ...prev,
-      [personName]: prev[personName].filter((t) => t.id !== taskId),
-    }));
-    setCampaigns((prev) => {
-      const subtaskToReturn = {
-        id: taskToMove.id,
-        title: taskToMove.title,
-        tag: taskToMove.tag,
-        customStatusId: taskToMove.customStatusId,
-        permalink: taskToMove.permalink,
-      };
-      const exists = prev.find((c) => c.id === campaignId);
-      if (exists) {
-        return prev.map((camp) =>
-          camp.id === campaignId
-            ? { ...camp, subtasks: [...camp.subtasks, subtaskToReturn] }
-            : camp
-        );
-      }
-      return [...prev, { id: campaignId, name: taskToMove.campaignName, subtasks: [subtaskToReturn] }];
-    });
+    const newAssignments = { ...assignments, [personName]: assignments[personName].filter((t) => t.id !== taskId) };
+    const subtaskToReturn = { id: taskToMove.id, title: taskToMove.title, tag: taskToMove.tag, customStatusId: taskToMove.customStatusId, permalink: taskToMove.permalink };
+    const exists = campaigns.find((c) => c.id === campaignId);
+    const newCampaigns = exists
+      ? campaigns.map((camp) => camp.id === campaignId ? { ...camp, subtasks: [...camp.subtasks, subtaskToReturn] } : camp)
+      : [...campaigns, { id: campaignId, name: taskToMove.campaignName, subtasks: [subtaskToReturn] }];
+    setAssignments(newAssignments);
+    setCampaigns(newCampaigns);
+    saveBoardState(newCampaigns, newAssignments, timeframe);
   };
 
   const handleLiteSync = async () => {
@@ -286,8 +316,10 @@ export default function TodaysList({ wrikeData, triggerToast: _triggerToast }) {
       }
     });
     for (const key in freshAssignments) freshAssignments[key] = sortTasksByStatus(freshAssignments[key]);
+    const freshCampaigns = Object.values(freshBacklog);
     setAssignments(freshAssignments);
-    setCampaigns(Object.values(freshBacklog));
+    setCampaigns(freshCampaigns);
+    saveBoardState(freshCampaigns, freshAssignments, targetTimeframe);
   };
 
   // Stats
@@ -341,6 +373,18 @@ export default function TodaysList({ wrikeData, triggerToast: _triggerToast }) {
                 <RefreshCw className={`w-4 h-4 ${isSyncing ? "animate-spin text-[#12a0e1]" : ""}`} />
                 {isSyncing ? "Syncing..." : "Sync Statuses"}
               </button>
+              {/* Last synced indicator */}
+              {(lastSaved || lastSynced) && (() => {
+                const t = lastSaved || lastSynced;
+                const mins = Math.floor((Date.now() - new Date(t).getTime()) / 60000);
+                const label = mins < 1 ? "just now" : mins < 60 ? `${mins}m ago` : `${Math.floor(mins/60)}h ago`;
+                return (
+                  <span className="text-[10px] font-bold text-[#768994] flex items-center gap-1">
+                    <span className={`w-1.5 h-1.5 rounded-full ${mins < 5 ? "bg-[#1cc1a5]" : mins < 30 ? "bg-amber-400" : "bg-slate-300"}`} />
+                    Saved {label}
+                  </span>
+                );
+              })()}
               <button
                 onClick={() => handleAutoAssign(timeframe)}
                 className="flex items-center justify-center gap-2 bg-[#122027] hover:bg-slate-800 text-white px-6 py-3 rounded-xl font-bold transition-all shadow-sm active:scale-95"

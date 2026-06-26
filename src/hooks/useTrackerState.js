@@ -8,10 +8,25 @@ import { notify } from "../lib/toast";
  * Job options remain in localStorage as a UI convenience list.
  */
 export function useTrackerState() {
-  // --- Form fields ---
-  const [jobNumber, setJobNumber] = useState("");
-  const [territory, setTerritory] = useState("");
-  const [category, setCategory] = useState("");
+  // --- Form fields — pre-filled from last logged task ---
+  const [jobNumber, setJobNumber] = useState(() => {
+    try {
+      const last = localStorage.getItem("xyi_last_task_defaults");
+      return last ? JSON.parse(last).jobNumber || "" : "";
+    } catch { return ""; }
+  });
+  const [territory, setTerritory] = useState(() => {
+    try {
+      const last = localStorage.getItem("xyi_last_task_defaults");
+      return last ? JSON.parse(last).territory || "" : "";
+    } catch { return ""; }
+  });
+  const [category, setCategory] = useState(() => {
+    try {
+      const last = localStorage.getItem("xyi_last_task_defaults");
+      return last ? JSON.parse(last).category || "" : "";
+    } catch { return ""; }
+  });
   const [notes, setNotes] = useState("");
 
   // --- Timer ---

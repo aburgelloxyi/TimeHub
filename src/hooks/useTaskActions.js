@@ -79,6 +79,8 @@ export function useTaskActions(state) {
     };
 
     addTask(newTask);
+    // Save as smart defaults for next session
+    localStorage.setItem("xyi_last_task_defaults", JSON.stringify({ jobNumber, territory, category }));
     triggerToast(`Logged successfully to ${selectedDay}!`, "success");
     setShowReward(true);
     setTimeout(() => setShowReward(false), 1200);

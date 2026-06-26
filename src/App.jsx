@@ -21,7 +21,7 @@ import AdminModal from "./components/AdminModal";
 export default function App() {
   const [activePage, setActivePage] = useState("timesheet");
   const [hasToken, setHasToken] = useState(() => !!localStorage.getItem("wrike_personal_token"));
-  const [showOnboarding, setShowOnboarding] = useState(() => !localStorage.getItem("xyi_onboarded"));
+  const [showOnboarding, setShowOnboarding] = useState(() => !localStorage.getItem("xyi_onboarded") && !localStorage.getItem("wrike_personal_token"));
   const [showReminder, setShowReminder] = useState(false);
   const [showAdmin, setShowAdmin] = useState(false);
   const ADMIN_WRIKE_ID = "KUAWDLVN";

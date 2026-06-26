@@ -236,7 +236,7 @@ export function useTaskActions(state) {
           );
         }
       } else {
-        triggerToast("No new timelogs found for today.");
+        triggerToast("No new timelogs found for today.", "info");
       }
     } catch (err) {
       triggerToast("Failed to pull Wrike times: " + err.message);

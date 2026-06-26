@@ -255,7 +255,7 @@ const TableSearchableSelect = ({
       {isOpen && (
         <div
           style={fixedStyle}
-          className={`border shadow-2xl max-h-[350px] overflow-y-auto custom-scrollbar animate-in fade-in slide-in-from-top-2 duration-200 rounded-2xl ${
+          className={`fixed border shadow-2xl max-h-[350px] overflow-y-auto custom-scrollbar animate-in fade-in slide-in-from-top-2 duration-200 rounded-2xl ${
             isDarkModal
               ? "bg-[#19202b] border-[#2d3748]"
               : "bg-white border-slate-200"

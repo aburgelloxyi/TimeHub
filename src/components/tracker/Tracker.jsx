@@ -12,7 +12,6 @@ import { useWrikeUser } from "../../hooks/useWrikeUser";
 import { useTasks } from "../../hooks/useTasks";
 import { formatDurationText } from "../../utils/timeHelpers";
 import SearchableSelect from "../shared/SearchableSelect";
-import Toast from "../shared/Toast";
 import TriageModal from "./TriageModal";
 import DeleteModal from "./DeleteModal";
 import ExportModal from "./ExportModal";
@@ -131,10 +130,6 @@ export default function Tracker({ wrikeData }) {
   return (
     <div className="min-h-screen bg-slate-100 text-[#122027] font-sans selection:bg-[#12a0e1]/30 selection:text-[#122027] pb-12">
       {/* Global overlays */}
-      <Toast
-        toast={toast}
-        onClose={() => setToast({ show: false, message: "", type: "error" })}
-      />
       <TriageModal
         triageQueue={triageQueue} setTriageQueue={setTriageQueue}
         triageCategory={triageCategory} setTriageCategory={setTriageCategory}

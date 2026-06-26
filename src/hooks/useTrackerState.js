@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
 import { DEFAULT_JOBS, DAYS_OF_WEEK } from "../constants";
+import { notify } from "../lib/toast";
 
 /**
  * All UI state for the Tracker component.
@@ -45,19 +46,9 @@ export function useTrackerState() {
     localStorage.setItem("xyi_job_options_v5", JSON.stringify(jobOptions));
   }, [jobOptions]);
 
-  // --- Toast ---
+  // --- Toast (now backed by Sonner via the shared notifier) ---
   const [toast, setToast] = useState({ show: false, message: "", type: "error" });
-  const triggerToast = (message, type = "error") => setToast({ show: true, message, type });
-
-  useEffect(() => {
-    if (toast.show) {
-      const timer = setTimeout(
-        () => setToast({ show: false, message: "", type: "error" }),
-        4000
-      );
-      return () => clearTimeout(timer);
-    }
-  }, [toast.show]);
+  const triggerToast = (message, type = "error") => notify(message, type);
 
   // --- Triage & modals ---
   const [triageQueue, setTriageQueue] = useState([]);

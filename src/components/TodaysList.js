@@ -222,7 +222,7 @@ export default function TodaysList({ wrikeData, triggerToast: _triggerToast }) {
         }
         return next;
       });
-      triggerToast("Board synced with live Wrike statuses!");
+      triggerToast("Board synced with live Wrike statuses!", "success");
     } catch (err) {
       triggerToast("Lite Sync failed: " + err.message);
     } finally {

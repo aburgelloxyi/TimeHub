@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from "react";
+import { motion, AnimatePresence } from "framer-motion";
 import { supabase } from "../lib/supabaseClient";
 import { getFilmName } from "../lib/wrikeEnrich";
 import {
@@ -31,7 +32,33 @@ import {
   FolderPlus,
   ChevronRight,
   Download,
+  Star,
+  LayoutGrid,
+  List,
 } from "lucide-react";
+
+// --- DOOH country → region grouping ---
+const COUNTRY_REGION = {
+  // Europe
+  Austria: "Europe", Denmark: "Europe", Finland: "Europe", France: "Europe",
+  Germany: "Europe", Ireland: "Europe", Italy: "Europe", Norway: "Europe",
+  Poland: "Europe", Portugal: "Europe", Slovenia: "Europe", Spain: "Europe",
+  Sweden: "Europe", Turkey: "Europe", UK: "Europe", Ukraine: "Europe",
+  // Asia-Pacific
+  Australia: "Asia-Pacific", China: "Asia-Pacific", "Hong Kong": "Asia-Pacific",
+  India: "Asia-Pacific", Indonesia: "Asia-Pacific", Japan: "Asia-Pacific",
+  Kazakhstan: "Asia-Pacific", Korea: "Asia-Pacific", Kyrgyzstan: "Asia-Pacific",
+  Malaysia: "Asia-Pacific", Philippines: "Asia-Pacific", Singapore: "Asia-Pacific",
+  Taiwan: "Asia-Pacific", Thailand: "Asia-Pacific", Vietnam: "Asia-Pacific",
+  // Americas
+  Argentina: "Americas", Brazil: "Americas", Chile: "Americas",
+  Colombia: "Americas", Paraguay: "Americas", Peru: "Americas",
+  // Middle East & Africa
+  "South Africa": "Middle East & Africa", UAE_MiddleEast: "Middle East & Africa",
+  MENA: "Middle East & Africa",
+};
+const REGION_ORDER = ["Europe", "Asia-Pacific", "Americas", "Middle East & Africa", "Global / Other"];
+const regionOf = (name) => COUNTRY_REGION[name] || "Global / Other";
 
 // Convert a 2-letter ISO country code (e.g. "GB", "PL") into its flag emoji.
 const codeToFlag = (cc) => {
@@ -195,6 +222,8 @@ export default function CampaignCanvas({ wrikeData = [], folderCampaigns = [], t
   const [isAddCountryOpen, setIsAddCountryOpen] = useState(false);
   const [newCountryName, setNewCountryName] = useState("");
   const [newCountryCode, setNewCountryCode] = useState("");
+  const [countrySearch, setCountrySearch] = useState("");
+  const [doohViewMode, setDoohViewMode] = useState(() => localStorage.getItem("dooh_view_mode") || "grid");
   const [uploadingCountry, setUploadingCountry] = useState(null);
   const [deletingAssetId, setDeletingAssetId] = useState(null);
   const [deletingCountryId, setDeletingCountryId] = useState(null);
@@ -724,6 +753,17 @@ export default function CampaignCanvas({ wrikeData = [], folderCampaigns = [], t
     await supabase.from("dooh_countries").insert(country);
   };
 
+  const setViewMode = (mode) => {
+    setDoohViewMode(mode);
+    localStorage.setItem("dooh_view_mode", mode);
+  };
+
+  const togglePinCountry = async (country) => {
+    const next = !country.pinned;
+    setDoohCountries((prev) => prev.map((c) => (c.id === country.id ? { ...c, pinned: next } : c)));
+    await supabase.from("dooh_countries").update({ pinned: next }).eq("id", country.id);
+  };
+
   const handleDeleteCountry = async (countryId) => {
     const assets = countryAssets[countryId] || [];
     setDoohCountries((prev) => prev.filter((c) => c.id !== countryId));
@@ -756,11 +796,18 @@ export default function CampaignCanvas({ wrikeData = [], folderCampaigns = [], t
     await supabase.from("dooh_folders").insert(folder);
   };
 
-  const handleSaveSource = async (folderId, value) => {
+  // Save the source path for the node currently being viewed:
+  // the current folder, or the country itself when at the root.
+  const handleSaveSource = async (value) => {
     const v = value.trim();
-    setDoohFolders((prev) => prev.map((f) => (f.id === folderId ? { ...f, source_path: v || null } : f)));
     setEditingSourceFolderId(null);
-    await supabase.from("dooh_folders").update({ source_path: v || null }).eq("id", folderId);
+    if (currentFolderId) {
+      setDoohFolders((prev) => prev.map((f) => (f.id === currentFolderId ? { ...f, source_path: v || null } : f)));
+      await supabase.from("dooh_folders").update({ source_path: v || null }).eq("id", currentFolderId);
+    } else if (selectedCountry) {
+      setDoohCountries((prev) => prev.map((c) => (c.id === selectedCountry ? { ...c, source_path: v || null } : c)));
+      await supabase.from("dooh_countries").update({ source_path: v || null }).eq("id", selectedCountry);
+    }
   };
 
   const handleDeleteFolder = async (folderId) => {
@@ -1503,28 +1550,29 @@ export default function CampaignCanvas({ wrikeData = [], folderCampaigns = [], t
                   onChange={(e) => { handleUploadFiles(selectedCountry, e.target.files, currentFolderId); e.target.value = ""; }}
                 />
 
-                {/* Source path for the current folder */}
-                {currentFolderId && (() => {
-                  const cf = foldersAll.find((f) => f.id === currentFolderId);
-                  if (!cf) return null;
-                  const src = cf.source_path || "";
+                {/* Source path — for the current folder, or the country at root */}
+                {(() => {
+                  const node = currentFolderId ? foldersAll.find((f) => f.id === currentFolderId) : country;
+                  if (!node) return null;
+                  const src = node.source_path || "";
                   const isUrl = /^https?:\/\//i.test(src);
-                  const editing = editingSourceFolderId === cf.id;
+                  const editing = editingSourceFolderId === node.id;
+                  const label = currentFolderId ? "Source" : "Country path";
                   return (
                     <div className="mb-6 flex items-center gap-2 bg-white border border-[#dce4ec] rounded-2xl px-4 py-2.5 shadow-sm">
                       <Link2 className="w-4 h-4 text-[#12a0e1] shrink-0" />
-                      <span className="text-[10px] font-black text-[#768994] uppercase tracking-widest shrink-0">Source</span>
+                      <span className="text-[10px] font-black text-[#768994] uppercase tracking-widest shrink-0">{label}</span>
                       {editing ? (
                         <>
                           <input
                             autoFocus
                             value={editSourceText}
                             onChange={(e) => setEditSourceText(e.target.value)}
-                            onKeyDown={(e) => { if (e.key === "Enter") handleSaveSource(cf.id, editSourceText); if (e.key === "Escape") setEditingSourceFolderId(null); }}
+                            onKeyDown={(e) => { if (e.key === "Enter") handleSaveSource(editSourceText); if (e.key === "Escape") setEditingSourceFolderId(null); }}
                             placeholder="/Volumes/… or https://drive.google.com/…"
                             className="flex-1 min-w-0 px-2.5 py-1.5 rounded-lg border border-[#dce4ec] focus:border-[#12a0e1] outline-none text-sm font-medium text-[#122027]"
                           />
-                          <button onClick={() => handleSaveSource(cf.id, editSourceText)} className="p-1.5 bg-[#12a0e1] hover:bg-[#0f88c0] text-white rounded-lg transition-colors shrink-0"><Check className="w-4 h-4" /></button>
+                          <button onClick={() => handleSaveSource(editSourceText)} className="p-1.5 bg-[#12a0e1] hover:bg-[#0f88c0] text-white rounded-lg transition-colors shrink-0"><Check className="w-4 h-4" /></button>
                           <button onClick={() => setEditingSourceFolderId(null)} className="p-1.5 bg-slate-100 hover:bg-slate-200 text-[#122027] rounded-lg transition-colors shrink-0"><X className="w-4 h-4" /></button>
                         </>
                       ) : (
@@ -1542,7 +1590,7 @@ export default function CampaignCanvas({ wrikeData = [], folderCampaigns = [], t
                             <a href={src} target="_blank" rel="noopener noreferrer" title="Open" className="p-1.5 text-[#768994] hover:text-[#12a0e1] hover:bg-slate-50 rounded-lg transition-colors shrink-0"><ExternalLink className="w-4 h-4" /></a>
                           )}
                           <button
-                            onClick={() => { setEditSourceText(src); setEditingSourceFolderId(cf.id); }}
+                            onClick={() => { setEditSourceText(src); setEditingSourceFolderId(node.id); }}
                             title={src ? "Edit" : "Add source path"} className="p-1.5 text-[#768994] hover:text-[#12a0e1] hover:bg-slate-50 rounded-lg transition-colors shrink-0"
                           ><Edit2 className="w-4 h-4" /></button>
                         </>
@@ -1664,7 +1712,16 @@ export default function CampaignCanvas({ wrikeData = [], folderCampaigns = [], t
 
           // ============ GALLERY VIEW (studio cards) ============
           return (
-            <div key="studio-gallery" className="mt-2 py-4 px-6 w-full">
+            <div key="studio-gallery" className="mt-8 py-4 px-6 w-full">
+              <div className="flex items-center gap-2.5 mb-4 px-1">
+                <div className="w-9 h-9 rounded-xl bg-[#12a0e1]/10 text-[#12a0e1] flex items-center justify-center shadow-sm">
+                  <Film className="w-5 h-5" />
+                </div>
+                <div>
+                  <h2 className="text-lg font-black text-[#122027] tracking-tight leading-none">Studios</h2>
+                  <p className="text-[11px] font-bold text-[#768994] uppercase tracking-widest mt-1">Campaign libraries</p>
+                </div>
+              </div>
               <div className="grid grid-cols-2 lg:grid-cols-4 gap-5">
                 {gallerySections.map((section, i) => {
                   const art = STUDIO_ART[section] || STUDIO_ART.Misc;
@@ -1751,47 +1808,109 @@ export default function CampaignCanvas({ wrikeData = [], folderCampaigns = [], t
               )}
 
               {/* ============ DOOH SPECS ============ */}
-              <section className="mt-10 animate-in fade-in slide-in-from-bottom-4 duration-500">
-                <div className="flex items-center gap-2.5 mb-4 px-1">
-                  <div className="w-9 h-9 rounded-xl bg-[#12a0e1]/10 text-[#12a0e1] flex items-center justify-center shadow-sm">
+              <div className="mt-12 mb-8 flex items-center gap-4" aria-hidden="true">
+                <div className="h-px flex-1 bg-gradient-to-r from-transparent via-[#cdd7e1] to-[#cdd7e1]" />
+                <span className="text-[10px] font-black uppercase tracking-[0.2em] text-[#94a3b8]">Reference</span>
+                <div className="h-px flex-1 bg-gradient-to-l from-transparent via-[#cdd7e1] to-[#cdd7e1]" />
+              </div>
+              <section className="rounded-3xl bg-white/60 border border-[#dce4ec] shadow-sm p-5 sm:p-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
+                <div className="flex flex-wrap items-center gap-3 mb-5 px-1">
+                  <div className="w-9 h-9 rounded-xl bg-[#12a0e1]/10 text-[#12a0e1] flex items-center justify-center shadow-sm shrink-0">
                     <Globe className="w-5 h-5" />
                   </div>
-                  <div>
+                  <div className="mr-auto">
                     <h2 className="text-lg font-black text-[#122027] tracking-tight leading-none">DOOH Specs</h2>
                     <p className="text-[11px] font-bold text-[#768994] uppercase tracking-widest mt-1">Screen specs by country · {doohCountries.length}</p>
                   </div>
-                </div>
-                <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-6 xl:grid-cols-8 gap-3">
-                  {doohCountries.map((country, i) => {
-                    const count =
-                      doohFolders.filter((f) => f.country_id === country.id).length +
-                      (countryAssets[country.id] || []).length;
-                    return (
-                      <button
-                        key={country.id}
-                        onClick={() => { setSelectedStudio(null); setSelectedCountry(country.id); setCurrentFolderId(null); window.scrollTo({ top: 0, behavior: "smooth" }); }}
-                        className="group relative rounded-xl overflow-hidden min-h-[104px] outline-none shadow-sm hover:shadow-lg hover:-translate-y-0.5 bg-gradient-to-br from-[#1b3a4b] to-[#12506e] flex flex-col items-center justify-center gap-2 px-2 py-3 animate-in fade-in zoom-in-95"
-                        style={{ transition: "transform 0.5s cubic-bezier(0.16,1,0.3,1), box-shadow 0.5s cubic-bezier(0.16,1,0.3,1)", animationDelay: `${Math.min(i, 24) * 25}ms`, animationFillMode: "both" }}
-                      >
-                        <span className="transition-transform duration-500 group-hover:scale-110">
-                          <CountryFlag flag={country.flag} imgClass="w-11 h-[30px]" textClass="text-3xl" />
-                        </span>
-                        <p className="text-[11px] font-bold text-white text-center leading-tight line-clamp-2 px-0.5">{country.name}</p>
-                        {count > 0 && (
-                          <span className="absolute top-1.5 right-1.5 text-[9px] font-black bg-white/15 backdrop-blur-md text-white w-5 h-5 flex items-center justify-center rounded-full border border-white/25">{count}</span>
-                        )}
-                      </button>
-                    );
-                  })}
-                  {/* Add country card */}
-                  <button
-                    onClick={() => setIsAddCountryOpen(true)}
-                    className="group rounded-xl min-h-[104px] border-2 border-dashed border-[#dce4ec] hover:border-[#12a0e1] flex flex-col items-center justify-center gap-1.5 text-[#768994] hover:text-[#12a0e1] transition-colors outline-none"
-                  >
-                    <Plus className="w-6 h-6" />
-                    <span className="text-[10px] font-black uppercase tracking-widest">Add</span>
+                  <div className="relative">
+                    <Search className="w-4 h-4 text-[#768994] absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+                    <input
+                      value={countrySearch}
+                      onChange={(e) => setCountrySearch(e.target.value)}
+                      placeholder="Search country…"
+                      className="w-44 sm:w-56 pl-9 pr-3 py-2 rounded-xl border border-[#dce4ec] focus:border-[#12a0e1] outline-none text-sm font-semibold text-[#122027] bg-white"
+                    />
+                  </div>
+                  <div className="flex items-center bg-white border border-[#dce4ec] rounded-xl p-0.5">
+                    <button onClick={() => setViewMode("grid")} title="Grid view" className={`p-1.5 rounded-lg transition-colors ${doohViewMode === "grid" ? "bg-[#12a0e1] text-white" : "text-[#768994] hover:text-[#122027]"}`}><LayoutGrid className="w-4 h-4" /></button>
+                    <button onClick={() => setViewMode("list")} title="List view" className={`p-1.5 rounded-lg transition-colors ${doohViewMode === "list" ? "bg-[#12a0e1] text-white" : "text-[#768994] hover:text-[#122027]"}`}><List className="w-4 h-4" /></button>
+                  </div>
+                  <button onClick={() => setIsAddCountryOpen(true)} className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-[#12a0e1] hover:bg-[#0f88c0] text-white text-xs font-black uppercase tracking-widest transition-colors active:scale-95">
+                    <Plus className="w-4 h-4" /> Add
                   </button>
                 </div>
+
+                {(() => {
+                  const q = countrySearch.trim().toLowerCase();
+                  const countryCount = (id) =>
+                    doohFolders.filter((f) => f.country_id === id).length + (countryAssets[id] || []).length;
+                  const visible = doohCountries.filter((c) => !q || c.name.toLowerCase().includes(q));
+                  const pinned = visible.filter((c) => c.pinned);
+                  const unpinned = visible.filter((c) => !c.pinned);
+                  const openCountry = (id) => { setSelectedStudio(null); setSelectedCountry(id); setCurrentFolderId(null); window.scrollTo({ top: 0, behavior: "smooth" }); };
+
+                  const Card = (country) => {
+                    const count = countryCount(country.id);
+                    return (
+                      <div key={country.id} className="relative group/c">
+                        <button onClick={() => openCountry(country.id)} className="w-full group relative rounded-xl overflow-hidden min-h-[104px] outline-none shadow-sm hover:shadow-lg hover:-translate-y-0.5 bg-gradient-to-br from-[#1b3a4b] to-[#12506e] flex flex-col items-center justify-center gap-2 px-2 py-3 transition-[transform,box-shadow] duration-300">
+                          <span className="transition-transform duration-500 group-hover:scale-110"><CountryFlag flag={country.flag} imgClass="w-11 h-[30px]" textClass="text-3xl" /></span>
+                          <p className="text-[11px] font-bold text-white text-center leading-tight line-clamp-2 px-0.5">{country.name}</p>
+                          {count > 0 && <span className="absolute top-1.5 right-1.5 text-[9px] font-black bg-white/15 backdrop-blur-md text-white w-5 h-5 flex items-center justify-center rounded-full border border-white/25">{count}</span>}
+                        </button>
+                        <button onClick={(e) => { e.stopPropagation(); togglePinCountry(country); }} title={country.pinned ? "Unpin" : "Pin"} className={`absolute top-1.5 left-1.5 p-1 rounded-lg transition-all ${country.pinned ? "text-amber-300 opacity-100" : "text-white/70 opacity-0 group-hover/c:opacity-100 hover:text-amber-300"}`}>
+                          <Star className={`w-4 h-4 ${country.pinned ? "fill-current" : ""}`} />
+                        </button>
+                      </div>
+                    );
+                  };
+
+                  const Row = (country) => {
+                    const count = countryCount(country.id);
+                    return (
+                      <div key={country.id} className="flex items-center gap-3 bg-white border border-[#dce4ec] rounded-xl pl-2.5 pr-2 py-2 shadow-sm hover:border-[#12a0e1]/40 hover:shadow transition-all">
+                        <button onClick={(e) => { e.stopPropagation(); togglePinCountry(country); }} title={country.pinned ? "Unpin" : "Pin"} className={`shrink-0 p-1 rounded-lg transition-colors ${country.pinned ? "text-amber-400" : "text-slate-300 hover:text-amber-400"}`}>
+                          <Star className={`w-4 h-4 ${country.pinned ? "fill-current" : ""}`} />
+                        </button>
+                        <button onClick={() => openCountry(country.id)} className="flex items-center gap-3 min-w-0 flex-1 text-left">
+                          <CountryFlag flag={country.flag} imgClass="w-8 h-[22px]" textClass="text-2xl" />
+                          <span className="font-bold text-[#122027] truncate flex-1">{country.name}</span>
+                          <span className="text-[11px] font-black text-[#768994] tabular-nums">{count}</span>
+                          <ChevronRight className="w-4 h-4 text-[#768994] shrink-0" />
+                        </button>
+                      </div>
+                    );
+                  };
+
+                  const renderItems = (items) =>
+                    doohViewMode === "grid"
+                      ? <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-6 xl:grid-cols-8 gap-3">{items.map(Card)}</div>
+                      : <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">{items.map(Row)}</div>;
+
+                  return (
+                    <div className="space-y-6">
+                      {visible.length === 0 && (
+                        <p className="text-center text-sm font-bold text-[#768994] py-10">No countries match “{countrySearch}”.</p>
+                      )}
+                      {pinned.length > 0 && (
+                        <div>
+                          <h3 className="text-xs font-black text-amber-500 uppercase tracking-widest mb-2.5 flex items-center gap-1.5"><Star className="w-3.5 h-3.5 fill-current" /> Pinned</h3>
+                          {renderItems(pinned)}
+                        </div>
+                      )}
+                      {REGION_ORDER.map((region) => {
+                        const items = unpinned.filter((c) => regionOf(c.name) === region);
+                        if (items.length === 0) return null;
+                        return (
+                          <div key={region}>
+                            <h3 className="text-xs font-black text-[#768994] uppercase tracking-widest mb-2.5">{region}</h3>
+                            {renderItems(items)}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  );
+                })()}
               </section>
             </div>
           );
@@ -2598,9 +2717,15 @@ export default function CampaignCanvas({ wrikeData = [], folderCampaigns = [], t
         )}
 
         {/* FILE PREVIEW LIGHTBOX (images + PDFs) */}
+        <AnimatePresence>
         {previewAsset && (
-          <div
-            className="fixed inset-0 z-[10000] bg-black/85 backdrop-blur-sm flex flex-col p-3 sm:p-6 animate-in fade-in duration-200"
+          <motion.div
+            key="preview-overlay"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.18 }}
+            className="fixed inset-0 z-[10000] bg-black/85 backdrop-blur-sm flex flex-col p-3 sm:p-6"
             onClick={(e) => { if (e.target === e.currentTarget) setPreviewAsset(null); }}
           >
             <div className="flex items-center justify-between gap-3 mb-3 shrink-0">
@@ -2641,11 +2766,14 @@ export default function CampaignCanvas({ wrikeData = [], folderCampaigns = [], t
             </div>
             <div className="relative flex-1 min-h-0 rounded-2xl overflow-hidden bg-white/5 border border-white/10 flex items-center justify-center">
               {previewAsset.type === "image" ? (
-                <img
+                <motion.img
                   key={previewAsset.id}
                   src={previewAsset.url}
                   alt={previewAsset.name}
-                  className="max-h-full max-w-full object-contain animate-in fade-in zoom-in-95 duration-200"
+                  initial={{ opacity: 0, scale: 0.97 }}
+                  animate={{ opacity: 1, scale: 1 }}
+                  transition={{ duration: 0.2, ease: [0.16, 1, 0.3, 1] }}
+                  className="max-h-full max-w-full object-contain"
                   onClick={(e) => e.stopPropagation()}
                 />
               ) : (
@@ -2678,8 +2806,9 @@ export default function CampaignCanvas({ wrikeData = [], folderCampaigns = [], t
                 </button>
               )}
             </div>
-          </div>
+          </motion.div>
         )}
+        </AnimatePresence>
 
         {/* SPREADSHEET TABLE MODAL OVERLAY */}
         {selectedMatrix && (

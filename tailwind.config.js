@@ -2,7 +2,14 @@
 export default {
   content: ["./index.html", "./src/**/*.{js,jsx}"],
   theme: {
-    extend: {},
+    extend: {
+      fontFamily: {
+        sans: [
+          '"Geist Variable"', "Geist", "system-ui", "-apple-system",
+          "Segoe UI", "Roboto", "Helvetica", "Arial", "sans-serif",
+        ],
+      },
+    },
   },
   plugins: [require("tailwindcss-animate")],
 };

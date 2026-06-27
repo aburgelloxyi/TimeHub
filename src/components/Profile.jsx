@@ -15,6 +15,7 @@ import {
   Activity,
   ChevronRight,
   Layers,
+  ChevronLeft,
   Key,
   Settings,
   Eye,
@@ -24,6 +25,7 @@ import {
 import { supabase } from "../lib/supabaseClient";
 import { useTasks } from "../hooks/useTasks";
 import { useWrikeUser } from "../hooks/useWrikeUser";
+import TaskDetailModal from "./TaskDetailModal";
 import { formatDurationText } from "../utils/timeHelpers";
 import { getTagStyle, getBorderColorClass } from "../utils/tagStyles";
 import { TERRITORY_FLAGS } from "../constants";
@@ -51,12 +53,49 @@ const PIE_COLORS = [
 ];
 
 const SECTIONS = [
-  { id: "overview", label: "Overview", icon: User },
-  { id: "history", label: "Timesheet", icon: Clock },
-  { id: "analytics", label: "Analytics", icon: BarChart2 },
-  { id: "jobs", label: "Active jobs", icon: Briefcase },
-  { id: "completed", label: "Completed", icon: CheckCircle },
-  { id: "settings", label: "Settings", icon: Settings },
+  {
+    id: "jobs",
+    label: "Active Jobs",
+    icon: Briefcase,
+    desc: "Your live workload — open a job to see the brief, files & log time",
+    gradient: "from-[#12a0e1] to-[#1cc1a5]",
+    featured: true,
+  },
+  {
+    id: "history",
+    label: "History",
+    icon: Clock,
+    desc: "Your logged hours by day",
+    gradient: "from-violet-500 to-purple-600",
+  },
+  {
+    id: "overview",
+    label: "Overview",
+    icon: Activity,
+    desc: "Recent activity & territories",
+    gradient: "from-sky-400 to-blue-500",
+  },
+  {
+    id: "analytics",
+    label: "Analytics",
+    icon: BarChart2,
+    desc: "Time breakdowns & charts",
+    gradient: "from-amber-400 to-orange-500",
+  },
+  {
+    id: "completed",
+    label: "Completed",
+    icon: CheckCircle,
+    desc: "Jobs you've delivered",
+    gradient: "from-teal-400 to-emerald-500",
+  },
+  {
+    id: "settings",
+    label: "Settings",
+    icon: Settings,
+    desc: "Wrike token & preferences",
+    gradient: "from-slate-400 to-slate-600",
+  },
 ];
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
@@ -67,6 +106,18 @@ function fmtDate(iso) {
     month: "short",
     day: "numeric",
   });
+}
+
+function timeAgo(iso) {
+  if (!iso) return "just now";
+  const secs = Math.floor((Date.now() - new Date(iso).getTime()) / 1000);
+  if (secs < 60) return "just now";
+  const mins = Math.floor(secs / 60);
+  if (mins < 60) return `${mins}m ago`;
+  const hrs = Math.floor(mins / 60);
+  if (hrs < 24) return `${hrs}h ago`;
+  const days = Math.floor(hrs / 24);
+  return days === 1 ? "yesterday" : `${days}d ago`;
 }
 
 function StatCard({ label, value, unit, icon: Icon, accent = "#12a0e1" }) {
@@ -112,7 +163,7 @@ function Empty({ icon: Icon, message }) {
 
 // ── Wrike task card — mirrors the RecentJobsModal style ───────────────────────
 
-function WrikeTaskCard({ task, filter }) {
+function WrikeTaskCard({ task, filter, onClick }) {
   const statusName = task.customStatusName || task.status;
   const borderColor = getBorderColorClass(statusName);
   const isMatrix = task.title?.toUpperCase().includes("MATRIX");
@@ -122,11 +173,12 @@ function WrikeTaskCard({ task, filter }) {
 
   return (
     <div
-      className={`p-4 border-y border-r border-l-4 rounded-2xl ${borderColor} ${
+      onClick={onClick}
+      className={`p-4 border-y border-r border-l-4 rounded-2xl transition-all ${borderColor} ${
         isMatrix
           ? "border-y-[#dce4ec] border-r-[#dce4ec] bg-slate-200/50 opacity-70"
           : "border-y-[#dce4ec] border-r-[#dce4ec] bg-slate-50"
-      }`}
+      } ${onClick ? "cursor-pointer hover:bg-white hover:shadow-md" : ""}`}
     >
       <div className="flex flex-wrap items-center gap-2 mb-1.5">
         <span className={getTagStyle(statusName)}>{statusName}</span>
@@ -161,10 +213,11 @@ function WrikeTaskCard({ task, filter }) {
 
 // ── Jobs section — fetches live from Wrike, grouped by campaign ───────────────
 
-function JobsSection({ wrikeUser, filter }) {
+function JobsSection({ wrikeUser, filter, wrikeData, onLogTime, triggerToast, jobOptions }) {
   const [tasks, setTasks] = useState([]);
   const [loading, setLoading] = useState(false);
   const [fetched, setFetched] = useState(false);
+  const [selectedTask, setSelectedTask] = useState(null);
 
   const fetchTasks = useCallback(async () => {
     if (!wrikeUser?.id) return;
@@ -354,11 +407,26 @@ function JobsSection({ wrikeUser, filter }) {
           </div>
           <div className="space-y-2.5">
             {grouped[campaign].map((task) => (
-              <WrikeTaskCard key={task.id} task={task} filter={filter} />
+              <WrikeTaskCard
+                key={task.id}
+                task={task}
+                filter={filter}
+                onClick={() => setSelectedTask(task)}
+              />
             ))}
           </div>
         </div>
       ))}
+
+      <TaskDetailModal
+        task={selectedTask}
+        wrikeData={wrikeData}
+        onClose={() => setSelectedTask(null)}
+        enableTimeLog={filter === "active"}
+        onLogTime={onLogTime}
+        triggerToast={triggerToast}
+        jobOptions={jobOptions}
+      />
     </div>
   );
 }
@@ -627,28 +695,28 @@ function OverviewSection({
         </div>
       </div>
 
-      {/* Lifetime sync nudge */}
-      {wrikeUser && !userStats.fetched && (
-        <div className="bg-[#12a0e1]/5 border border-[#12a0e1]/20 rounded-2xl p-4 flex items-center justify-between gap-4">
-          <div>
-            <p className="text-sm font-black text-[#122027]">
-              Sync your lifetime Wrike stats
-            </p>
-            <p className="text-xs text-[#768994] mt-0.5">
-              Fetch all-time completed task count from Wrike
-            </p>
-          </div>
+      {/* Lifetime stats — auto-synced, cached locally; manual refresh optional */}
+      {wrikeUser && (
+        <div className="flex items-center justify-between gap-3 text-[11px] text-[#768994] px-1">
+          <span className="flex items-center gap-1.5">
+            {userStats.loading ? (
+              <>
+                <RefreshCw className="w-3 h-3 animate-spin text-[#12a0e1]" />
+                Syncing lifetime stats…
+              </>
+            ) : userStats.fetched ? (
+              <>Lifetime stats synced {timeAgo(userStats.syncedAt)}</>
+            ) : (
+              <>Lifetime stats not synced yet</>
+            )}
+          </span>
           <button
-            onClick={handleFetchLifetimeStats}
+            onClick={() => handleFetchLifetimeStats(false)}
             disabled={userStats.loading}
-            className="flex items-center gap-2 bg-[#12a0e1] hover:bg-[#0d8bc4] text-white text-xs font-bold px-4 py-2 rounded-xl transition-all disabled:opacity-50 shadow-sm shrink-0"
+            className="flex items-center gap-1.5 font-bold text-[#768994] hover:text-[#12a0e1] transition-colors disabled:opacity-50"
           >
-            <RefreshCw
-              className={`w-3.5 h-3.5 ${
-                userStats.loading ? "animate-spin" : ""
-              }`}
-            />
-            {userStats.loading ? "Syncing…" : "Sync now"}
+            <RefreshCw className={`w-3 h-3 ${userStats.loading ? "animate-spin" : ""}`} />
+            Refresh
           </button>
         </div>
       )}
@@ -1155,20 +1223,27 @@ function SettingsSection({ onSave }) {
 
 // ── Main ──────────────────────────────────────────────────────────────────────
 
-export default function Profile({ wrikeData, onTokenChange }) {
-  const [activeSection, setActiveSection] = useState("overview");
+export default function Profile({ wrikeData, onTokenChange, activeSection: activeSectionProp, setActiveSection: setActiveSectionProp }) {
+  const [_activeSection, _setActiveSection] = useState(null);
+  const activeSection = activeSectionProp !== undefined ? activeSectionProp : _activeSection;
+  const setActiveSection = setActiveSectionProp ?? _setActiveSection;
+  const activeMeta = SECTIONS.find((s) => s.id === activeSection);
   const [profile, setProfile] = useState(null);
   const [hasToken, setHasToken] = useState(
     () => !!localStorage.getItem("wrike_personal_token")
   );
-  const triggerToast = () => {};
+  const [toast, setToast] = useState(null);
+  const triggerToast = useCallback((msg, type = "info") => {
+    setToast({ msg, type });
+    setTimeout(() => setToast(null), 2600);
+  }, []);
 
   const { wrikeUser, userStats, handleFetchLifetimeStats } = useWrikeUser(
     wrikeData,
     triggerToast
   );
 
-  const { tasks, loading } = useTasks(triggerToast, null, wrikeUser?.id);
+  const { tasks, loading, addTask } = useTasks(triggerToast, null, wrikeUser?.id);
 
   useEffect(() => {
     const uid = wrikeUser?.id || localStorage.getItem("wrike_user_id");
@@ -1200,6 +1275,16 @@ export default function Profile({ wrikeData, onTokenChange }) {
 
   return (
     <div className="min-h-screen bg-slate-100 text-[#122027] font-sans pb-16">
+      {toast && (
+        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-[10001] animate-in fade-in slide-in-from-bottom-2">
+          <div className={`flex items-center gap-2 px-4 py-2.5 rounded-xl shadow-lg text-sm font-bold text-white ${
+            toast.type === "success" ? "bg-[#1cc1a5]" : toast.type === "error" ? "bg-rose-500" : "bg-[#122027]"
+          }`}>
+            {toast.type === "success" && <Check className="w-4 h-4" />}
+            {toast.msg}
+          </div>
+        </div>
+      )}
       <div className="max-w-[1400px] mx-auto px-4 sm:px-6 pt-8 space-y-6">
         {/* Hero header */}
         <div className="bg-white border border-[#dce4ec] rounded-[2rem] overflow-hidden shadow-sm">
@@ -1287,40 +1372,91 @@ export default function Profile({ wrikeData, onTokenChange }) {
           </div>
         )}
 
-        {/* Layout */}
-        <div className="flex flex-col lg:flex-row gap-5 items-start">
-          {/* Sidebar */}
-          <nav className="w-full lg:w-48 shrink-0 bg-white border border-[#dce4ec] rounded-2xl p-2 shadow-sm lg:sticky lg:top-6">
-            {SECTIONS.map(({ id, label, icon: Icon }) => {
-              const active = activeSection === id;
-              return (
+        {/* ── App drawer (home) ─────────────────────────────────────────── */}
+        {!activeSection && (
+          <div>
+            <div className="flex items-center gap-2 mb-4 px-1">
+              <Layers className="w-4 h-4 text-[#12a0e1]" />
+              <h2 className="text-sm font-black text-[#122027] uppercase tracking-widest">
+                Your Hub
+              </h2>
+            </div>
+
+            <div className="grid grid-cols-2 lg:grid-cols-3 gap-3 sm:gap-4">
+              {SECTIONS.map(({ id, label, icon: Icon, desc, gradient, featured }) => (
                 <button
                   key={id}
                   onClick={() => setActiveSection(id)}
-                  className={`w-full flex items-center gap-2.5 px-3 py-2.5 rounded-xl text-sm font-bold transition-all mb-0.5 last:mb-0 group ${
-                    active
-                      ? "bg-[#12a0e1]/10 text-[#12a0e1]"
-                      : "text-[#768994] hover:bg-slate-50 hover:text-[#122027]"
+                  className={`group relative text-left bg-white border border-[#dce4ec] rounded-3xl p-5 shadow-sm hover:shadow-xl hover:-translate-y-1 transition-all duration-200 overflow-hidden ${
+                    featured ? "col-span-2 lg:col-span-3" : ""
                   }`}
                 >
-                  <Icon className="w-4 h-4 shrink-0" />
-                  <span className="flex-1 text-left">{label}</span>
-                  {active && (
-                    <ChevronRight className="w-3.5 h-3.5 opacity-60" />
-                  )}
+                  {/* Soft gradient wash */}
+                  <div
+                    className={`absolute inset-0 bg-gradient-to-br ${gradient} opacity-0 group-hover:opacity-[0.06] transition-opacity`}
+                  />
+                  <div className={`relative flex ${featured ? "items-center gap-5" : "flex-col gap-3"}`}>
+                    <div
+                      className={`shrink-0 rounded-2xl bg-gradient-to-br ${gradient} flex items-center justify-center text-white shadow-lg ${
+                        featured ? "w-16 h-16" : "w-12 h-12"
+                      }`}
+                    >
+                      <Icon className={featured ? "w-8 h-8" : "w-6 h-6"} />
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center gap-2">
+                        <p className={`font-black text-[#122027] ${featured ? "text-xl" : "text-sm"}`}>
+                          {label}
+                        </p>
+                        {featured && (
+                          <span className="text-[9px] font-black text-[#1cc1a5] bg-[#1cc1a5]/10 px-2 py-0.5 rounded-full uppercase tracking-wider">
+                            Start here
+                          </span>
+                        )}
+                      </div>
+                      <p className={`text-[#768994] mt-0.5 ${featured ? "text-sm" : "text-[11px] leading-snug"}`}>
+                        {desc}
+                      </p>
+                    </div>
+                    <ChevronRight
+                      className={`shrink-0 text-slate-300 group-hover:text-[#12a0e1] group-hover:translate-x-0.5 transition-all ${
+                        featured ? "w-6 h-6" : "w-4 h-4 absolute top-0 right-0"
+                      }`}
+                    />
+                  </div>
                 </button>
-              );
-            })}
-          </nav>
+              ))}
+            </div>
+          </div>
+        )}
 
-          {/* Content */}
-          <div className="flex-1 min-w-0">
-            {loading ? (
+        {/* ── Active section ────────────────────────────────────────────── */}
+        {activeSection && (
+          <div>
+            {/* Back bar */}
+            <div className="flex items-center gap-3 mb-4">
+              <button
+                onClick={() => setActiveSection(null)}
+                className="flex items-center gap-1.5 text-xs font-bold text-[#768994] hover:text-[#122027] bg-white border border-[#dce4ec] hover:border-slate-300 rounded-xl px-3 py-2 shadow-sm transition-all"
+              >
+                <ChevronLeft className="w-4 h-4" /> Hub
+              </button>
+              {activeMeta && (
+                <div className="flex items-center gap-2.5 min-w-0">
+                  <div className={`w-8 h-8 rounded-xl bg-gradient-to-br ${activeMeta.gradient} flex items-center justify-center text-white shadow-sm shrink-0`}>
+                    <activeMeta.icon className="w-4 h-4" />
+                  </div>
+                  <h2 className="text-lg font-black text-[#122027] tracking-tight truncate">
+                    {activeMeta.label}
+                  </h2>
+                </div>
+              )}
+            </div>
+
+            {loading && activeSection !== "jobs" && activeSection !== "completed" && activeSection !== "settings" ? (
               <div className="bg-white border border-[#dce4ec] rounded-2xl p-16 flex flex-col items-center justify-center gap-3 shadow-sm">
                 <RefreshCw className="w-6 h-6 animate-spin text-[#12a0e1]" />
-                <p className="text-sm font-bold text-[#768994]">
-                  Loading your data…
-                </p>
+                <p className="text-sm font-bold text-[#768994]">Loading your data…</p>
               </div>
             ) : (
               <div className="bg-white border border-[#dce4ec] rounded-2xl p-6 shadow-sm">
@@ -1332,17 +1468,25 @@ export default function Profile({ wrikeData, onTokenChange }) {
                     handleFetchLifetimeStats={handleFetchLifetimeStats}
                   />
                 )}
-                {activeSection === "history" && (
-                  <HistorySection tasks={tasks} />
-                )}
-                {activeSection === "analytics" && (
-                  <AnalyticsSection tasks={tasks} />
-                )}
+                {activeSection === "history" && <HistorySection tasks={tasks} />}
+                {activeSection === "analytics" && <AnalyticsSection tasks={tasks} />}
                 {activeSection === "jobs" && (
-                  <JobsSection wrikeUser={wrikeUser} filter="active" />
+                  <JobsSection
+                    wrikeUser={wrikeUser}
+                    filter="active"
+                    wrikeData={wrikeData}
+                    onLogTime={addTask}
+                    triggerToast={triggerToast}
+                  />
                 )}
                 {activeSection === "completed" && (
-                  <JobsSection wrikeUser={wrikeUser} filter="completed" />
+                  <JobsSection
+                    wrikeUser={wrikeUser}
+                    filter="completed"
+                    wrikeData={wrikeData}
+                    onLogTime={addTask}
+                    triggerToast={triggerToast}
+                  />
                 )}
                 {activeSection === "settings" && (
                   <SettingsSection
@@ -1355,7 +1499,7 @@ export default function Profile({ wrikeData, onTokenChange }) {
               </div>
             )}
           </div>
-        </div>
+        )}
       </div>
     </div>
   );

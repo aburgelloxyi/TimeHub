@@ -1,0 +1,893 @@
+import React, { useState, useEffect, useRef } from "react";
+import {
+  X,
+  ExternalLink,
+  Link2,
+  Copy,
+  FolderOpen,
+  Check,
+  Download,
+  Play,
+  Square,
+  Clock,
+  RotateCcw,
+  Film,
+  Tag,
+  MessageSquare,
+  ChevronLeft,
+  ChevronRight,
+  TableProperties,
+} from "lucide-react";
+import { TERRITORY_FLAGS, TERRITORIES, CATEGORIES, DEFAULT_JOBS } from "../constants";
+import { guessFieldsFromTask } from "../utils/wrikeHelpers";
+import SearchableSelect from "./shared/SearchableSelect";
+import { parsePdfDeliverySpecs } from "../utils/pdfTableParser";
+import DeliverySpecsModal from "./DeliverySpecsModal";
+
+// ── Local presentational helpers (kept self-contained so this modal is a
+//    drop-in for any page) ────────────────────────────────────────────────────
+
+const FALLBACK_FLAGS = {
+  UAE: "🇦🇪", SPAIN: "🇪🇸", ES: "🇪🇸", GER: "🇩🇪", GERMANY: "🇩🇪",
+  FRA: "🇫🇷", FRANCE: "🇫🇷", TW: "🇹🇼", TAIWAN: "🇹🇼", CZ: "🇨🇿",
+  CZECH: "🇨🇿", AUSTRIA: "🇦🇹", PHILIPPINES: "🇵🇭", PH: "🇵🇭",
+  AUS: "🇦🇺", AUSTRALIA: "🇦🇺", BRA: "🇧🇷", BRAZIL: "🇧🇷",
+  UK: "🇬🇧", GB: "🇬🇧", INT: "🌍", INTL: "🌍", ROW: "🌐", LATAM: "🌎",
+  MEX: "🇲🇽", MEXICO: "🇲🇽", ITA: "🇮🇹", ITALY: "🇮🇹",
+  NETHERLANDS: "🇳🇱", NL: "🇳🇱", MALAYSIA: "🇲🇾", MY: "🇲🇾",
+  INDIA: "🇮🇳", IN: "🇮🇳", SLOVAKIA: "🇸🇰", SK: "🇸🇰",
+  SIN: "🇸🇬", SINGAPORE: "🇸🇬", IRE: "🇮🇪", IRELAND: "🇮🇪",
+  UY: "🇺🇾", HUNGARY: "🇭🇺", POL: "🇵🇱", POLAND: "🇵🇱", KR: "🇰🇷",
+};
+
+function getTerritoryData(title) {
+  if (!title) return { name: "UNKNOWN", flag: "🎬" };
+  const words = title.toUpperCase().split(/[\s\-_]+/);
+  if (typeof TERRITORY_FLAGS !== "undefined" && TERRITORY_FLAGS) {
+    for (const word of words) {
+      if (TERRITORY_FLAGS[word]) return { name: word, flag: TERRITORY_FLAGS[word] };
+    }
+  }
+  for (const word of words) {
+    if (FALLBACK_FLAGS[word]) return { name: word, flag: FALLBACK_FLAGS[word] };
+  }
+  return { name: "GLOBAL", flag: "🎬" };
+}
+
+function getTagStyle(tag) {
+  const base = "text-[9px] font-black uppercase tracking-wider px-2 py-0.5 rounded border whitespace-nowrap";
+  if (!tag) return `${base} bg-slate-100 text-slate-500 border-slate-200`;
+  const t = String(tag).toLowerCase();
+  if (t.includes("to amend"))          return `${base} bg-rose-50 text-rose-600 border-rose-200`;
+  if (t.includes("render review"))     return `${base} bg-indigo-50 text-indigo-600 border-indigo-200`;
+  if (t.includes("revised"))           return `${base} bg-teal-50 text-teal-600 border-teal-200`;
+  if (t.includes("creative approved")) return `${base} bg-blue-50 text-blue-600 border-blue-200`;
+  if (t.includes("content approved"))  return `${base} bg-purple-50 text-purple-600 border-purple-200`;
+  if (t.includes("client review") || t.includes("content review")) return `${base} bg-yellow-50 text-yellow-600 border-yellow-200`;
+  if (t.includes("motion"))            return `${base} bg-emerald-50 text-emerald-600 border-emerald-200`;
+  if (t.includes("digital"))           return `${base} bg-cyan-50 text-cyan-600 border-cyan-200`;
+  if (t.includes("prep for delivery")) return `${base} bg-orange-50 text-orange-600 border-orange-200`;
+  if (t === "delivering" || t === "delivery") return `${base} bg-yellow-100 text-yellow-700 border-yellow-400`;
+  if (t.includes("on hold"))           return `${base} bg-red-50 text-red-600 border-red-200`;
+  if (t.includes("pm"))                return `${base} bg-fuchsia-50 text-fuchsia-600 border-fuchsia-200`;
+  if (t.includes("backlog"))           return `${base} bg-slate-100 text-slate-500 border-slate-200`;
+  return `${base} bg-slate-100 text-slate-500 border-slate-200`;
+}
+
+function isOverdue(d) {
+  if (!d || d === "No Due Date") return false;
+  const today = new Date(); today.setHours(0, 0, 0, 0);
+  return new Date(d) < today;
+}
+
+const URL_RE = /https?:\/\/[^\s<>"')\]]+/g;
+function extractLinks(text) {
+  if (!text) return [];
+  return [...new Set(text.match(URL_RE) || [])];
+}
+
+function extractFolderPaths(notesText, extractedPathData) {
+  const seen = new Set();
+  const results = [];
+  if (notesText) {
+    const lines = notesText.split("\n");
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i].trim();
+      if (/^\/volumes\//i.test(line)) {
+        let label = "";
+        for (let j = i - 1; j >= 0; j--) {
+          const prev = lines[j].trim();
+          if (prev && !/^\/volumes\//i.test(prev)) {
+            label = prev.replace(/:$/, "").trim().toUpperCase();
+            break;
+          }
+        }
+        const key = line.toUpperCase();
+        if (!seen.has(key)) {
+          seen.add(key);
+          const parts = line.split("/").filter(Boolean);
+          const derived = parts.slice(-2).map(s => s.replace(/_/g, " ")).join(" / ").toUpperCase();
+          results.push({ url: line, title: label || derived, isAuto: false });
+        }
+      }
+    }
+  }
+  if (extractedPathData) {
+    extractedPathData.split(" ").filter(p => p.includes("/VOLUMES/")).forEach(pathStr => {
+      const key = pathStr.toUpperCase();
+      // Skip if this token is just a truncated prefix of a path already found by
+      // the line scan (happens when a path contains spaces — the source regex stops
+      // at the first space, producing a shorter fragment like /VOLUMES/NEWMEDIA/XYI
+      // from /Volumes/newmedia/XYi Design/...).
+      const isPrefix = results.some(r => r.url.toUpperCase().startsWith(key));
+      if (!seen.has(key) && !isPrefix) {
+        seen.add(key);
+        const parts = pathStr.split("/").filter(Boolean);
+        const last2 = parts.slice(-2).map(s => decodeURIComponent(s).replace(/_/g, " ")).join(" / ").toUpperCase();
+        results.push({ url: pathStr, title: last2 || pathStr, isAuto: true });
+      }
+    });
+  }
+  return results;
+}
+
+// Wrike download responses are often application/octet-stream — resolve a real
+// MIME so the browser renders the preview instead of a blank page.
+function mimeForAttachment(att) {
+  if (att.contentType && att.contentType !== "application/octet-stream") return att.contentType;
+  const ext = (att.name || "").split(".").pop().toLowerCase();
+  const MAP = {
+    pdf: "application/pdf", png: "image/png", jpg: "image/jpeg", jpeg: "image/jpeg",
+    gif: "image/gif", webp: "image/webp", bmp: "image/bmp", tiff: "image/tiff",
+    svg: "image/svg+xml", mp4: "video/mp4", mov: "video/quicktime", txt: "text/plain",
+  };
+  return MAP[ext] || "application/octet-stream";
+}
+
+function attachmentKind(att) {
+  const mime = mimeForAttachment(att);
+  if (mime.startsWith("image/")) return "image";
+  if (mime === "application/pdf") return "pdf";
+  if (mime.startsWith("video/")) return "video";
+  return "other";
+}
+
+export function AttachmentThumb({ attachment, large = false, onPreview, onSpecsParsed }) {
+  const [loading, setLoading] = useState(false);
+  const [specsLoading, setSpecsLoading] = useState(false);
+  const ext = (attachment.name || "").split(".").pop().toLowerCase();
+  const dim = large ? "w-24 h-24" : "w-14 h-14";
+  const kind = attachmentKind(attachment);
+
+  const { icon, bg } = kind === "pdf"
+    ? { icon: "📄", bg: "bg-red-50 border-red-200" }
+    : kind === "image"
+    ? { icon: "🖼️", bg: "bg-sky-50 border-sky-200" }
+    : kind === "video"
+    ? { icon: "🎬", bg: "bg-purple-50 border-purple-200" }
+    : ["psd","ai","eps","aep","prproj"].includes(ext)
+    ? { icon: "🎨", bg: "bg-orange-50 border-orange-200" }
+    : ["zip","rar","7z"].includes(ext)
+    ? { icon: "📦", bg: "bg-slate-100 border-slate-200" }
+    : ["doc","docx","txt"].includes(ext)
+    ? { icon: "📝", bg: "bg-blue-50 border-blue-200" }
+    : ["xls","xlsx","csv"].includes(ext)
+    ? { icon: "📊", bg: "bg-green-50 border-green-200" }
+    : { icon: "📎", bg: "bg-slate-50 border-slate-200" };
+
+  const downloadUrl = `https://www.wrike.com/api/v4/attachments/${attachment.id}/download`;
+
+  const fetchBlob = async () => {
+    const token = localStorage.getItem("wrike_personal_token");
+    if (!token) throw new Error("No token");
+    const res = await fetch(downloadUrl, { headers: { Authorization: `Bearer ${token}` } });
+    if (!res.ok) throw new Error("HTTP " + res.status);
+    return res.blob();
+  };
+
+  const handleOpen = async (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (loading) return;
+    setLoading(true);
+    try {
+      const raw = await fetchBlob();
+      const typed = new Blob([raw], { type: mimeForAttachment(attachment) });
+      const obj = URL.createObjectURL(typed);
+      onPreview?.({ url: obj, name: attachment.name, kind, isObjectUrl: true, attachmentId: attachment.id });
+    } catch (err) {
+      console.warn("Attachment preview failed:", err);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleSpecs = async (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (specsLoading) return;
+    setSpecsLoading(true);
+    try {
+      const raw = await fetchBlob();
+      const specs = await parsePdfDeliverySpecs(raw);
+      onSpecsParsed?.({ specs, name: attachment.name });
+    } catch (err) {
+      console.warn("PDF specs parse failed:", err);
+      onSpecsParsed?.({ specs: null, name: attachment.name });
+    } finally {
+      setSpecsLoading(false);
+    }
+  };
+
+  return (
+    <div className="relative shrink-0 flex flex-col items-center gap-1">
+      <button
+        onClick={handleOpen}
+        title={attachment.name}
+        className={`${dim} rounded-xl border ${bg} flex flex-col items-center justify-center gap-1 hover:shadow-md hover:scale-105 transition-all`}
+      >
+        {loading ? (
+          <div className="w-4 h-4 border-2 border-slate-300 border-t-[#12a0e1] rounded-full animate-spin" />
+        ) : (
+          <>
+            <span className={large ? "text-3xl" : "text-xl"}>{icon}</span>
+            <span className="text-[7px] font-black text-slate-400 uppercase tracking-wide px-1 text-center leading-none">
+              {(ext || "file").slice(0, 6)}
+            </span>
+          </>
+        )}
+      </button>
+
+      {/* Specs pill — always visible for PDFs */}
+      {kind === "pdf" && onSpecsParsed && (
+        <button
+          onClick={handleSpecs}
+          title="Extract delivery specs"
+          className="flex items-center gap-1 px-2 py-0.5 rounded-full bg-[#12a0e1] hover:bg-[#0d8bc4] text-white text-[8px] font-black uppercase tracking-wide transition-colors shadow-sm"
+        >
+          {specsLoading
+            ? <div className="w-2 h-2 border border-white/40 border-t-white rounded-full animate-spin" />
+            : <TableProperties className="w-2 h-2" />
+          }
+          Specs
+        </button>
+      )}
+    </div>
+  );
+}
+
+export function FilePreviewLightbox({ file, onClose, allAttachments = [], onNavigate }) {
+  const [navLoading, setNavLoading] = useState(false);
+
+  const currentIdx = allAttachments.findIndex(a => a.id === file?.attachmentId);
+  const hasPrev = currentIdx > 0;
+  const hasNext = currentIdx >= 0 && currentIdx < allAttachments.length - 1;
+
+  const navigateTo = async (att) => {
+    if (navLoading) return;
+    const token = localStorage.getItem("wrike_personal_token");
+    if (!token) return;
+    setNavLoading(true);
+    try {
+      const res = await fetch(`https://www.wrike.com/api/v4/attachments/${att.id}/download`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!res.ok) throw new Error("HTTP " + res.status);
+      const raw = await res.blob();
+      const typed = new Blob([raw], { type: mimeForAttachment(att) });
+      const obj = URL.createObjectURL(typed);
+      const kind = attachmentKind(att);
+      onNavigate?.({ url: obj, name: att.name, kind, isObjectUrl: true, attachmentId: att.id });
+    } catch (err) {
+      console.warn("Navigation fetch failed:", err);
+    } finally {
+      setNavLoading(false);
+    }
+  };
+
+  // Keyboard arrow navigation
+  useEffect(() => {
+    if (!file) return;
+    const handler = (e) => {
+      if (e.key === "ArrowLeft" && hasPrev) navigateTo(allAttachments[currentIdx - 1]);
+      if (e.key === "ArrowRight" && hasNext) navigateTo(allAttachments[currentIdx + 1]);
+      if (e.key === "Escape") onClose?.();
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, [file, currentIdx, hasPrev, hasNext]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  if (!file) return null;
+
+  const showArrows = allAttachments.length > 1 && currentIdx >= 0;
+
+  return (
+    <div
+      className="fixed inset-0 z-[10000] flex flex-col p-4 sm:p-8 bg-[#122027]/90 backdrop-blur-md"
+      onClick={onClose}
+    >
+      {/* Header */}
+      <div className="flex items-center justify-between gap-3 mb-3 shrink-0" onClick={e => e.stopPropagation()}>
+        <div className="flex items-center gap-3 min-w-0">
+          {showArrows && (
+            <span className="text-xs font-bold text-white/50 shrink-0">
+              {currentIdx + 1} / {allAttachments.length}
+            </span>
+          )}
+          <p className="text-sm font-bold text-white truncate">{file.name}</p>
+        </div>
+        <div className="flex items-center gap-2 shrink-0">
+          <a
+            href={file.url}
+            download={file.name}
+            className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-white/10 hover:bg-white/20 text-white text-xs font-bold border border-white/20 transition-colors"
+          >
+            <Download className="w-4 h-4" /> <span className="hidden sm:inline">Download</span>
+          </a>
+          <button
+            onClick={onClose}
+            className="p-2 rounded-xl bg-white/10 hover:bg-rose-500 text-white border border-white/20 transition-colors"
+          >
+            <X className="w-5 h-5" />
+          </button>
+        </div>
+      </div>
+
+      {/* Content + side arrows */}
+      <div className="relative flex-1 min-h-0 flex items-center gap-3" onClick={onClose}>
+        {/* Prev arrow */}
+        {showArrows && (
+          <button
+            onClick={e => { e.stopPropagation(); if (hasPrev) navigateTo(allAttachments[currentIdx - 1]); }}
+            disabled={!hasPrev || navLoading}
+            className="shrink-0 p-2.5 rounded-full bg-white/10 hover:bg-white/25 disabled:opacity-20 disabled:cursor-not-allowed text-white border border-white/20 transition-all"
+          >
+            <ChevronLeft className="w-5 h-5" />
+          </button>
+        )}
+
+        {/* Viewer */}
+        <div
+          className="relative flex-1 min-h-0 h-full rounded-2xl overflow-hidden bg-white/5 border border-white/10 flex items-center justify-center"
+          onClick={e => e.stopPropagation()}
+        >
+          {navLoading ? (
+            <div className="flex flex-col items-center gap-3 text-white/60">
+              <div className="w-8 h-8 border-2 border-white/20 border-t-white rounded-full animate-spin" />
+              <span className="text-xs font-medium">Loading…</span>
+            </div>
+          ) : file.kind === "image" ? (
+            <img src={file.url} alt={file.name} className="max-h-full max-w-full object-contain" />
+          ) : file.kind === "video" ? (
+            <video src={file.url} controls className="max-h-full max-w-full" />
+          ) : file.kind === "pdf" ? (
+            <iframe src={`${file.url}#zoom=350`} title={file.name} className="w-full h-full bg-white" />
+          ) : (
+            <div className="flex flex-col items-center gap-3 text-white/70">
+              <p className="text-sm">This file type can't be previewed in-browser.</p>
+              <a
+                href={file.url}
+                download={file.name}
+                className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-white/10 hover:bg-white/20 text-white text-xs font-bold border border-white/20 transition-colors"
+              >
+                <Download className="w-4 h-4" /> Download file
+              </a>
+            </div>
+          )}
+        </div>
+
+        {/* Next arrow */}
+        {showArrows && (
+          <button
+            onClick={e => { e.stopPropagation(); if (hasNext) navigateTo(allAttachments[currentIdx + 1]); }}
+            disabled={!hasNext || navLoading}
+            className="shrink-0 p-2.5 rounded-full bg-white/10 hover:bg-white/25 disabled:opacity-20 disabled:cursor-not-allowed text-white border border-white/20 transition-all"
+          >
+            <ChevronRight className="w-5 h-5" />
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ── Time-log panel ────────────────────────────────────────────────────────────
+
+const WEEKDAYS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+
+function fmtClock(totalSecs) {
+  const h = Math.floor(totalSecs / 3600);
+  const m = Math.floor((totalSecs % 3600) / 60);
+  const s = totalSecs % 60;
+  return [h, m, s].map((n) => String(n).padStart(2, "0")).join(":");
+}
+
+function TimeLogPanel({ task, fullTask, jobOptions, onLogTime, onLogged }) {
+  const prefill = React.useMemo(
+    () => guessFieldsFromTask(fullTask, jobOptions || []),
+    [fullTask, jobOptions]
+  );
+
+  const [jobNumber, setJobNumber] = useState(
+    prefill.jobNumber && prefill.jobNumber !== "⚠️ Unassigned" ? prefill.jobNumber : ""
+  );
+  const [territory, setTerritory] = useState(
+    prefill.territory && prefill.territory !== "⚠️ Unassigned" ? prefill.territory : ""
+  );
+  const [category, setCategory] = useState(
+    CATEGORIES.includes(prefill.category) ? prefill.category : ""
+  );
+  const [notes, setNotes] = useState(task.title || "");
+  const [activeDropdown, setActiveDropdown] = useState(null);
+
+  // A timer logged now always belongs to today.
+  const today = new Date();
+  const dayOfWeek = WEEKDAYS[today.getDay()];
+
+  // Timer
+  const [running, setRunning] = useState(false);
+  const [elapsed, setElapsed] = useState(0); // seconds
+  const startRef = useRef(null);
+  const intervalRef = useRef(null);
+
+  // Manual entry
+  const [manualH, setManualH] = useState("");
+  const [manualM, setManualM] = useState("");
+
+  useEffect(() => {
+    if (running) {
+      startRef.current = Date.now() - elapsed * 1000;
+      intervalRef.current = setInterval(() => {
+        setElapsed(Math.floor((Date.now() - startRef.current) / 1000));
+      }, 1000);
+    } else if (intervalRef.current) {
+      clearInterval(intervalRef.current);
+      intervalRef.current = null;
+    }
+    return () => { if (intervalRef.current) clearInterval(intervalRef.current); };
+  }, [running]);
+
+  const manualSecs = (parseInt(manualH || 0, 10) * 3600) + (parseInt(manualM || 0, 10) * 60);
+  const finalSecs = manualSecs > 0 ? manualSecs : elapsed;
+
+  const canLog = !!category && finalSecs > 0;
+
+  const handleLog = () => {
+    if (!canLog) return;
+    setRunning(false);
+    onLogTime?.({
+      id: Date.now(),
+      jobNumber, territory, category, notes,
+      dayOfWeek,
+      rawSeconds: finalSecs,
+      additionalSeconds: 0,
+      date: today.toLocaleDateString("en-GB"),
+      taskId: task.id,
+    });
+    onLogged?.(finalSecs);
+    // reset
+    setElapsed(0); setManualH(""); setManualM("");
+  };
+
+  const inputCls = "w-full text-xs font-medium bg-white border border-[#dce4ec] rounded-lg px-2.5 py-2 text-[#122027] placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-[#12a0e1]/30 focus:border-[#12a0e1] transition-all";
+  const labelCls = "text-[9px] font-black uppercase tracking-widest text-slate-400 mb-1 block";
+
+  return (
+    <div className="bg-[#12a0e1]/5 rounded-2xl border border-[#12a0e1]/20 overflow-visible">
+      <div className="flex items-center gap-2 px-4 py-2.5 border-b border-[#12a0e1]/15 bg-white/60 rounded-t-2xl">
+        <Clock className="w-3.5 h-3.5 text-[#12a0e1]" />
+        <span className="text-[9px] font-black uppercase tracking-widest text-[#12a0e1]">Log time to timesheet</span>
+        <span className="ml-auto text-[9px] font-bold text-slate-400">{dayOfWeek}</span>
+      </div>
+
+      <div className="p-4 flex flex-col gap-3">
+        {/* Timer */}
+        <div className="flex items-center gap-3">
+          <div className="font-mono text-2xl font-black text-[#122027] tabular-nums tracking-tight">
+            {fmtClock(elapsed)}
+          </div>
+          <div className="flex items-center gap-1.5 ml-auto">
+            {!running ? (
+              <button
+                onClick={() => setRunning(true)}
+                className="flex items-center gap-1.5 text-xs font-bold text-white bg-emerald-500 hover:bg-emerald-600 rounded-lg px-3 py-2 transition-all"
+              >
+                <Play className="w-3.5 h-3.5" /> Start
+              </button>
+            ) : (
+              <button
+                onClick={() => setRunning(false)}
+                className="flex items-center gap-1.5 text-xs font-bold text-white bg-rose-500 hover:bg-rose-600 rounded-lg px-3 py-2 transition-all"
+              >
+                <Square className="w-3.5 h-3.5" /> Stop
+              </button>
+            )}
+            {elapsed > 0 && !running && (
+              <button
+                onClick={() => setElapsed(0)}
+                title="Reset"
+                className="p-2 text-slate-400 hover:text-rose-500 hover:bg-white rounded-lg transition-all"
+              >
+                <RotateCcw className="w-3.5 h-3.5" />
+              </button>
+            )}
+          </div>
+        </div>
+
+        {/* Manual override */}
+        <div className="flex items-center gap-2">
+          <span className="text-[9px] font-black uppercase tracking-widest text-slate-400">Or enter manually</span>
+          <input type="number" min="0" placeholder="Hrs" value={manualH}
+            onChange={(e) => setManualH(e.target.value)} className={`${inputCls} w-16`} />
+          <input type="number" min="0" max="59" placeholder="Min" value={manualM}
+            onChange={(e) => setManualM(e.target.value)} className={`${inputCls} w-16`} />
+        </div>
+
+        {/* Dropdowns — same SearchableSelect used by Tracker & Legacy */}
+        <div className="flex flex-col gap-2.5">
+          <div>
+            <label className={labelCls}>Job number</label>
+            <SearchableSelect
+              options={jobOptions && jobOptions.length ? jobOptions : DEFAULT_JOBS}
+              value={jobNumber}
+              onChange={setJobNumber}
+              placeholder="Type to search or add…"
+              icon={Film}
+              isGrouped={true}
+              dropdownId="hub-job"
+              activeDropdown={activeDropdown}
+              setActiveDropdown={setActiveDropdown}
+            />
+          </div>
+          <div>
+            <label className={labelCls}>Territory</label>
+            <SearchableSelect
+              options={TERRITORIES}
+              value={territory}
+              onChange={setTerritory}
+              placeholder="Search territory…"
+              getPrefix={(val) => TERRITORY_FLAGS[val]}
+              dropdownId="hub-territory"
+              activeDropdown={activeDropdown}
+              setActiveDropdown={setActiveDropdown}
+            />
+          </div>
+          <div>
+            <label className={labelCls}>Category <span className="text-rose-400">*</span></label>
+            <SearchableSelect
+              options={CATEGORIES}
+              value={category}
+              onChange={setCategory}
+              placeholder="Search category…"
+              icon={Tag}
+              isGrouped={true}
+              dropdownId="hub-category"
+              activeDropdown={activeDropdown}
+              setActiveDropdown={setActiveDropdown}
+            />
+          </div>
+          <div>
+            <label className={labelCls}>Notes</label>
+            <input value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="Optional notes" className={inputCls} />
+          </div>
+        </div>
+
+        <button
+          onClick={handleLog}
+          disabled={!canLog}
+          className="w-full flex items-center justify-center gap-2 text-xs font-black uppercase tracking-widest text-white bg-[#12a0e1] hover:bg-[#0d8abf] disabled:bg-slate-300 disabled:cursor-not-allowed rounded-xl px-4 py-2.5 transition-all"
+        >
+          <Check className="w-4 h-4" />
+          Log {finalSecs > 0 ? fmtClock(finalSecs) : "time"} to today
+        </button>
+        {!category && (
+          <p className="text-[10px] text-amber-600 text-center font-bold">Pick a category to log.</p>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ── Main modal ────────────────────────────────────────────────────────────────
+
+export default function TaskDetailModal({
+  task,
+  wrikeData,
+  attachments: attachmentsProp,
+  onClose,
+  enableTimeLog = false,
+  onLogTime,
+  jobOptions,
+  triggerToast,
+}) {
+  const [previewFile, setPreviewFile] = useState(null);
+  const [deliverySpecs, setDeliverySpecs] = useState(null);
+  const [fetchedAttachments, setFetchedAttachments] = useState(null);
+  const [amendNote, setAmendNote] = useState(null);
+  const [amendLoading, setAmendLoading] = useState(false);
+
+  // Fetch attachments for this task if not supplied by the parent
+  useEffect(() => {
+    if (!task || attachmentsProp) return;
+    const token = localStorage.getItem("wrike_personal_token");
+    if (!token) return;
+    let cancelled = false;
+    fetch(`https://www.wrike.com/api/v4/tasks/${task.id}/attachments`, {
+      headers: { Authorization: `Bearer ${token}` },
+    })
+      .then((r) => r.json())
+      .then((data) => { if (!cancelled) setFetchedAttachments(data.data || []); })
+      .catch(() => { if (!cancelled) setFetchedAttachments([]); });
+    return () => { cancelled = true; };
+  }, [task, attachmentsProp]);
+
+  // For "To amend" tasks, pull the most recent comment — usually the CD's amend.
+  useEffect(() => {
+    setAmendNote(null);
+    if (!task) return;
+    const status = (task.tag || task.customStatusName || task.status || "").toLowerCase();
+    if (!status.includes("amend")) return;
+    const token = localStorage.getItem("wrike_personal_token");
+    if (!token) return;
+    const headers = { Authorization: `Bearer ${token}` };
+    let cancelled = false;
+    setAmendLoading(true);
+    fetch(`https://www.wrike.com/api/v4/tasks/${task.id}/comments?plainText=true`, { headers })
+      .then((r) => r.json())
+      .then(async (data) => {
+        const comments = data.data || [];
+        if (comments.length === 0) return null;
+        const latest = [...comments].sort(
+          (a, b) => new Date(b.createdDate || 0) - new Date(a.createdDate || 0)
+        )[0];
+        let author = "";
+        try {
+          const cRes = await fetch(`https://www.wrike.com/api/v4/contacts/${latest.authorId}`, { headers });
+          const cJson = await cRes.json();
+          const c = cJson.data?.[0];
+          if (c) author = `${c.firstName || ""} ${c.lastName || ""}`.trim();
+        } catch (_) { /* name is optional */ }
+        return { text: (latest.text || "").trim(), author, date: latest.createdDate };
+      })
+      .then((note) => { if (!cancelled && note) setAmendNote(note); })
+      .catch(() => {})
+      .finally(() => { if (!cancelled) setAmendLoading(false); });
+    return () => { cancelled = true; };
+  }, [task]);
+
+  useEffect(() => {
+    return () => { if (previewFile?.isObjectUrl) URL.revokeObjectURL(previewFile.url); };
+  }, [previewFile]);
+
+  if (!task) return null;
+
+  const fullTask = wrikeData?.find((t) => t.id === task.id) || task;
+  const notes = fullTask.notesText || (fullTask.description ? fullTask.description.replace(/<[^>]*>/g, "").trim() : "") || "";
+  const links = extractLinks(notes);
+  const folderPaths = extractFolderPaths(notes, fullTask.extractedPathData);
+  const attachments = attachmentsProp ?? fetchedAttachments ?? [];
+  const overdue = isOverdue(task.dueDate);
+  const terr = getTerritoryData(task.title);
+  const campaignName = task.campaignName || task.projectName || "";
+  const tag = task.tag || task.customStatusName || task.status;
+  const permalink = task.permalink || `https://www.wrike.com/open.htm?id=${task.id}`;
+
+  return (
+    <>
+      <div
+        className="fixed inset-0 bg-[#122027]/60 backdrop-blur-sm flex items-center justify-center z-[9999] p-4"
+        onClick={onClose}
+      >
+        <div
+          className="bg-white rounded-[24px] shadow-2xl w-full max-w-6xl max-h-[90vh] flex flex-col overflow-hidden border border-[#dce4ec]"
+          onClick={(e) => e.stopPropagation()}
+        >
+          {/* Header */}
+          <div className="px-6 py-4 border-b border-[#dce4ec] bg-slate-50/60 flex items-start justify-between gap-3 shrink-0">
+            <div className="min-w-0">
+              {campaignName && (
+                <p className="text-[9px] font-black uppercase text-[#12a0e1] tracking-widest mb-0.5">{campaignName}</p>
+              )}
+              <div className="flex items-center gap-2">
+                <span className="text-lg leading-none" title={terr.name}>{terr.flag}</span>
+                <h2 className="text-base font-black text-[#122027] leading-snug">{task.title}</h2>
+              </div>
+              <div className="flex items-center gap-2 mt-2 flex-wrap">
+                {tag && <span className={getTagStyle(tag)}>{tag}</span>}
+                {overdue && (
+                  <span className="text-[9px] font-black bg-rose-500 text-white px-1.5 py-0.5 rounded-full">OVERDUE</span>
+                )}
+                {task.dueDate && task.dueDate !== "No Due Date" && (
+                  <span className="text-[10px] font-bold text-slate-400">
+                    Due {new Date(task.dueDate).toLocaleDateString("en-GB", { day: "numeric", month: "short" })}
+                  </span>
+                )}
+              </div>
+            </div>
+            <button
+              onClick={onClose}
+              className="p-1.5 hover:bg-slate-100 rounded-xl text-slate-400 hover:text-slate-600 transition-colors shrink-0"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          </div>
+
+          {/* Two-column body */}
+          <div className="flex flex-1 min-h-0 overflow-hidden divide-x divide-[#dce4ec]">
+            {/* LEFT */}
+            <div className="flex-1 min-w-0 flex flex-col overflow-y-auto p-5 gap-4">
+              {enableTimeLog && (
+                <TimeLogPanel
+                  task={task}
+                  fullTask={fullTask}
+                  jobOptions={jobOptions}
+                  onLogTime={onLogTime}
+                  onLogged={(secs) => {
+                    triggerToast?.(`Logged ${fmtClock(secs)} to your timesheet.`, "success");
+                  }}
+                />
+              )}
+
+              {/* Latest amend note (for "To amend" tasks) */}
+              {(amendLoading || amendNote) && (
+                <div className="bg-rose-50 rounded-2xl border border-rose-200 overflow-hidden">
+                  <div className="flex items-center gap-2 px-4 py-2.5 border-b border-rose-200/70 bg-white/60">
+                    <MessageSquare className="w-3.5 h-3.5 text-rose-500" />
+                    <span className="text-[9px] font-black uppercase tracking-widest text-rose-500">Latest amend note</span>
+                    {amendNote?.author && (
+                      <span className="ml-auto text-[10px] font-bold text-rose-400">
+                        {amendNote.author}
+                        {amendNote.date && ` · ${new Date(amendNote.date).toLocaleDateString("en-GB", { day: "numeric", month: "short" })}`}
+                      </span>
+                    )}
+                  </div>
+                  <div className="p-4 max-h-48 overflow-y-auto">
+                    {amendLoading && !amendNote ? (
+                      <div className="flex items-center gap-2 text-xs text-rose-400">
+                        <div className="w-3.5 h-3.5 border-2 border-rose-200 border-t-rose-500 rounded-full animate-spin" />
+                        Fetching latest comment…
+                      </div>
+                    ) : amendNote?.text ? (
+                      <p className="text-xs text-slate-700 whitespace-pre-line leading-relaxed">{amendNote.text}</p>
+                    ) : (
+                      <p className="text-xs text-slate-400 italic">No comments on this task yet.</p>
+                    )}
+                  </div>
+                </div>
+              )}
+
+              <div className="bg-slate-50 rounded-2xl border border-slate-200/60 overflow-hidden">
+                <div className="flex items-center justify-between px-4 py-2.5 border-b border-slate-200/60 bg-white">
+                  <span className="text-[9px] font-black uppercase tracking-widest text-slate-400">Notes &amp; Context</span>
+                  <span className="text-[8px] font-black uppercase tracking-widest bg-[#12a0e1]/10 text-[#12a0e1] px-2 py-0.5 rounded-full border border-[#12a0e1]/20">
+                    WRIKE IMPORT
+                  </span>
+                </div>
+                <div className="p-4">
+                  {notes ? (
+                    <p className="text-xs text-slate-600 whitespace-pre-line leading-relaxed">{notes}</p>
+                  ) : (
+                    <p className="text-xs text-slate-400 italic">No description on this task</p>
+                  )}
+                </div>
+              </div>
+
+              {attachments.length > 0 && (
+                <div>
+                  <h3 className="text-[9px] font-black uppercase tracking-widest text-slate-400 mb-2.5">
+                    Files &amp; Attachments ({attachments.length})
+                  </h3>
+                  <div className="flex gap-3 flex-wrap">
+                    {attachments.map((att) => (
+                      <div key={att.id} className="flex flex-col items-center gap-1">
+                        <AttachmentThumb
+                          attachment={att}
+                          large
+                          onPreview={setPreviewFile}
+                          onSpecsParsed={({ specs, name }) => setDeliverySpecs({ specs, name })}
+                        />
+                        <p className="text-[8px] text-slate-400 font-bold truncate max-w-[96px] text-center">{att.name}</p>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* RIGHT */}
+            <div className="w-72 shrink-0 flex flex-col overflow-y-auto p-5 gap-4">
+              {links.length > 0 && (
+                <div>
+                  <h3 className="text-[9px] font-black uppercase tracking-widest text-slate-400 mb-2.5 flex items-center gap-1.5">
+                    <Link2 className="w-3 h-3" /> Links
+                  </h3>
+                  <div className="flex flex-col gap-1.5">
+                    {links.map((link, i) => {
+                      let label = link;
+                      try { label = new URL(link).hostname.replace(/^www\./, ""); } catch (_) {}
+                      return (
+                        <a key={i} href={link} target="_blank" rel="noreferrer"
+                          className="flex items-center gap-2 text-[11px] font-bold text-[#12a0e1] hover:text-[#0d8abf] bg-[#12a0e1]/5 hover:bg-[#12a0e1]/10 rounded-xl px-3 py-2 transition-all truncate">
+                          <ExternalLink className="w-3 h-3 shrink-0" />
+                          <span className="truncate">{label}</span>
+                        </a>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+
+              {folderPaths.length > 0 && (
+                <div>
+                  <h3 className="text-[9px] font-black uppercase tracking-widest text-slate-400 mb-2.5 flex items-center gap-1.5">
+                    <FolderOpen className="w-3 h-3" /> Folders
+                  </h3>
+                  <div className="flex flex-col gap-2">
+                    {folderPaths.map((fp, i) => <FolderRow key={i} fp={fp} />)}
+                  </div>
+                </div>
+              )}
+
+              {links.length === 0 && folderPaths.length === 0 && (
+                <div className="flex flex-col items-center justify-center h-full gap-2 text-slate-300">
+                  <Link2 className="w-6 h-6" />
+                  <p className="text-xs italic text-center">No links or folder paths found in description</p>
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* Bottom action bar */}
+          <div className="px-6 py-3 border-t border-[#dce4ec] bg-slate-50/60 flex items-center justify-between shrink-0">
+            <span className="text-[9px] font-black uppercase tracking-widest text-slate-400">
+              {attachments.length} {attachments.length === 1 ? "file" : "files"} · {links.length} {links.length === 1 ? "link" : "links"} · {folderPaths.length} {folderPaths.length === 1 ? "path" : "paths"}
+            </span>
+            <a href={permalink} target="_blank" rel="noreferrer"
+              className="flex items-center gap-1.5 text-[10px] font-black uppercase tracking-widest text-white bg-[#12a0e1] hover:bg-[#0d8abf] rounded-xl px-4 py-2 transition-all">
+              <ExternalLink className="w-3 h-3" /> Open in Wrike
+            </a>
+          </div>
+        </div>
+      </div>
+
+      <FilePreviewLightbox
+        file={previewFile}
+        onClose={() => setPreviewFile(null)}
+        allAttachments={attachments || []}
+        onNavigate={setPreviewFile}
+      />
+
+      {deliverySpecs && (
+        <DeliverySpecsModal
+          specs={deliverySpecs.specs}
+          pdfName={deliverySpecs.name}
+          onClose={() => setDeliverySpecs(null)}
+        />
+      )}
+    </>
+  );
+}
+
+function FolderRow({ fp }) {
+  const [copied, setCopied] = useState(false);
+  return (
+    <div className="group flex items-center gap-2 bg-slate-50 hover:bg-slate-100 border border-slate-200/60 rounded-xl px-3 py-2.5 transition-all">
+      <FolderOpen className="w-3.5 h-3.5 text-amber-500 shrink-0" />
+      <div className="flex-1 min-w-0">
+        <p className="text-[9px] font-black uppercase tracking-wider text-slate-500 truncate">{fp.title}</p>
+        <p className="text-[9px] text-slate-400 truncate font-mono">{fp.url}</p>
+      </div>
+      <button
+        onClick={() => {
+          navigator.clipboard.writeText(fp.url).catch(() => {});
+          setCopied(true);
+          setTimeout(() => setCopied(false), 1500);
+        }}
+        className="shrink-0 text-slate-400 hover:text-[#12a0e1] transition-colors"
+        title="Copy path"
+      >
+        {copied ? <Check className="w-3.5 h-3.5 text-emerald-500" /> : <Copy className="w-3.5 h-3.5" />}
+      </button>
+    </div>
+  );
+}

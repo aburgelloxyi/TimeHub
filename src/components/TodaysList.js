@@ -7,9 +7,12 @@ import {
   Film,
   RefreshCw,
   CalendarDays,
+  Paperclip,
+  ChevronDown,
 } from "lucide-react";
 import { TERRITORY_FLAGS, MOTION_TEAM_NAME_MAP } from "../constants";
 import { supabase } from "../lib/supabaseClient";
+import TaskDetailModal, { FilePreviewLightbox } from "./TaskDetailModal";
 
 const TEAM_MEMBERS = ["Antonio", "Aaron", "Jacqui", "Maria", "Nicholas", "Luke", "Turk"];
 
@@ -116,6 +119,95 @@ const sortTasksByStatus = (tasks) => {
   });
 };
 
+// Resolve a usable MIME type for a Wrike attachment (its download response is
+// often application/octet-stream, which makes the browser show a blank page).
+function mimeForAttachment(att) {
+  if (att.contentType && att.contentType !== "application/octet-stream") return att.contentType;
+  const ext = (att.name || "").split(".").pop().toLowerCase();
+  const MAP = {
+    pdf: "application/pdf", png: "image/png", jpg: "image/jpeg", jpeg: "image/jpeg",
+    gif: "image/gif", webp: "image/webp", bmp: "image/bmp", tiff: "image/tiff",
+    svg: "image/svg+xml", mp4: "video/mp4", mov: "video/quicktime", txt: "text/plain",
+  };
+  return MAP[ext] || "application/octet-stream";
+}
+
+function attachmentKind(att) {
+  const mime = mimeForAttachment(att);
+  if (mime.startsWith("image/")) return "image";
+  if (mime === "application/pdf") return "pdf";
+  if (mime.startsWith("video/")) return "video";
+  return "other";
+}
+
+function AttachmentThumb({ attachment, large = false, onPreview }) {
+  const [loading, setLoading] = useState(false);
+  const ext = (attachment.name || "").split(".").pop().toLowerCase();
+  const dim = large ? "w-24 h-24" : "w-14 h-14";
+  const kind = attachmentKind(attachment);
+
+  const { icon, bg } = kind === "pdf"
+    ? { icon: "📄", bg: "bg-red-50 border-red-200" }
+    : kind === "image"
+    ? { icon: "🖼️", bg: "bg-sky-50 border-sky-200" }
+    : kind === "video"
+    ? { icon: "🎬", bg: "bg-purple-50 border-purple-200" }
+    : ["psd","ai","eps","aep","prproj"].includes(ext)
+    ? { icon: "🎨", bg: "bg-orange-50 border-orange-200" }
+    : ["zip","rar","7z"].includes(ext)
+    ? { icon: "📦", bg: "bg-slate-100 border-slate-200" }
+    : ["doc","docx","txt"].includes(ext)
+    ? { icon: "📝", bg: "bg-blue-50 border-blue-200" }
+    : ["xls","xlsx","csv"].includes(ext)
+    ? { icon: "📊", bg: "bg-green-50 border-green-200" }
+    : { icon: "📎", bg: "bg-slate-50 border-slate-200" };
+
+  // The /tasks/{id}/attachments objects don't carry a usable `url`; build the
+  // documented download endpoint from the attachment id instead.
+  const downloadUrl = `https://www.wrike.com/api/v4/attachments/${attachment.id}/download`;
+
+  const handleOpen = async (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (loading) return;
+    const token = localStorage.getItem("wrike_personal_token");
+    if (!token) return;
+    setLoading(true);
+    try {
+      const res = await fetch(downloadUrl, { headers: { Authorization: `Bearer ${token}` } });
+      if (!res.ok) throw new Error("HTTP " + res.status);
+      const raw = await res.blob();
+      // Re-type the blob so the browser knows how to render it
+      const typed = new Blob([raw], { type: mimeForAttachment(attachment) });
+      const obj = URL.createObjectURL(typed);
+      onPreview?.({ url: obj, name: attachment.name, kind, isObjectUrl: true });
+    } catch (err) {
+      console.warn("Attachment preview failed:", err);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <button
+      onClick={handleOpen}
+      title={attachment.name}
+      className={`relative shrink-0 ${dim} rounded-xl border ${bg} flex flex-col items-center justify-center gap-1 hover:shadow-md hover:scale-105 transition-all`}
+    >
+      {loading ? (
+        <div className="w-4 h-4 border-2 border-slate-300 border-t-[#12a0e1] rounded-full animate-spin" />
+      ) : (
+        <>
+          <span className={large ? "text-3xl" : "text-xl"}>{icon}</span>
+          <span className="text-[7px] font-black text-slate-400 uppercase tracking-wide px-1 text-center leading-none">
+            {(ext || "file").slice(0, 6)}
+          </span>
+        </>
+      )}
+    </button>
+  );
+}
+
 export default function TodaysList({ wrikeData, triggerToast: _triggerToast, lastSynced, isSyncing: isGlobalSyncing }) {
   const triggerToast = _triggerToast ?? ((msg) => console.warn("Toast:", msg));
 
@@ -129,6 +221,20 @@ export default function TodaysList({ wrikeData, triggerToast: _triggerToast, las
   const [focusedPerson, setFocusedPerson] = useState(null);
   const [lastSaved, setLastSaved] = useState(null);
   const saveTimeout = useRef(null);
+
+  const [taskAttachments, setTaskAttachments] = useState({});
+  const [attachmentsLoading, setAttachmentsLoading] = useState(false);
+  const [showFilesPanel, setShowFilesPanel] = useState(false);
+  const [selectedTask, setSelectedTask] = useState(null);
+  const [previewFile, setPreviewFile] = useState(null);
+  const [previewAttachments, setPreviewAttachments] = useState([]);
+
+  // Revoke the object URL when the preview closes / changes
+  useEffect(() => {
+    return () => {
+      if (previewFile?.isObjectUrl) URL.revokeObjectURL(previewFile.url);
+    };
+  }, [previewFile]);
 
   const TIMEFRAMES = ["Today", "Tomorrow", "Next Week"];
 
@@ -163,6 +269,45 @@ export default function TodaysList({ wrikeData, triggerToast: _triggerToast, las
       } catch (e) { /* ignore */ }
     }
   }, []);
+
+  // Fetch attachments for all tasks currently on the board.
+  // Scoped to assigned tasks (~30) so we can fire one request per task without
+  // worrying about rate limits — no reliance on unreliable hasAttachments field.
+  useEffect(() => {
+    const token = localStorage.getItem("wrike_personal_token");
+    if (!token) return;
+
+    const boardTasks = Object.values(assignments).flat();
+    const seen = new Set();
+    const unique = boardTasks.filter(t => {
+      if (seen.has(t.id)) return false;
+      seen.add(t.id);
+      return true;
+    });
+
+    if (unique.length === 0) { setTaskAttachments({}); return; }
+
+    setAttachmentsLoading(true);
+    Promise.all(
+      unique.map(boardTask => {
+        const fullTask = wrikeData?.find(t => t.id === boardTask.id) || boardTask;
+        return fetch(
+          `https://www.wrike.com/api/v4/tasks/${boardTask.id}/attachments`,
+          { headers: { Authorization: `Bearer ${token}` } }
+        )
+          .then(r => r.json())
+          .then(data => ({ task: fullTask, attachments: data.data || [] }))
+          .catch(() => ({ task: fullTask, attachments: [] }));
+      })
+    ).then(results => {
+      const map = {};
+      results.forEach(({ task, attachments }) => {
+        if (attachments.length > 0) map[task.id] = { task, attachments };
+      });
+      setTaskAttachments(map);
+      setAttachmentsLoading(false);
+    });
+  }, [assignments, wrikeData]);
 
   // Debounced save whenever board state changes
   const saveBoardState = (newCampaigns, newAssignments, newTimeframe) => {
@@ -494,8 +639,58 @@ export default function TodaysList({ wrikeData, triggerToast: _triggerToast, las
             </div>
           </div>
 
+          {/* Files panel */}
+          {(attachmentsLoading || Object.keys(taskAttachments).length > 0) && (
+            <div className="bg-white rounded-2xl border border-[#dce4ec] shadow-sm overflow-hidden shrink-0">
+              <button
+                onClick={() => setShowFilesPanel(p => !p)}
+                className="w-full flex items-center gap-2 px-4 py-2.5 hover:bg-slate-50/60 transition-colors"
+              >
+                <Paperclip className="w-3.5 h-3.5 text-[#12a0e1]" />
+                <span className="text-sm font-black text-[#122027] tracking-tight">Upcoming Files</span>
+                <span className="text-[10px] font-bold text-[#768994] ml-1">
+                  {attachmentsLoading
+                    ? "Loading…"
+                    : `${Object.values(taskAttachments).reduce((s, { attachments }) => s + attachments.length, 0)} files · ${Object.keys(taskAttachments).length} tasks`}
+                </span>
+                <ChevronDown
+                  className={`w-3.5 h-3.5 text-slate-400 ml-auto transition-transform duration-200 ${showFilesPanel ? "" : "-rotate-90"}`}
+                />
+              </button>
+              {showFilesPanel && !attachmentsLoading && (
+                <div className="flex gap-6 px-4 pb-3 pt-0.5 overflow-x-auto">
+                  {Object.values(taskAttachments).map(({ task, attachments }) => (
+                    <div key={task.id} className="shrink-0 flex flex-col gap-1.5">
+                      <div>
+                        <p className="text-[9px] font-black uppercase tracking-widest text-[#12a0e1] truncate max-w-[200px]">
+                          {task.projectName || ""}
+                        </p>
+                        <a
+                          href={task.permalink || `https://www.wrike.com/open.htm?id=${task.id}`}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="text-[10px] font-bold text-[#122027] hover:text-[#12a0e1] truncate max-w-[200px] block transition-colors"
+                        >
+                          {task.title}
+                        </a>
+                      </div>
+                      <div className="flex gap-1.5 flex-wrap" style={{ maxWidth: 200 }}>
+                        {attachments.map(att => (
+                          <AttachmentThumb key={att.id} attachment={att} onPreview={(file) => {
+                            setPreviewFile(file);
+                            setPreviewAttachments(attachments);
+                          }} />
+                        ))}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+
           {/* 7 Team columns */}
-          <div className="flex-1 flex gap-3 overflow-hidden">
+          <div className="flex-1 min-h-0 flex gap-3 overflow-hidden">
             <div className="flex gap-3 w-full h-full">
               {TEAM_MEMBERS.map((person) => {
                 const tasks = assignments[person];
@@ -549,9 +744,10 @@ export default function TodaysList({ wrikeData, triggerToast: _triggerToast, las
                         return (
                           <div
                             key={task.id}
+                            onClick={() => setSelectedTask(task)}
                             className={`group relative rounded-xl border border-slate-200/80 border-l-4 ${getBorderColorClass(task.tag)} ${
                               overdue ? "bg-rose-50/40" : "bg-slate-50/60 hover:bg-white"
-                            } hover:shadow-md transition-all p-3`}
+                            } hover:shadow-md transition-all p-3 cursor-pointer`}
                           >
                             <div className="flex-1 min-w-0">
                               <p className="text-[9px] font-black uppercase text-[#12a0e1] tracking-widest mb-1 truncate pr-6">
@@ -559,24 +755,23 @@ export default function TodaysList({ wrikeData, triggerToast: _triggerToast, las
                               </p>
                               <div className="flex items-start gap-1 mb-2">
                                 <span className="text-sm leading-none shrink-0 mt-0.5" title={terr.name}>{terr.flag}</span>
-                                {task.permalink ? (
-                                  <a href={task.permalink} target="_blank" rel="noreferrer"
-                                    className="text-xs font-bold text-[#122027] hover:text-[#12a0e1] leading-snug break-words transition-colors">
-                                    {task.title}
-                                  </a>
-                                ) : (
-                                  <p className="text-xs font-bold text-[#122027] leading-snug break-words">{task.title}</p>
-                                )}
+                                <p className="text-xs font-bold text-[#122027] leading-snug break-words">{task.title}</p>
                               </div>
                               <div className="flex items-center gap-1.5 flex-wrap">
                                 <span className={getTagStyle(task.tag)}>{task.tag}</span>
                                 {overdue && (
                                   <span className="text-[9px] font-black bg-rose-500 text-white px-1.5 py-0.5 rounded-full">OVERDUE</span>
                                 )}
+                                {taskAttachments[task.id] && (
+                                  <span className="text-[9px] font-black text-slate-400 flex items-center gap-0.5">
+                                    <Paperclip className="w-2.5 h-2.5" />
+                                    {taskAttachments[task.id].attachments.length}
+                                  </span>
+                                )}
                               </div>
                             </div>
                             <button
-                              onClick={() => handleUnassign(task.id, person, task.campaignId)}
+                              onClick={e => { e.stopPropagation(); handleUnassign(task.id, person, task.campaignId); }}
                               className="absolute top-2 right-2 text-slate-300 hover:text-rose-500 hover:bg-rose-50 p-1 rounded-lg opacity-0 group-hover:opacity-100 transition-all"
                               title="Unassign"
                             >
@@ -594,6 +789,23 @@ export default function TodaysList({ wrikeData, triggerToast: _triggerToast, las
 
         </div>
       </div>
+
+      {/* Task detail modal (shared component — same as Profile Hub) */}
+      <TaskDetailModal
+        task={selectedTask}
+        wrikeData={wrikeData}
+        attachments={selectedTask ? taskAttachments[selectedTask.id]?.attachments : undefined}
+        onClose={() => setSelectedTask(null)}
+        triggerToast={triggerToast}
+      />
+
+    {/* File preview lightbox (Upcoming Files panel) */}
+    <FilePreviewLightbox
+      file={previewFile}
+      onClose={() => setPreviewFile(null)}
+      allAttachments={previewAttachments}
+      onNavigate={setPreviewFile}
+    />
     </div>
   );
 }

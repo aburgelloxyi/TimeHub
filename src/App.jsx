@@ -42,6 +42,7 @@ import AdminModal from "./components/AdminModal";
 
 export default function App() {
   const [activePage, setActivePage] = useState("timesheet");
+  const [profileSection, setProfileSection] = useState(null);
   const [hasToken, setHasToken] = useState(
     () => !!localStorage.getItem("wrike_personal_token")
   );
@@ -179,7 +180,7 @@ export default function App() {
     },
     {
       id: "nav-legacy",
-      title: "Legacy Sandbox",
+      title: "Legacy",
       desc: "Old timesheet database view",
       type: "Navigation",
       icon: Database,
@@ -347,7 +348,12 @@ export default function App() {
 
   return (
     <div className="min-h-screen bg-slate-100 transition-colors duration-300">
-      <PillNav activePage={activePage} setActivePage={setActivePage} />
+      <PillNav
+        activePage={activePage}
+        setActivePage={setActivePage}
+        hubSection={profileSection}
+        setHubSection={setProfileSection}
+      />
 
       {/* ── Onboarding modal ─────────────────────────────────────────────── */}
       {showOnboarding && (
@@ -652,6 +658,8 @@ export default function App() {
         <Profile
           wrikeData={globalWrikeData}
           onTokenChange={(val) => setHasToken(val)}
+          activeSection={profileSection}
+          setActiveSection={setProfileSection}
         />
       )}
     </div>

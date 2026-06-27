@@ -1,5 +1,11 @@
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import { setWrikeUserId } from "../lib/supabaseClient";
+
+// Lifetime stats are expensive to compute (full pagination of every completed
+// task), so we cache the three resulting counts per user and only re-run the
+// fetch in the background when the cache is older than this.
+const STATS_TTL_MS = 24 * 60 * 60 * 1000; // 24h
+const statsKey = (uid) => `xyi_lifetime_stats_${uid}`;
 
 /**
  * Fetches the current Wrike user from the personal token in localStorage.
@@ -13,7 +19,17 @@ export function useWrikeUser(wrikeData, triggerToast) {
     allTime: 0,
     loading: false,
     fetched: false,
+    syncedAt: null,
   });
+
+  // Keep toast callback in a ref so handleFetchLifetimeStats stays stable even
+  // if a caller (e.g. Tracker) passes a new triggerToast on every render.
+  const triggerToastRef = useRef(triggerToast);
+  useEffect(() => { triggerToastRef.current = triggerToast; });
+
+  // Tracks which user we've already hydrated/refreshed so the effect's side
+  // effects run at most once per user — immune to dependency churn.
+  const hydratedRef = useRef(null);
 
   useEffect(() => {
     const token = localStorage.getItem("wrike_personal_token");
@@ -45,58 +61,91 @@ export function useWrikeUser(wrikeData, triggerToast) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const handleFetchLifetimeStats = async () => {
-    if (!wrikeUser?.id) return;
-    const token = localStorage.getItem("wrike_personal_token");
-    setUserStats((prev) => ({ ...prev, loading: true }));
+  const handleFetchLifetimeStats = useCallback(
+    async (silent = false) => {
+      const uid = wrikeUser?.id;
+      if (!uid) return;
+      const token = localStorage.getItem("wrike_personal_token");
+      if (!token) return;
+      setUserStats((prev) => ({ ...prev, loading: true }));
 
-    try {
-      let rawTasks = [];
-      let nextPageToken = null;
-      let hasMore = true;
+      try {
+        let rawTasks = [];
+        let nextPageToken = null;
+        let hasMore = true;
 
-      while (hasMore) {
-        let url = `https://www.wrike.com/api/v4/tasks?responsibles=[${wrikeUser.id}]&status=Completed&pageSize=1000`;
-        if (nextPageToken) url += `&nextPageToken=${nextPageToken}`;
+        while (hasMore) {
+          let url = `https://www.wrike.com/api/v4/tasks?responsibles=[${uid}]&status=Completed&pageSize=1000`;
+          if (nextPageToken) url += `&nextPageToken=${nextPageToken}`;
 
-        const response = await fetch(url, {
-          headers: { Authorization: `Bearer ${token}` },
+          const response = await fetch(url, {
+            headers: { Authorization: `Bearer ${token}` },
+          });
+          const json = await response.json();
+          rawTasks = [...rawTasks, ...(json.data || [])];
+          nextPageToken = json.nextPageToken;
+          hasMore = !!nextPageToken;
+        }
+
+        const now = new Date();
+        const thirtyDaysAgo = new Date();
+        thirtyDaysAgo.setDate(now.getDate() - 30);
+        const startOfYear = new Date(now.getFullYear(), 0, 1);
+
+        let monthCount = 0;
+        let yearCount = 0;
+
+        rawTasks.forEach((task) => {
+          const d = new Date(
+            task.completedDate || task.updatedDate || task.createdDate || 0
+          );
+          if (d >= thirtyDaysAgo) monthCount++;
+          if (d >= startOfYear) yearCount++;
         });
-        const json = await response.json();
-        rawTasks = [...rawTasks, ...(json.data || [])];
-        nextPageToken = json.nextPageToken;
-        hasMore = !!nextPageToken;
+
+        const syncedAt = new Date().toISOString();
+        const counts = { month: monthCount, year: yearCount, allTime: rawTasks.length };
+        setUserStats({ ...counts, loading: false, fetched: true, syncedAt });
+        try {
+          localStorage.setItem(statsKey(uid), JSON.stringify({ ...counts, syncedAt }));
+        } catch (_) { /* storage full / disabled — non-fatal */ }
+        if (!silent) triggerToastRef.current?.("Lifetime stats synced!", "success");
+      } catch (err) {
+        setUserStats((prev) => ({ ...prev, loading: false }));
+        if (!silent) triggerToastRef.current?.("Failed to fetch stats.");
       }
+    },
+    [wrikeUser?.id]
+  );
 
-      const now = new Date();
-      const thirtyDaysAgo = new Date();
-      thirtyDaysAgo.setDate(now.getDate() - 30);
-      const startOfYear = new Date(now.getFullYear(), 0, 1);
+  // Load cached stats instantly, then refresh in the background when stale.
+  // Guarded so it runs its side effects at most once per user.
+  useEffect(() => {
+    const uid = wrikeUser?.id;
+    if (!uid || hydratedRef.current === uid) return;
+    hydratedRef.current = uid;
 
-      let monthCount = 0;
-      let yearCount = 0;
+    let cached = null;
+    try {
+      cached = JSON.parse(localStorage.getItem(statsKey(uid)) || "null");
+    } catch (_) { /* ignore parse errors */ }
 
-      rawTasks.forEach((task) => {
-        const d = new Date(
-          task.completedDate || task.updatedDate || task.createdDate || 0
-        );
-        if (d >= thirtyDaysAgo) monthCount++;
-        if (d >= startOfYear) yearCount++;
-      });
-
+    if (cached) {
       setUserStats({
-        month: monthCount,
-        year: yearCount,
-        allTime: rawTasks.length,
+        month: cached.month ?? 0,
+        year: cached.year ?? 0,
+        allTime: cached.allTime ?? 0,
         loading: false,
         fetched: true,
+        syncedAt: cached.syncedAt ?? null,
       });
-      triggerToast("Lifetime stats synced!", "success");
-    } catch (err) {
-      setUserStats((prev) => ({ ...prev, loading: false }));
-      triggerToast("Failed to fetch stats.");
     }
-  };
+
+    const ageMs = cached?.syncedAt ? Date.now() - new Date(cached.syncedAt).getTime() : Infinity;
+    if (ageMs > STATS_TTL_MS) {
+      handleFetchLifetimeStats(true); // background, no toast
+    }
+  }, [wrikeUser?.id, handleFetchLifetimeStats]);
 
   const completedTasksCount = useMemo(() => {
     if (!wrikeData || !wrikeUser?.firstName) return 0;

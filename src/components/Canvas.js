@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { supabase } from "../lib/supabaseClient";
 import { getFilmName } from "../lib/wrikeEnrich";
+import { FILM_MAPPINGS } from "../constants.js";
 import {
   Layout,
   Sparkles,
@@ -35,6 +36,7 @@ import {
   Star,
   LayoutGrid,
   List,
+  RefreshCw,
 } from "lucide-react";
 
 // --- DOOH country → region grouping ---
@@ -187,11 +189,12 @@ const parseFormatting = (text) => {
   return html;
 };
 
-export default function CampaignCanvas({ wrikeData = [], folderCampaigns = [], triggerToast: _triggerToast, isLoading = false }) {
+export default function CampaignCanvas({ wrikeData = [], folderCampaigns = [], triggerToast: _triggerToast, isLoading = false, syncNow, isSyncing = false, isAdmin = false, scanFilmMappings, isScanning = false, filmCodeMappings = {} }) {
   const triggerToast = _triggerToast ?? ((msg) => console.warn("Toast:", msg));
   const [campaigns, setCampaigns] = useState(INITIAL_CAMPAIGNS);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [selectedMatrix, setSelectedMatrix] = useState(null);
+  const [showMappingsPanel, setShowMappingsPanel] = useState(false);
 
   // --- COMMAND PALETTE STATE ---
   const [isPaletteOpen, setIsPaletteOpen] = useState(false);
@@ -1234,6 +1237,82 @@ export default function CampaignCanvas({ wrikeData = [], folderCampaigns = [], t
         </div>
       )}
 
+      {/* --- FILM MAPPINGS PANEL (admin only) --- */}
+      {showMappingsPanel && (() => {
+        const hardcoded = FILM_MAPPINGS || {};
+        const discovered = filmCodeMappings || {};
+        const allCodes = [...new Set([...Object.keys(hardcoded), ...Object.keys(discovered)])].sort();
+        return (
+          <div
+            className="fixed inset-0 z-[300] flex items-start justify-center pt-[10vh] p-4 bg-[#122027]/60 backdrop-blur-sm animate-in fade-in duration-200"
+            onClick={() => setShowMappingsPanel(false)}
+          >
+            <div
+              className="bg-white rounded-3xl w-full max-w-2xl shadow-2xl flex flex-col border border-[#dce4ec] overflow-hidden max-h-[80vh]"
+              onClick={(e) => e.stopPropagation()}
+            >
+              {/* Header */}
+              <div className="p-5 border-b border-[#dce4ec] flex items-center justify-between bg-slate-50/50 shrink-0">
+                <div className="flex items-center gap-3">
+                  <div className="bg-gradient-to-br from-[#12a0e1] to-[#1cc1a5] p-2.5 rounded-xl text-white shadow">
+                    <Film className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <h3 className="text-base font-black text-[#122027] tracking-tight">Film Code Mappings</h3>
+                    <p className="text-[11px] text-[#768994] font-medium mt-0.5">
+                      {Object.keys(hardcoded).length} hardcoded · {Object.keys(discovered).length} discovered · {allCodes.length} total
+                    </p>
+                  </div>
+                </div>
+                <button onClick={() => setShowMappingsPanel(false)} className="text-[#768994] hover:text-[#122027] p-1.5 rounded-xl hover:bg-slate-100 transition-colors">
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+              {/* Table */}
+              <div className="overflow-y-auto custom-scrollbar">
+                <table className="w-full text-sm">
+                  <thead className="sticky top-0 bg-white border-b border-[#dce4ec]">
+                    <tr>
+                      <th className="text-left px-5 py-3 text-[10px] font-black tracking-widest text-[#768994] uppercase w-28">Code</th>
+                      <th className="text-left px-5 py-3 text-[10px] font-black tracking-widest text-[#768994] uppercase">Film Name</th>
+                      <th className="text-right px-5 py-3 text-[10px] font-black tracking-widest text-[#768994] uppercase">Source</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {allCodes.map((code, i) => {
+                      const isHardcoded = !!hardcoded[code];
+                      const name = hardcoded[code] || discovered[code];
+                      return (
+                        <tr key={code} className={i % 2 === 0 ? "bg-white" : "bg-slate-50/60"}>
+                          <td className="px-5 py-3">
+                            <span className="font-mono text-xs font-black text-[#122027] bg-slate-100 px-2 py-1 rounded-lg border border-slate-200">
+                              {code}
+                            </span>
+                          </td>
+                          <td className="px-5 py-3 font-semibold text-[#122027]">{name}</td>
+                          <td className="px-5 py-3 text-right">
+                            {isHardcoded ? (
+                              <span className="text-[10px] font-black uppercase tracking-widest text-blue-600 bg-blue-50 border border-blue-100 px-2 py-1 rounded-full">Hardcoded</span>
+                            ) : (
+                              <span className="text-[10px] font-black uppercase tracking-widest text-emerald-600 bg-emerald-50 border border-emerald-100 px-2 py-1 rounded-full">Discovered</span>
+                            )}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+                {allCodes.length === 0 && (
+                  <div className="p-12 text-center text-[#768994] text-sm font-medium">
+                    No mappings yet — run <strong>Map Films</strong> to discover them.
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
       <div className="max-w-[1800px] mx-auto px-4 sm:px-6 pt-8">
         <header className="bg-white shadow-sm border border-[#dce4ec] rounded-[2rem] p-6 sm:px-8 flex flex-col md:flex-row items-start md:items-center justify-between gap-5 relative overflow-hidden">
           <div className="flex items-center gap-4">
@@ -1252,6 +1331,40 @@ export default function CampaignCanvas({ wrikeData = [], folderCampaigns = [], t
               </div>
             </div>
           </div>
+          {isAdmin && (
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => setShowMappingsPanel(true)}
+                title="View all film code mappings (admin only)"
+                className="flex items-center gap-2 bg-slate-100 hover:bg-slate-200 text-[#768994] hover:text-[#122027] border border-[#dce4ec] px-4 py-2.5 rounded-xl text-xs font-bold transition-all active:scale-95"
+              >
+                <List className="w-3.5 h-3.5" />
+                {Object.keys(filmCodeMappings).length + Object.keys(FILM_MAPPINGS || {}).length} Codes
+              </button>
+              {scanFilmMappings && (
+                <button
+                  onClick={scanFilmMappings}
+                  disabled={isScanning || isSyncing}
+                  title="Scan all Wrike tasks to discover film code mappings (admin only)"
+                  className="flex items-center gap-2 bg-slate-100 hover:bg-slate-200 text-[#768994] hover:text-[#122027] border border-[#dce4ec] px-4 py-2.5 rounded-xl text-xs font-bold transition-all disabled:opacity-50 active:scale-95"
+                >
+                  <Search className={`w-3.5 h-3.5 ${isScanning ? "animate-pulse" : ""}`} />
+                  {isScanning ? "Scanning…" : "Map Films"}
+                </button>
+              )}
+              {syncNow && (
+                <button
+                  onClick={syncNow}
+                  disabled={isSyncing || isScanning}
+                  title="Force full Wrike sync (admin only)"
+                  className="flex items-center gap-2 bg-slate-100 hover:bg-slate-200 text-[#768994] hover:text-[#122027] border border-[#dce4ec] px-4 py-2.5 rounded-xl text-xs font-bold transition-all disabled:opacity-50 active:scale-95"
+                >
+                  <RefreshCw className={`w-3.5 h-3.5 ${isSyncing ? "animate-spin" : ""}`} />
+                  {isSyncing ? "Syncing…" : "Sync Wrike"}
+                </button>
+              )}
+            </div>
+          )}
         </header>
 
         {/* --- PERFECTLY CENTERED ICON DOCK --- */}

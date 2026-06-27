@@ -398,7 +398,7 @@ function OverviewSection({
       .then(([lRes, tRes]) => Promise.all([lRes.json(), tRes.json()]))
       .then(async ([lJson, tJson]) => {
         const loggedIds = new Set(
-          tasks.map((t) => t.wrikeTimelogId).filter(Boolean)
+          tasks.flatMap((t) => t.wrikeTimelogId ? t.wrikeTimelogId.split(",") : [])
         );
 
         const recentLogs = (lJson.data || [])
@@ -473,7 +473,7 @@ function OverviewSection({
 
   // Merge: Wrike activity on top, then local logged tasks not already represented
   const loggedTimelogIds = new Set(
-    tasks.map((t) => t.wrikeTimelogId).filter(Boolean)
+    tasks.flatMap((t) => t.wrikeTimelogId ? t.wrikeTimelogId.split(",") : [])
   );
   const localFallback = [...tasks]
     .sort((a, b) => b.id - a.id)

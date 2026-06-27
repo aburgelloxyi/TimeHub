@@ -660,6 +660,7 @@ export const FILM_MAPPINGS = {
   HTYD: "How To Train Your Dragon",
   JWR: "Jurassic World Rebirth",
   TR3: "Trolls 3 Band Together",
+  STH4: "Sonic The Hedgehog 4",
 };
 
 export const MOTION_TEAM_NAME_MAP = {

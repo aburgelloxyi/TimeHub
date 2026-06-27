@@ -50,16 +50,7 @@ export const guessFieldsFromTask = (linkedTask, jobOptions = [], extraText = "")
       }
     }
   }
-  // Fallback: extract film name from job number "Film Name : CODE, Description"
-  if (!filmTitle && guessedJob && guessedJob !== "⚠️ Unassigned") {
-    const jobColonMatch = guessedJob.match(/^([^:]+)\s*:/);
-    if (jobColonMatch) filmTitle = jobColonMatch[1].trim();
-  }
   if (!filmTitle) filmTitle = titleText.split(/[_|-]/)[0]?.trim() || "";
-  // Normalize all-caps titles (e.g. server folder names "THE ODYSSEY" → "The Odyssey")
-  if (filmTitle && filmTitle === filmTitle.toUpperCase() && filmTitle !== filmTitle.toLowerCase()) {
-    filmTitle = filmTitle.replace(/\w\S*/g, (w) => w[0].toUpperCase() + w.slice(1).toLowerCase());
-  }
 
   let customFieldsText = "";
   if (linkedTask.customFields) {
@@ -117,6 +108,17 @@ export const guessFieldsFromTask = (linkedTask, jobOptions = [], extraText = "")
         break;
       }
     }
+  }
+
+  // Fallback: extract film name from job number "Film Name : CODE, Description"
+  if (!filmTitle && guessedJob && guessedJob !== "⚠️ Unassigned") {
+    const jobColonMatch = guessedJob.match(/^([^:]+)\s*:/);
+    if (jobColonMatch) filmTitle = jobColonMatch[1].trim();
+  }
+  if (!filmTitle) filmTitle = titleText.split(/[_|-]/)[0]?.trim() || "";
+  // Normalize all-caps titles (e.g. server folder names "THE ODYSSEY" → "The Odyssey")
+  if (filmTitle && filmTitle === filmTitle.toUpperCase() && filmTitle !== filmTitle.toLowerCase()) {
+    filmTitle = filmTitle.replace(/\w\S*/g, (w) => w[0].toUpperCase() + w.slice(1).toLowerCase());
   }
 
   // --- Client guess (same rules as Legacy pull) ---

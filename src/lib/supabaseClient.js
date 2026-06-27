@@ -28,7 +28,11 @@ export async function fetchExistingTimelogIds(wrikeUserId) {
     .not("wrike_timelog_id", "is", null);
   if (wrikeUserId) query = query.eq("wrike_user_id", wrikeUserId);
   const { data } = await query;
-  return new Set((data ?? []).map((r) => r.wrike_timelog_id));
+  return new Set(
+    (data ?? []).flatMap((r) =>
+      r.wrike_timelog_id ? r.wrike_timelog_id.split(",") : []
+    )
+  );
 }
 
 /**

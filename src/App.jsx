@@ -56,10 +56,13 @@ export default function App() {
   const {
     tasks: globalWrikeData,
     folderCampaigns,
+    filmCodeMappings,
     isSyncing,
+    isScanning,
     lastSynced,
     syncError,
     syncNow,
+    scanFilmMappings,
   } = useWrikeCache();
 
   // Global toast — available to all pages (top-right pill via ToastHost)
@@ -625,6 +628,12 @@ export default function App() {
             !!localStorage.getItem("wrike_personal_token") &&
             globalWrikeData.length === 0
           }
+          syncNow={syncNow}
+          isSyncing={isSyncing}
+          isAdmin={isAdmin}
+          scanFilmMappings={scanFilmMappings}
+          isScanning={isScanning}
+          filmCodeMappings={filmCodeMappings}
         />
       )}
       {activePage === "wriketest" && (
@@ -637,7 +646,7 @@ export default function App() {
         />
       )}
       {activePage === "legacy" && (
-        <LegacyTimesheet wrikeData={globalWrikeData} />
+        <LegacyTimesheet wrikeData={globalWrikeData} isAdmin={isAdmin} />
       )}
       {activePage === "profile" && (
         <Profile

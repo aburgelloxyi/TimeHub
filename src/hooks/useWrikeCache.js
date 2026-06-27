@@ -6,7 +6,9 @@ import {
   hydrateMissingFolders,
   parseWrikeData,
   getStudioName,
+  getFilmName,
   buildChildToParent,
+  buildFilmCodeMappings,
 } from "../lib/wrikeEnrich";
 
 const FIELDS_FILTER = encodeURIComponent(
@@ -138,7 +140,7 @@ function deriveFolderCampaigns(folderDictionary) {
       seen.add(childId);
       const child = folderDictionary[childId];
       if (!child?.title) continue;
-      const title = child.title.trim();
+      const title = child.title.trim().replace(/_/g, " ");
       if (!title || title.startsWith("_") || title.toUpperCase().includes("ARCHIVE") || title.toUpperCase().includes("TEMPLATE")) continue;
       campaigns.push({
         id: `folder-${childId}`,
@@ -162,10 +164,13 @@ function deriveFolderCampaigns(folderDictionary) {
 export function useWrikeCache() {
   const [tasks, setTasks]                       = useState([]);
   const [folderCampaigns, setFolderCampaigns]   = useState([]);
+  const [filmCodeMappings, setFilmCodeMappings] = useState({});
   const [isSyncing, setIsSyncing]               = useState(false);
+  const [isScanning, setIsScanning]             = useState(false);
   const [lastSynced, setLastSynced]             = useState(null);
   const [syncError, setSyncError]               = useState(null);
-  const syncingRef = useRef(false);
+  const syncingRef  = useRef(false);
+  const scanningRef = useRef(false);
 
   const wrikeUserId = localStorage.getItem("wrike_user_id");
   const token       = localStorage.getItem("wrike_personal_token");
@@ -205,11 +210,14 @@ export function useWrikeCache() {
       // Load latest meta (sync time + dicts for re-enrichment)
       const { data: meta } = await supabase
         .from("wrike_sync_meta")
-        .select("last_synced_at,folder_dictionary,contact_dictionary,status_dictionary")
+        .select("last_synced_at,folder_dictionary,contact_dictionary,status_dictionary,film_code_mappings")
         .order("last_synced_at", { ascending: false })
         .limit(1)
         .single();
       if (meta?.last_synced_at) setLastSynced(new Date(meta.last_synced_at));
+      if (meta?.film_code_mappings && Object.keys(meta.film_code_mappings).length) {
+        setFilmCodeMappings(meta.film_code_mappings);
+      }
 
       // --- SELF-HEAL + STUDIO BACKFILL ---
       // MATRIX tasks that predate parentIds in FIELDS_FILTER have parentIds=undefined.
@@ -369,6 +377,7 @@ export function useWrikeCache() {
       let folderDictionary  = meta?.folder_dictionary  || {};
       let contactDictionary = meta?.contact_dictionary || {};
       let statusDictionary  = meta?.status_dictionary  || {};
+      const existingFilmMappings = meta?.film_code_mappings || {};
 
       if (needsMetaRefresh) {
         ({ folderDictionary, contactDictionary, statusDictionary } = await fetchWrikeMeta(token));
@@ -415,7 +424,7 @@ export function useWrikeCache() {
       }
 
       // Enrich the relevant set (parses description → tableHtml + notesText)
-      const filtered = enrichTasks(relevant, folderDictionary, contactDictionary, statusDictionary, childToParent);
+      const filtered = enrichTasks(relevant, folderDictionary, contactDictionary, statusDictionary, childToParent, existingFilmMappings);
 
       // Upsert to Supabase in batches
       if (filtered.length > 0) {
@@ -431,6 +440,14 @@ export function useWrikeCache() {
         }
       }
 
+      // Collect code→filmName mappings discovered in this sync and merge with existing
+      const newMappings = buildFilmCodeMappings(filtered);
+      const mergedFilmMappings = { ...existingFilmMappings, ...newMappings };
+      if (Object.keys(newMappings).length > 0) {
+        setFilmCodeMappings(mergedFilmMappings);
+        console.log(`[WrikeCache] film code mappings: ${Object.keys(mergedFilmMappings).length} total, ${Object.keys(newMappings).length} new this sync`);
+      }
+
       // Persist updated meta
       await supabase.from("wrike_sync_meta").upsert({
         wrike_user_id: userId,
@@ -438,6 +455,7 @@ export function useWrikeCache() {
         folder_dictionary:  needsMetaRefresh ? folderDictionary  : (meta?.folder_dictionary  ?? {}),
         contact_dictionary: needsMetaRefresh ? contactDictionary : (meta?.contact_dictionary ?? {}),
         status_dictionary:  needsMetaRefresh ? statusDictionary  : (meta?.status_dictionary  ?? {}),
+        film_code_mappings: mergedFilmMappings,
       });
 
       // Merge new tasks into state, then backfill studioName on any task still missing it.
@@ -490,5 +508,109 @@ export function useWrikeCache() {
 
   const syncNow = useCallback(() => sync({ fullRefresh: true }), [sync]);
 
-  return { tasks, folderCampaigns, isSyncing, lastSynced, syncError, syncNow };
+  // --- Broad film-code mapping scan (all tasks, not just Motion-filtered) ---
+  // Fetches every task from the last 2 years with minimal fields (parentIds only),
+  // runs getFilmName via tree-climb on each, and persists newly discovered code→name
+  // pairs without touching last_synced_at or the task cache.
+  const scanFilmMappings = useCallback(async () => {
+    if (!token) return;
+    if (scanningRef.current) return;
+    scanningRef.current = true;
+    setIsScanning(true);
+
+    try {
+      // Load existing mappings + folder dict from Supabase
+      const { data: meta } = await supabase
+        .from("wrike_sync_meta")
+        .select("folder_dictionary, film_code_mappings, wrike_user_id")
+        .order("last_synced_at", { ascending: false })
+        .limit(1)
+        .single();
+
+      let fd = meta?.folder_dictionary || {};
+      const existingMappings = meta?.film_code_mappings || filmCodeMappings;
+      const userId = meta?.wrike_user_id || wrikeUserId;
+
+      // Fetch a fresh folder dict if the cached one is too sparse to tree-climb
+      if (Object.keys(fd).length < 100) {
+        const FF = encodeURIComponent("[childIds]");
+        let url = `https://www.wrike.com/api/v4/folders?fields=${FF}`;
+        while (url) {
+          try {
+            const r = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
+            if (!r.ok) break;
+            const j = await r.json();
+            j.data?.forEach((f) => { fd[f.id] = { id: f.id, title: f.title, childIds: f.childIds || [] }; });
+            url = j.nextPageToken
+              ? `https://www.wrike.com/api/v4/folders?fields=${FF}&nextPageToken=${j.nextPageToken}`
+              : null;
+          } catch { break; }
+        }
+        console.log(`[FilmScan] fetched ${Object.keys(fd).length} folders`);
+      }
+
+      // Build reverse childId→parentId map so getFilmName can climb deep hierarchies
+      // even when the flat folder list only returned childIds (not parentIds).
+      const childToParent = buildChildToParent(fd);
+
+      // Fetch all tasks updated in the last 2 years — minimal fields (parentIds only,
+      // no descriptions) so the response is fast and lightweight.
+      const SCAN_FIELDS = encodeURIComponent("[parentIds]");
+      const since = new Date(Date.now() - 2 * 365 * 24 * 60 * 60 * 1000)
+        .toISOString().split(".")[0] + "Z";
+      const dateFilter = encodeURIComponent(`{"start":"${since}"}`);
+
+      let allTasks = [];
+      let nextPageToken = null;
+      while (true) {
+        const url = nextPageToken
+          ? `https://www.wrike.com/api/v4/tasks?nextPageToken=${nextPageToken}`
+          : `https://www.wrike.com/api/v4/tasks?fields=${SCAN_FIELDS}&updatedDate=${dateFilter}&pageSize=1000`;
+        const r = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
+        if (!r.ok) { console.warn("[FilmScan] task fetch failed", r.status); break; }
+        const j = await r.json();
+        allTasks = [...allTasks, ...(j.data || [])];
+        nextPageToken = j.nextPageToken;
+        if (!nextPageToken) break;
+      }
+      console.log(`[FilmScan] ${allTasks.length} tasks to scan`);
+
+      const newMappings = {};
+      for (const task of allTasks) {
+        if (!task.title) continue;
+        const rawPrefix = task.title.split(/[_|-]/)[0].trim();
+        // Only well-formed codes (2–8 uppercase alphanumeric chars starting with a letter)
+        if (!/^[A-Z][A-Z0-9]{1,7}$/.test(rawPrefix)) continue;
+        // Skip codes we already know
+        if (existingMappings[rawPrefix] || newMappings[rawPrefix]) continue;
+
+        const filmName = getFilmName(task, fd, "", {}, childToParent);
+        if (!filmName || filmName === "Unknown Project") continue;
+
+        // Skip if the result is just the title-cased prefix (raw fallback, not useful)
+        const fallbackName = rawPrefix.charAt(0) + rawPrefix.slice(1).toLowerCase();
+        if (filmName === fallbackName) continue;
+
+        newMappings[rawPrefix] = filmName;
+      }
+
+      const merged = { ...existingMappings, ...newMappings };
+      setFilmCodeMappings(merged);
+      console.log(`[FilmScan] ${Object.keys(newMappings).length} new mappings, ${Object.keys(merged).length} total`);
+
+      if (userId) {
+        await supabase
+          .from("wrike_sync_meta")
+          .update({ film_code_mappings: merged })
+          .eq("wrike_user_id", userId);
+      }
+    } catch (err) {
+      console.error("[FilmScan] failed:", err);
+    } finally {
+      scanningRef.current = false;
+      setIsScanning(false);
+    }
+  }, [token, wrikeUserId, filmCodeMappings]);
+
+  return { tasks, folderCampaigns, filmCodeMappings, isSyncing, isScanning, lastSynced, syncError, syncNow, scanFilmMappings };
 }

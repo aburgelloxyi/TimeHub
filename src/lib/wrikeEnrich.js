@@ -42,10 +42,14 @@ export function parseWrikeData(htmlString) {
 // ---------------------------------------------------------------------------
 // Climb the folder tree to find the film name for a task
 // ---------------------------------------------------------------------------
-export function getFilmName(task, folderDictionary, extractedPath = "") {
+export function getFilmName(task, folderDictionary, extractedPath = "", extraMappings = {}, childToParent = {}) {
   if (!task.title) return "Unknown Project";
 
-  // 1. Tree-climb: find "DIGITAL" folder, then take its parent as film name
+  // 1. Tree-climb: find "DIGITAL" or "PRINT" folder, then take its parent as film name.
+  // Folders fetched individually (hydration) carry parentIds; the flat /folders list only
+  // returns childIds. When parentIds is absent we fall back to the reverse childToParent map
+  // built from childIds, so deep hierarchies (task → Job folder → INTL → PRINT → Film) work
+  // even when the folder dictionary came from the lightweight flat-list endpoint.
   if (task.parentIds?.length > 0) {
     let queue = [...task.parentIds];
     let visited = new Set(queue);
@@ -56,8 +60,13 @@ export function getFilmName(task, folderDictionary, extractedPath = "") {
       const currentFolder = folderDictionary[currentId];
       if (!currentFolder) continue;
 
-      if (currentFolder.title?.trim().toUpperCase() === "DIGITAL") {
-        for (const pid of currentFolder.parentIds || []) {
+      // Prefer stored parentIds; fall back to reverse childToParent map
+      const parentIds = currentFolder.parentIds?.length
+        ? currentFolder.parentIds
+        : childToParent[currentId] ? [childToParent[currentId]] : [];
+
+      if (["DIGITAL", "PRINT"].includes(currentFolder.title?.trim().toUpperCase())) {
+        for (const pid of parentIds) {
           const pName = folderDictionary[pid]?.title || "";
           const pUpper = pName.toUpperCase();
           if (
@@ -76,7 +85,7 @@ export function getFilmName(task, folderDictionary, extractedPath = "") {
         if (foundFilmName) break;
       }
 
-      for (const pid of currentFolder.parentIds || []) {
+      for (const pid of parentIds) {
         if (!visited.has(pid)) {
           visited.add(pid);
           queue.push(pid);
@@ -98,7 +107,7 @@ export function getFilmName(task, folderDictionary, extractedPath = "") {
   // 2. Path fallback
   if (extractedPath) {
     const parts = extractedPath.split("/");
-    const digIdx = parts.findIndex((p) => p.toUpperCase() === "DIGITAL");
+    const digIdx = parts.findIndex((p) => ["DIGITAL", "PRINT"].includes(p.toUpperCase()));
     if (digIdx > 0) {
       let back = digIdx - 1;
       while (
@@ -125,6 +134,7 @@ export function getFilmName(task, folderDictionary, extractedPath = "") {
   const rawPrefix = task.title.split(/[_|-]/)[0].trim();
   const lookupKey = rawPrefix.toUpperCase();
   if (FILM_MAPPINGS?.[lookupKey]) return FILM_MAPPINGS[lookupKey];
+  if (extraMappings?.[lookupKey]) return extraMappings[lookupKey];
 
   return rawPrefix
     .toLowerCase()
@@ -222,7 +232,7 @@ export function filterToMotionTeam(tasks, folderDictionary, contactDictionary) {
 // ---------------------------------------------------------------------------
 // Enrich raw Wrike tasks with computed fields (film name, paths, status, etc.)
 // ---------------------------------------------------------------------------
-export function enrichTasks(rawTasks, folderDictionary, contactDictionary, statusDictionary, childToParent = {}) {
+export function enrichTasks(rawTasks, folderDictionary, contactDictionary, statusDictionary, childToParent = {}, extraMappings = {}) {
   return rawTasks.map((task) => {
     const parsed = parseWrikeData(task.description);
     delete task.description;
@@ -232,7 +242,7 @@ export function enrichTasks(rawTasks, folderDictionary, contactDictionary, statu
       extractedPathData: parsed.extractedPathData,
       tableHtml: parsed.tableHtml,
       notesText: parsed.notesText,
-      projectName: getFilmName(task, folderDictionary, parsed.extractedPathData),
+      projectName: getFilmName(task, folderDictionary, parsed.extractedPathData, extraMappings, childToParent),
       studioName: getStudioName(task, folderDictionary, childToParent),
       assignees: (task.responsibleIds || [])
         .map((id) => contactDictionary[id] || "User")
@@ -243,6 +253,26 @@ export function enrichTasks(rawTasks, folderDictionary, contactDictionary, statu
       dueDate: task.dates?.due ?? "No Due Date",
     };
   });
+}
+
+// ---------------------------------------------------------------------------
+// Build a code→filmName map from already-enriched tasks.
+// Only records entries where the name was actually resolved (tree/path/dict),
+// not ones that fell through to the raw title prefix fallback.
+// ---------------------------------------------------------------------------
+export function buildFilmCodeMappings(enrichedTasks) {
+  const mappings = {};
+  for (const task of enrichedTasks) {
+    if (!task.title || !task.projectName || task.projectName === "Unknown Project") continue;
+    const rawPrefix = task.title.split(/[_|-]/)[0].trim();
+    // Only all-uppercase codes like NVC, ODY, WK2, COBAB (2–8 chars, starts with letter)
+    if (!/^[A-Z][A-Z0-9]{1,7}$/.test(rawPrefix)) continue;
+    // Skip if projectName is just the title-cased prefix — that's the raw fallback, not useful
+    const fallbackName = rawPrefix.charAt(0) + rawPrefix.slice(1).toLowerCase();
+    if (task.projectName === fallbackName) continue;
+    if (!mappings[rawPrefix]) mappings[rawPrefix] = task.projectName;
+  }
+  return mappings;
 }
 
 // ---------------------------------------------------------------------------

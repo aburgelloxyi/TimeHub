@@ -24,6 +24,7 @@ import {
   Copy,
   Plus,
   Layers,
+  Calendar,
 } from "lucide-react";
 import {
   DEFAULT_JOBS,
@@ -415,7 +416,7 @@ const TableSearchableSelect = ({
   );
 };
 
-export default function LegacyTimesheet({ wrikeData }) {
+export default function LegacyTimesheet({ wrikeData, isAdmin = false }) {
   const [activeDay, setActiveDay] = useState(() => {
     return localStorage.getItem("xyi_legacy_activeDay") || "Monday";
   });
@@ -438,6 +439,12 @@ export default function LegacyTimesheet({ wrikeData }) {
   }, [frozenDays]);
 
   const [isPulling, setIsPulling] = useState(false);
+  const [showDebugPull, setShowDebugPull] = useState(false);
+  const [debugDate, setDebugDate] = useState(() => {
+    const d = new Date();
+    d.setDate(d.getDate() - 1);
+    return d.toISOString().split("T")[0];
+  });
   const [jsonCopied, setJsonCopied] = useState(false);
 
   const [wrikeFullName, setWrikeFullName] = useState("");
@@ -1266,7 +1273,7 @@ export default function LegacyTimesheet({ wrikeData }) {
     return recovered;
   };
 
-  const handlePullTimes = async () => {
+  const handlePullTimes = async (dateStr = null) => {
     const token = localStorage.getItem("wrike_personal_token");
     if (!token) {
       showToast("Please set your Wrike token in the API tab first.");
@@ -1283,20 +1290,20 @@ export default function LegacyTimesheet({ wrikeData }) {
       if (!currentTasks) currentTasks = activeWrikeData;
 
       // Use contacts-scoped endpoint — avoids the broken trackedDate query param
-      // Filter to today client-side using local date string
+      // Filter to target date client-side using local date string
       const now = new Date();
       const todayStr = `${now.getFullYear()}-${String(
         now.getMonth() + 1
       ).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
+      const targetDateStr = dateStr || todayStr;
 
       const res = await fetch(
         `https://www.wrike.com/api/v4/contacts/${wrikeUserId}/timelogs`,
         { headers: { Authorization: `Bearer ${token}` } }
       );
       const json = await res.json();
-      // Filter to today only using local date string (avoids UTC-midnight shift)
       const logs = (json.data || []).filter(
-        (l) => l.trackedDate?.split("T")[0] === todayStr
+        (l) => l.trackedDate?.split("T")[0] === targetDateStr
       );
 
       // Recover any tasks where the user was removed as a responsible —
@@ -1332,15 +1339,16 @@ export default function LegacyTimesheet({ wrikeData }) {
         if (frozenDays[dayOfWeek]) return;
         const key = `${log.taskId}_${dayOfWeek}`;
         if (!grouped[key]) {
-          grouped[key] = { log, logDate, dayOfWeek, totalHours: 0, notes: "" };
+          grouped[key] = { log, logDate, dayOfWeek, totalHours: 0, notes: "", allIds: [] };
         }
+        grouped[key].allIds.push(log.id);
         grouped[key].totalHours += log.hours;
         if (!grouped[key].notes && log.comment)
           grouped[key].notes = log.comment;
       });
 
       Object.values(grouped).forEach(
-        ({ log, logDate, dayOfWeek, totalHours, notes }) => {
+        ({ log, logDate, dayOfWeek, totalHours, notes, allIds }) => {
           const task = currentTasks.find((t) => t.id === log.taskId);
           const guessed = guessFieldsFromTask(task);
 
@@ -1394,7 +1402,7 @@ export default function LegacyTimesheet({ wrikeData }) {
 
           newRows.push({
             id: Date.now() + Math.floor(Math.random() * 1000),
-            wrikeTimelogId: log.id,
+            wrikeTimelogId: allIds.join(","),
             taskId: task?.id,
             dayOfWeek,
             date: logDate.toLocaleDateString("en-GB"),
@@ -2651,6 +2659,45 @@ export default function LegacyTimesheet({ wrikeData }) {
               />
               {isPulling ? "Pulling..." : "Pull Wrike Times"}
             </button>
+
+            {isAdmin && (
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => setShowDebugPull(!showDebugPull)}
+                  disabled={isPulling}
+                  title="Admin: pull timelogs for a specific date"
+                  className={`flex items-center gap-1.5 px-3 py-2.5 text-xs font-bold rounded-xl border transition-all active:scale-95 ${
+                    showDebugPull
+                      ? "bg-amber-100 text-amber-800 border-amber-300"
+                      : "bg-amber-50 hover:bg-amber-100 text-amber-700 border-amber-200"
+                  }`}
+                >
+                  <Calendar className="w-3.5 h-3.5" />
+                  Debug Pull
+                </button>
+                {showDebugPull && (
+                  <div className="flex items-center gap-2 bg-amber-50 border border-amber-200 rounded-xl px-3 py-1.5">
+                    <input
+                      type="date"
+                      value={debugDate}
+                      max={new Date().toISOString().split("T")[0]}
+                      onChange={(e) => setDebugDate(e.target.value)}
+                      className="text-xs font-mono bg-transparent border-none outline-none text-amber-800"
+                    />
+                    <button
+                      onClick={() => {
+                        handlePullTimes(debugDate);
+                        setShowDebugPull(false);
+                      }}
+                      disabled={isPulling || !debugDate}
+                      className="text-xs font-bold text-amber-700 hover:text-amber-900 disabled:opacity-40 transition-colors"
+                    >
+                      Pull
+                    </button>
+                  </div>
+                )}
+              </div>
+            )}
 
             <button
               onClick={handleCopyJSON}

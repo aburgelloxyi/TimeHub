@@ -616,7 +616,15 @@ export default function App() {
 
       <ToastHost />
 
-      {activePage === "timesheet" && <Tracker wrikeData={globalWrikeData} />}
+      {activePage === "timesheet" && (
+        <Tracker
+          wrikeData={globalWrikeData}
+          onNavigateToHub={(section) => {
+            setProfileSection(section);
+            setActivePage("profile");
+          }}
+        />
+      )}
       <div className={activePage === "todayslist" ? "block" : "hidden"}>
         <TodaysList
           wrikeData={globalWrikeData}

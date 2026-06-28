@@ -12,7 +12,7 @@ export default function TimerPanel({
   showReward,
   handleToggleTimer, handleLogTask,
   // Sidebar shortcuts
-  tasks, setRecentJobsFilter, setShowRecentJobsModal,
+  tasks, onNavigateToHub,
   // Wrike user / stats
   wrikeUser, userStats, handleFetchLifetimeStats,
 }) {
@@ -138,7 +138,7 @@ export default function TimerPanel({
 
       {/* Recent Jobs shortcut */}
       <button
-        onClick={() => { setRecentJobsFilter("Active"); setShowRecentJobsModal(true); }}
+        onClick={() => onNavigateToHub?.("jobs")}
         className="w-full bg-white rounded-3xl border border-[#dce4ec] p-5 flex items-center justify-between gap-4 shadow-sm hover:shadow-md hover:border-[#12a0e1]/40 transition-all group"
       >
         <div className="flex items-center gap-4">
@@ -155,7 +155,7 @@ export default function TimerPanel({
 
       {/* Completed Jobs shortcut */}
       <button
-        onClick={() => { setRecentJobsFilter("Completed"); setShowRecentJobsModal(true); }}
+        onClick={() => onNavigateToHub?.("completed")}
         className="w-full bg-white rounded-3xl border border-[#dce4ec] p-5 flex items-center justify-between gap-4 shadow-sm hover:shadow-md hover:border-[#1cc1a5]/40 transition-all group"
       >
         <div className="flex items-center gap-4">

@@ -1,7 +1,7 @@
-import React, { useEffect, useMemo } from "react";
+import React, { useEffect } from "react";
 import {
   Activity, Download, RefreshCw,
-  List, BarChart2,
+  List,
   Layers, Globe, Tag, Film,
 } from "lucide-react";
 
@@ -16,11 +16,9 @@ import TriageModal from "./TriageModal";
 import DeleteModal from "./DeleteModal";
 import ExportModal from "./ExportModal";
 import TimerPanel from "./TimerPanel";
-import RecentJobsModal from "./RecentJobsModal";
 import HistoryTab from "./HistoryTab";
-import AnalyticsTab from "./AnalyticsTab";
 
-export default function Tracker({ wrikeData }) {
+export default function Tracker({ wrikeData, onNavigateToHub }) {
   const state = useTrackerState();
   const {
     jobNumber, setJobNumber, territory, setTerritory, category, setCategory, notes, setNotes,
@@ -28,15 +26,12 @@ export default function Tracker({ wrikeData }) {
     manualMinutes, setManualMinutes, showReward,
     retainJobNumber, setRetainJobNumber, retainTerritory, setRetainTerritory,
     retainCategory, setRetainCategory,
-    selectedDay, setSelectedDay, activeTab, setActiveTab,
+    selectedDay, setSelectedDay,
     jobOptions,
     toast, setToast, triggerToast,
     triageQueue, setTriageQueue, triageCategory, setTriageCategory,
     itemToDelete, setItemToDelete,
     showExportModal, setShowExportModal,
-    showRecentJobsModal, setShowRecentJobsModal,
-    recentTaskDraft, setRecentTaskDraft,
-    recentJobsFilter, setRecentJobsFilter,
     jsonCopied, setJsonCopied, pastedJson, setPastedJson,
     editingNoteId, setEditingNoteId, editNoteText, setEditNoteText,
     historyTimer, setHistoryTimer,
@@ -50,7 +45,7 @@ export default function Tracker({ wrikeData }) {
   const [activeDropdown, setActiveDropdown] = React.useState(null);
 
   // Must be before useTasks so wrikeUser.id is available to scope the query
-  const { wrikeUser, userStats, handleFetchLifetimeStats, myActiveWrikeTasks, myCompletedWrikeTasks } =
+  const { wrikeUser, userStats, handleFetchLifetimeStats } =
     useWrikeUser(wrikeData, triggerToast);
 
   // Tasks are Supabase-backed via useTasks — scoped to this Wrike user
@@ -84,7 +79,6 @@ export default function Tracker({ wrikeData }) {
 
   // Derived data
   const currentFilteredTasks = tasks.filter((t) => t.dayOfWeek === selectedDay);
-  const totalSecondsAllWeek = tasks.reduce((sum, t) => sum + getRawSeconds(t) + getAddSeconds(t), 0);
   const getSecondsForDay = (day) =>
     tasks.filter((t) => t.dayOfWeek === day).reduce((sum, t) => sum + getRawSeconds(t) + getAddSeconds(t), 0);
 
@@ -99,33 +93,6 @@ export default function Tracker({ wrikeData }) {
     acc[key].totalAdd += getAddSeconds(task);
     return acc;
   }, {});
-
-  const timePerJobData = Object.values(
-    tasks.reduce((acc, task) => {
-      const jobStr = task.jobNumber || "Unknown Job";
-      const shortName = jobStr.split(":")[0] || jobStr;
-      if (!acc[shortName]) acc[shortName] = { name: shortName, TimeSpent: 0, Additional: 0 };
-      acc[shortName].TimeSpent += task.rawSeconds || 0;
-      acc[shortName].Additional += task.additionalSeconds || 0;
-      return acc;
-    }, {})
-  )
-    .map((item) => ({
-      name: item.name,
-      TimeSpent: Math.round((item.TimeSpent / 60) * 10) / 10,
-      Additional: Math.round((item.Additional / 60) * 10) / 10,
-    }))
-    .sort((a, b) => b.TimeSpent + b.Additional - (a.TimeSpent + a.Additional))
-    .slice(0, 10);
-
-  const campaignPieData = useMemo(() => {
-    const counts = myActiveWrikeTasks.reduce((acc, t) => {
-      const camp = t.projectName || "Misc / Singles";
-      acc[camp] = (acc[camp] || 0) + 1;
-      return acc;
-    }, {});
-    return Object.entries(counts).map(([name, value]) => ({ name, value })).sort((a, b) => b.value - a.value);
-  }, [myActiveWrikeTasks]);
 
   return (
     <div className="min-h-screen bg-slate-100 text-[#122027] font-sans selection:bg-[#12a0e1]/30 selection:text-[#122027] pb-12">
@@ -145,19 +112,8 @@ export default function Tracker({ wrikeData }) {
         handleCopyJSONToClipboard={actions.handleCopyJSONToClipboard}
         handlePasteImport={actions.handlePasteImport}
       />
-      <RecentJobsModal
-        showRecentJobsModal={showRecentJobsModal}
-        setShowRecentJobsModal={setShowRecentJobsModal}
-        recentJobsFilter={recentJobsFilter} setRecentJobsFilter={setRecentJobsFilter}
-        wrikeData={wrikeData} wrikeUser={wrikeUser}
-        recentTaskDraft={recentTaskDraft} setRecentTaskDraft={setRecentTaskDraft}
-        handleExpandRecentJob={actions.handleExpandRecentJob}
-        handleConfirmRecentJob={actions.handleConfirmRecentJob}
-        handleInstaLogRecentJob={actions.handleInstaLogRecentJob}
-        selectedDay={selectedDay}
-      />
 
-      <div className="max-w-[1800px] mx-auto px-4 sm:px-6 pt-8 space-y-6">
+<div className="max-w-[1800px] mx-auto px-4 sm:px-6 pt-8 space-y-6">
         {/* Header */}
         <header className="bg-white shadow-sm border border-[#dce4ec] rounded-[2rem] p-6 sm:px-8 flex flex-col md:flex-row items-start md:items-center justify-between gap-5 relative overflow-hidden">
           <div className="absolute top-0 right-0 -mr-20 -mt-20 w-64 h-64 bg-[#12a0e1]/10 rounded-full blur-3xl pointer-events-none" />
@@ -284,64 +240,37 @@ export default function Tracker({ wrikeData }) {
               </div>
             </div>
 
-            {/* History / Analytics tabs */}
+            {/* Logged rows */}
             <div className="bg-white border border-[#dce4ec] shadow-xl shadow-slate-200/40 rounded-3xl flex flex-col relative min-h-[800px] h-auto z-20 pb-4">
-              <div className="flex border-b border-[#dce4ec] bg-slate-50/50 rounded-t-3xl overflow-hidden">
-                {[
-                  { id: "history", label: `Logged Rows (${currentFilteredTasks.length})`, icon: List },
-                  { id: "analytics", label: "Data Overview", icon: BarChart2 },
-                ].map(({ id, label, icon: Icon }) => (
-                  <button
-                    key={id} type="button"
-                    onClick={() => setActiveTab(id)}
-                    className={`flex-1 flex items-center justify-center gap-2 px-6 py-4 font-bold text-sm transition-all relative ${
-                      activeTab === id ? "text-[#12a0e1] bg-white" : "text-[#768994] hover:text-[#122027] hover:bg-slate-100/50"
-                    }`}
-                  >
-                    <Icon className="w-4 h-4" /> {label}
-                    {activeTab === id && <div className="absolute top-0 left-0 right-0 h-1 bg-[#12a0e1]" />}
-                  </button>
-                ))}
+              <div className="flex items-center gap-2 px-6 py-4 border-b border-[#dce4ec] bg-slate-50/50 rounded-t-3xl">
+                <List className="w-4 h-4 text-[#12a0e1]" />
+                <span className="font-bold text-sm text-[#122027]">Logged Rows ({currentFilteredTasks.length})</span>
               </div>
-
               <div className="p-6 sm:p-8 flex-1 bg-slate-50/50 rounded-b-3xl">
-                {activeTab === "history" && (
-                  <HistoryTab
-                    loading={tasksLoading}
-                    currentFilteredTasks={currentFilteredTasks}
-                    consolidatedGroups={consolidatedGroups}
-                    // editing state
-                    editingGroupId={editingGroupId} setEditingGroupId={setEditingGroupId}
-                    editGroupForm={editGroupForm} setEditGroupForm={setEditGroupForm}
-                    editingTaskId={editingTaskId} setEditingTaskId={setEditingTaskId}
-                    editTaskForm={editTaskForm} setEditTaskForm={setEditTaskForm}
-                    editingTimeId={editingTimeId} setEditingTimeId={setEditingTimeId}
-                    editTimeForm={editTimeForm} setEditTimeForm={setEditTimeForm}
-                    editingNoteId={editingNoteId} setEditingNoteId={setEditingNoteId}
-                    editNoteText={editNoteText} setEditNoteText={setEditNoteText}
-                    jobOptions={jobOptions}
-                    updateTask={updateTask}
-                    // actions
-                    startGroupEdit={actions.startGroupEdit}
-                    handleSaveGroupEdit={actions.handleSaveGroupEdit}
-                    startTaskEdit={actions.startTaskEdit}
-                    handleSaveTaskEdit={actions.handleSaveTaskEdit}
-                    startEditingTime={actions.startEditingTime}
-                    saveEditedTime={actions.saveEditedTime}
-                    startEditingNote={actions.startEditingNote}
-                    saveEditedNote={actions.saveEditedNote}
-                    setItemToDelete={setItemToDelete}
-                  />
-                )}
-                {activeTab === "analytics" && (
-                  <AnalyticsTab
-                    totalSecondsAllWeek={totalSecondsAllWeek}
-                    timePerJobData={timePerJobData}
-                    campaignPieData={campaignPieData}
-                    myActiveWrikeTasks={myActiveWrikeTasks}
-                    myCompletedWrikeTasks={myCompletedWrikeTasks}
-                  />
-                )}
+                <HistoryTab
+                  loading={tasksLoading}
+                  currentFilteredTasks={currentFilteredTasks}
+                  consolidatedGroups={consolidatedGroups}
+                  editingGroupId={editingGroupId} setEditingGroupId={setEditingGroupId}
+                  editGroupForm={editGroupForm} setEditGroupForm={setEditGroupForm}
+                  editingTaskId={editingTaskId} setEditingTaskId={setEditingTaskId}
+                  editTaskForm={editTaskForm} setEditTaskForm={setEditTaskForm}
+                  editingTimeId={editingTimeId} setEditingTimeId={setEditingTimeId}
+                  editTimeForm={editTimeForm} setEditTimeForm={setEditTimeForm}
+                  editingNoteId={editingNoteId} setEditingNoteId={setEditingNoteId}
+                  editNoteText={editNoteText} setEditNoteText={setEditNoteText}
+                  jobOptions={jobOptions}
+                  updateTask={updateTask}
+                  startGroupEdit={actions.startGroupEdit}
+                  handleSaveGroupEdit={actions.handleSaveGroupEdit}
+                  startTaskEdit={actions.startTaskEdit}
+                  handleSaveTaskEdit={actions.handleSaveTaskEdit}
+                  startEditingTime={actions.startEditingTime}
+                  saveEditedTime={actions.saveEditedTime}
+                  startEditingNote={actions.startEditingNote}
+                  saveEditedNote={actions.saveEditedNote}
+                  setItemToDelete={setItemToDelete}
+                />
               </div>
             </div>
           </div>
@@ -355,8 +284,7 @@ export default function Tracker({ wrikeData }) {
             handleToggleTimer={actions.handleToggleTimer}
             handleLogTask={actions.handleLogTask}
             tasks={tasks}
-            setRecentJobsFilter={setRecentJobsFilter}
-            setShowRecentJobsModal={setShowRecentJobsModal}
+            onNavigateToHub={onNavigateToHub}
             wrikeUser={wrikeUser} userStats={userStats}
             handleFetchLifetimeStats={handleFetchLifetimeStats}
           />

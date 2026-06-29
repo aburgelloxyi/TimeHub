@@ -723,7 +723,6 @@ export const REGION_ALIASES = {
   SK: "Slovakia",
   TH: "Thailand",
   TW: "Taiwan",
-  // 3-letter codes common in Wrike file/task names
   POL: "Poland",
   GER: "Germany",
   SWE: "Sweden",

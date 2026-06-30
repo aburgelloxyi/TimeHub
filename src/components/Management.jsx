@@ -19,7 +19,7 @@ const SEED_FILMS = [...new Set(
 // Your Wrike ID is shown on the Profile Hub page (under your name, first 8 chars).
 // Ask Claude to help you find the full ID if needed.
 export const MANAGEMENT_IDS = [
-  "KUAWDLVN"
+  "KUAWDLVN", "KUAQT4JC"
 ];
 
 const OFFICES = ["LDN", "LA"];

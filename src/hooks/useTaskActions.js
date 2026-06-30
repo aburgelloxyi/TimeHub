@@ -74,7 +74,7 @@ export function useTaskActions(state) {
       dayOfWeek: selectedDay,
       rawSeconds: finalSeconds,
       additionalSeconds: 0,
-      date: new Date().toLocaleDateString("en-GB"),
+      date: new Date().toISOString().slice(0, 10),
       timeLogged: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
     };
 
@@ -455,7 +455,7 @@ export function useTaskActions(state) {
       dayOfWeek: selectedDay,
       rawSeconds: finalSeconds,
       additionalSeconds: 0,
-      date: new Date().toLocaleDateString("en-GB"),
+      date: new Date().toISOString().slice(0, 10),
       timeLogged: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
     };
     addTask(newTask);

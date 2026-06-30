@@ -411,7 +411,7 @@ function JobsSection({ wrikeUser, filter, wrikeData, onLogTime, triggerToast, jo
                 key={task.id}
                 task={task}
                 filter={filter}
-                onClick={() => setSelectedTask(task)}
+                onClick={() => setSelectedTask({ ...task, tag: task.customStatusName || task.tag || task.status })}
               />
             ))}
           </div>

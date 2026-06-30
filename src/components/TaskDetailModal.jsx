@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from "react";
+import { createPortal } from "react-dom";
 import {
   X,
   ExternalLink,
@@ -520,10 +521,17 @@ export function AttachmentThumb({
       <button
         onClick={handleOpen}
         title={attachment.name}
-        className={`${dim} rounded-xl border ${bg} flex flex-col items-center justify-center gap-1 hover:shadow-md hover:scale-105 transition-all`}
+        className={`${dim} rounded-xl border ${bg} flex flex-col items-center justify-center gap-1 hover:shadow-md hover:scale-105 transition-all overflow-hidden`}
       >
         {loading ? (
           <div className="w-4 h-4 border-2 border-slate-300 border-t-[#12a0e1] rounded-full animate-spin" />
+        ) : kind === "image" && attachment.previewUrl ? (
+          <img
+            src={attachment.previewUrl}
+            alt={attachment.name}
+            className="w-full h-full object-cover rounded-xl"
+            onError={(e) => { e.currentTarget.replaceWith(Object.assign(document.createElement("span"), { textContent: "🖼️", className: "text-3xl" })); }}
+          />
         ) : (
           <>
             <span className={large ? "text-3xl" : "text-xl"}>{icon}</span>
@@ -1066,13 +1074,10 @@ export default function TaskDetailModal({
         if (!cancelled && note) setAmendNote(note);
       })
       .catch(() => {})
-      .finally(() => {
-        if (!cancelled) setAmendLoading(false);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [task]);
+      .finally(() => { if (!cancelled) setAmendLoading(false); });
+    return () => { cancelled = true; };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [task?.id]);
 
   useEffect(() => {
     return () => {
@@ -1114,7 +1119,7 @@ export default function TaskDetailModal({
   const permalink =
     task.permalink || `https://www.wrike.com/open.htm?id=${task.id}`;
 
-  return (
+  return createPortal(
     <>
       <div
         className="fixed inset-0 bg-[#122027]/60 backdrop-blur-sm flex items-center justify-center z-[9999] p-4"
@@ -1167,23 +1172,8 @@ export default function TaskDetailModal({
 
           <div className="flex flex-1 min-h-0 overflow-hidden divide-x divide-[#dce4ec]">
             <div className="flex-1 min-w-0 flex flex-col overflow-y-auto p-5 gap-4">
-              {enableTimeLog && (
-                <TimeLogPanel
-                  task={task}
-                  fullTask={fullTask}
-                  jobOptions={jobOptions}
-                  onLogTime={onLogTime}
-                  onLogged={(secs) => {
-                    triggerToast?.(
-                      `Logged ${fmtClock(secs)} to your timesheet.`,
-                      "success"
-                    );
-                  }}
-                />
-              )}
-
               {(amendLoading || amendNote) && (
-                <div className="bg-rose-50 rounded-2xl border border-rose-200 overflow-hidden">
+                <div className="bg-rose-50 rounded-2xl border border-rose-200">
                   <div className="flex items-center gap-2 px-4 py-2.5 border-b border-rose-200/70 bg-white/60">
                     <MessageSquare className="w-3.5 h-3.5 text-rose-500" />
                     <span className="text-[9px] font-black uppercase tracking-widest text-rose-500">
@@ -1228,7 +1218,7 @@ export default function TaskDetailModal({
                     WRIKE IMPORT
                   </span>
                 </div>
-                <div className="p-4">
+                <div className="p-4 max-h-48 overflow-y-auto">
                   {notes ? (
                     <p className="text-xs text-slate-600 whitespace-pre-line leading-relaxed">
                       {notes}
@@ -1240,6 +1230,18 @@ export default function TaskDetailModal({
                   )}
                 </div>
               </div>
+
+              {enableTimeLog && (
+                <TimeLogPanel
+                  task={task}
+                  fullTask={fullTask}
+                  jobOptions={jobOptions}
+                  onLogTime={onLogTime}
+                  onLogged={(secs) => {
+                    triggerToast?.(`Logged ${fmtClock(secs)} to your timesheet.`, "success");
+                  }}
+                />
+              )}
 
               {attachments.length > 0 && (
                 <div>
@@ -1359,7 +1361,6 @@ export default function TaskDetailModal({
         />
       )}
 
-      {/* 👇 2. Passes the Smart Territory perfectly to the CSV Modal 👇 */}
       {csvPreviewData && (
         <CsvPreviewModal
           rawSpecs={csvPreviewData.rawSpecs}
@@ -1370,7 +1371,8 @@ export default function TaskDetailModal({
           onClose={() => setCsvPreviewData(null)}
         />
       )}
-    </>
+    </>,
+    document.body
   );
 }
 

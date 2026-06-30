@@ -11,8 +11,10 @@ import {
   BarChart2,
   CheckCircle,
   Settings,
+  Shield,
 } from "lucide-react";
 import { supabase } from "../lib/supabaseClient";
+import { MANAGEMENT_IDS } from "./Management";
 
 // Profile is excluded from the sliding pill nav — it sits as an avatar button
 const navItems = [
@@ -40,6 +42,10 @@ export default function ApplePillNav({ activePage, setActivePage, hubSection, se
   const itemRefs = useRef([]);
   const hubHoverTimeout = useRef(null);
 
+  const wrikeUserId = localStorage.getItem("wrike_user_id");
+  const showManagement = MANAGEMENT_IDS.length === 0 || MANAGEMENT_IDS.includes(wrikeUserId);
+  const visibleNavItems = navItems;
+
   const openHubMenu = () => {
     clearTimeout(hubHoverTimeout.current);
     setHubMenuOpen(true);
@@ -65,7 +71,7 @@ export default function ApplePillNav({ activePage, setActivePage, hubSection, se
   // Recalculate pill — only for tool nav items, not profile
   useEffect(() => {
     const updatePillPosition = () => {
-      const activeIndex = navItems.findIndex((item) => item.id === activePage);
+      const activeIndex = visibleNavItems.findIndex((item) => item.id === activePage);
       const activeElement = itemRefs.current[activeIndex];
       const navElement = navRef.current;
 
@@ -82,14 +88,15 @@ export default function ApplePillNav({ activePage, setActivePage, hubSection, se
     updatePillPosition();
     window.addEventListener("resize", updatePillPosition);
     return () => window.removeEventListener("resize", updatePillPosition);
-  }, [activePage]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activePage, showManagement]);
 
   const isProfile = activePage === "profile";
 
   return (
     <div className="flex flex-col items-center w-full pt-6 gap-2">
       {/* ── Row 1: main nav + My Hub button ── */}
-      <div className="flex items-center gap-2">
+      <div className="flex items-center gap-6">
         {/* Main tool pill nav */}
         <nav
           ref={navRef}
@@ -105,7 +112,7 @@ export default function ApplePillNav({ activePage, setActivePage, hubSection, se
             }}
           />
 
-          {navItems.map((item, index) => {
+          {visibleNavItems.map((item, index) => {
             const Icon = item.icon;
             const isActive = activePage === item.id;
             return (
@@ -128,60 +135,73 @@ export default function ApplePillNav({ activePage, setActivePage, hubSection, se
           })}
         </nav>
 
-        {/* Profile / Hub button with hover mini-menu */}
-        <div
-          className="relative"
-          onMouseEnter={openHubMenu}
-          onMouseLeave={closeHubMenu}
-        >
-          <button
-            onClick={() => { setActivePage("profile"); setHubSection?.(null); }}
-            title="Your profile & hub"
-            className={`relative flex items-center gap-2 py-1 pl-1 pr-3.5 rounded-full font-bold text-[13px] tracking-tight transition-all duration-300 border ${
-              isProfile
-                ? "bg-gradient-to-br from-[#12a0e1] to-[#1cc1a5] text-white border-transparent scale-105 shadow-lg shadow-[#12a0e1]/40"
-                : "bg-white text-[#122027] border-[#12a0e1]/30 shadow-[0_0_0_3px_rgba(18,160,225,0.12)] hover:scale-105 hover:shadow-[0_0_0_4px_rgba(18,160,225,0.2)] hover:border-[#12a0e1]/50"
-            }`}
+        {/* Hub + Management — layered pills, Hub sits on top */}
+        <div className="flex items-center">
+
+          {/* My Hub — full rounded pill, higher z so it overlaps Management */}
+          <div
+            className="relative z-10"
+            onMouseEnter={openHubMenu}
+            onMouseLeave={closeHubMenu}
           >
-            <span
-              className={`flex items-center justify-center w-7 h-7 rounded-full font-black text-xs shrink-0 ${
+            <button
+              onClick={() => { setActivePage("profile"); setHubSection?.(null); }}
+              title="Your profile & hub"
+              className={`relative flex items-center gap-2 py-1 pl-1 pr-3.5 rounded-full font-bold text-[13px] tracking-tight transition-all duration-300 border ${
                 isProfile
-                  ? "bg-white/25 text-white"
-                  : "bg-gradient-to-br from-[#12a0e1] to-[#1cc1a5] text-white"
+                  ? "bg-gradient-to-br from-[#12a0e1] to-[#1cc1a5] text-white border-transparent scale-105 shadow-lg shadow-[#12a0e1]/40"
+                  : "bg-white text-[#122027] border-[#12a0e1]/30 shadow-[0_0_0_3px_rgba(18,160,225,0.12)] hover:scale-105 hover:shadow-[0_0_0_4px_rgba(18,160,225,0.2)] hover:border-[#12a0e1]/50"
               }`}
             >
-              {initials || "?"}
-            </span>
-            My Hub
-            {isProfile && (
-              <span className="absolute inset-0 rounded-full ring-2 ring-[#12a0e1]/40 ring-offset-1" />
-            )}
-          </button>
+              <span className={`flex items-center justify-center w-7 h-7 rounded-full font-black text-xs shrink-0 ${
+                isProfile ? "bg-white/25 text-white" : "bg-gradient-to-br from-[#12a0e1] to-[#1cc1a5] text-white"
+              }`}>
+                {initials || "?"}
+              </span>
+              My Hub
+              {isProfile && <span className="absolute inset-0 rounded-full ring-2 ring-[#12a0e1]/40 ring-offset-1" />}
+            </button>
 
-          {/* Hover mini-menu — floats below the button, hidden when already on Hub */}
-          {hubMenuOpen && !isProfile && (
-            <div
-              className="absolute right-0 top-full pt-2.5 z-50"
-              onMouseEnter={openHubMenu}
-              onMouseLeave={closeHubMenu}
-            >
-              <div className="bg-white rounded-2xl border border-black/5 shadow-2xl p-2 flex flex-col gap-0.5 min-w-[200px]">
-                {hubSections.map(({ id, label, icon: Icon }) => (
-                  <button
-                    key={id}
-                    onClick={() => {
-                      setActivePage("profile");
-                      setHubSection?.(id);
-                      setHubMenuOpen(false);
-                    }}
-                    className="flex items-center gap-3 w-full px-4 py-2.5 rounded-xl text-[13px] font-bold tracking-tight text-left transition-all duration-150 text-[#768994] hover:text-[#122027] hover:bg-slate-50"
-                  >
-                    <Icon className="w-4 h-4 shrink-0" strokeWidth={2} />
-                    {label}
-                  </button>
-                ))}
+            {/* Hover mini-menu */}
+            {hubMenuOpen && !isProfile && (
+              <div
+                className="absolute left-0 top-full pt-2.5 z-50"
+                onMouseEnter={openHubMenu}
+                onMouseLeave={closeHubMenu}
+              >
+                <div className="bg-white rounded-2xl border border-black/5 shadow-2xl p-2 flex flex-col gap-0.5 min-w-[200px]">
+                  {hubSections.map(({ id, label, icon: Icon }) => (
+                    <button
+                      key={id}
+                      onClick={() => { setActivePage("profile"); setHubSection?.(id); setHubMenuOpen(false); }}
+                      className="flex items-center gap-3 w-full px-4 py-2.5 rounded-xl text-[13px] font-bold tracking-tight text-left transition-all duration-150 text-[#768994] hover:text-[#122027] hover:bg-slate-50"
+                    >
+                      <Icon className="w-4 h-4 shrink-0" strokeWidth={2} />
+                      {label}
+                    </button>
+                  ))}
+                </div>
               </div>
-            </div>
+            )}
+          </div>
+
+          {/* Management — full rounded pill, pulled left so it tucks behind My Hub */}
+          {showManagement && (
+            <button
+              onClick={() => setActivePage("management")}
+              title="Management"
+              className={`relative flex items-center gap-2 -ml-6 pl-9 pr-4 h-9 rounded-full font-bold text-[13px] tracking-tight transition-all duration-300 border ${
+                activePage === "management"
+                  ? "bg-gradient-to-br from-[#122027] to-[#12a0e1] text-white border-transparent shadow-lg shadow-[#122027]/30"
+                  : "bg-white text-[#768994] border-[#dce4ec] shadow-[0_0_0_2px_rgba(18,32,39,0.06)] hover:text-[#122027] hover:border-[#122027]/20"
+              }`}
+              style={{ zIndex: 5 }}
+            >
+              <Shield className={`w-3.5 h-3.5 shrink-0 ${
+                activePage === "management" ? "text-white" : "text-[#12a0e1]"
+              }`} strokeWidth={2.5} />
+              Management
+            </button>
           )}
         </div>
       </div>

@@ -5,7 +5,7 @@ import React, {
   useMemo,
   useRef,
 } from "react";
-import { useLegacyRows } from "../hooks/useLegacyRows";
+import { useLegacyRows, getCurrentWeekStart } from "../hooks/useLegacyRows";
 import {
   setWrikeUserId as stampWrikeUserId,
   fetchExistingTimelogIds,
@@ -438,7 +438,18 @@ export default function LegacyTimesheet({ wrikeData, isAdmin = false }) {
     localStorage.setItem("xyi_legacy_frozenDays", JSON.stringify(frozenDays));
   }, [frozenDays]);
 
+  // Auto-detect new week on mount
+  useEffect(() => {
+    const current = getCurrentWeekStart();
+    const stored = localStorage.getItem("xyi_last_week_start");
+    if (stored && stored !== current) {
+      setNewWeekBanner(true);
+    }
+    localStorage.setItem("xyi_last_week_start", current);
+  }, []);
+
   const [isPulling, setIsPulling] = useState(false);
+  const [newWeekBanner, setNewWeekBanner] = useState(false);
   const [showDebugPull, setShowDebugPull] = useState(false);
   const [debugDate, setDebugDate] = useState(() => {
     const d = new Date();
@@ -816,9 +827,12 @@ export default function LegacyTimesheet({ wrikeData, isAdmin = false }) {
 
   const getTimesheetValue = (hours) => {
     if (!hours || hours === 0) return "none";
-    let rounded = Math.round(hours * 2) / 2;
-    if (rounded === 0 && hours > 0) rounded = 0.5;
-    return rounded === 0 ? "none" : rounded.toString();
+    const secs = Math.round(hours * 3600);
+    if (secs <= 0) return "none";
+    const mins = Math.round(secs / 60);
+    const h = Math.floor(mins / 60);
+    const m = mins % 60;
+    return `${h}:${String(m).padStart(2, "0")}`;
   };
 
   const getLogHoursForTaskAndDay = (taskId, targetDay) => {
@@ -1273,6 +1287,8 @@ export default function LegacyTimesheet({ wrikeData, isAdmin = false }) {
     return recovered;
   };
 
+  const dismissNewWeekBanner = () => setNewWeekBanner(false);
+
   const handlePullTimes = async (dateStr = null) => {
     const token = localStorage.getItem("wrike_personal_token");
     if (!token) {
@@ -1295,7 +1311,7 @@ export default function LegacyTimesheet({ wrikeData, isAdmin = false }) {
       const todayStr = `${now.getFullYear()}-${String(
         now.getMonth() + 1
       ).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
-      const targetDateStr = dateStr || todayStr;
+      const targetDateStr = (typeof dateStr === "string" && dateStr) ? dateStr : todayStr;
 
       const res = await fetch(
         `https://www.wrike.com/api/v4/contacts/${wrikeUserId}/timelogs`,
@@ -1312,7 +1328,7 @@ export default function LegacyTimesheet({ wrikeData, isAdmin = false }) {
 
       // Fetch existing timelog IDs across ALL sources so we don't duplicate
       // entries that were already pulled in Tracker (or vice versa)
-      const existingTimelogIds = await fetchExistingTimelogIds(wrikeUserId);
+      const existingTimelogIds = await fetchExistingTimelogIds(wrikeUserId, "legacy");
 
       const newRows = [];
       const dayNames = [
@@ -1405,7 +1421,7 @@ export default function LegacyTimesheet({ wrikeData, isAdmin = false }) {
             wrikeTimelogId: allIds.join(","),
             taskId: task?.id,
             dayOfWeek,
-            date: logDate.toLocaleDateString("en-GB"),
+            date: logDate.toISOString().slice(0, 10),
             jobNumber: guessed.jobNumber,
             client,
             filmTitle,
@@ -1482,16 +1498,13 @@ export default function LegacyTimesheet({ wrikeData, isAdmin = false }) {
       return;
     }
 
+    // Round seconds to nearest 30 min (0.5h) — timesheet website only accepts half-hours
+    const roundTo30 = (s) => s > 0 ? Math.max(1800, Math.round(s / 1800) * 1800) : 0;
+
     try {
       const mappedTasks = rows.map((row) => {
-        const rawSecs =
-          row.timeSpent === "none" || !row.timeSpent
-            ? 0
-            : parseFloat(row.timeSpent) * 3600;
-        const addSecs =
-          row.additionalTime === "none" || !row.additionalTime
-            ? 0
-            : parseFloat(row.additionalTime) * 3600;
+        const rawSecs = row.rawSeconds ?? 0;
+        const addSecs = row.additionalSeconds ?? 0;
 
         let exportTerritory = row.territory || "";
         if (exportTerritory === "UK") exportTerritory = "United Kingdom";
@@ -1540,6 +1553,8 @@ export default function LegacyTimesheet({ wrikeData, isAdmin = false }) {
 
         return Object.values(consolidated).map((c) => ({
           ...c,
+          rawSeconds: roundTo30(c.rawSeconds),
+          additionalSeconds: c.additionalSeconds > 0 ? roundTo30(c.additionalSeconds) : 0,
           notes: c.notesArray.filter(Boolean).join(" | "),
         }));
       };
@@ -1630,14 +1645,19 @@ export default function LegacyTimesheet({ wrikeData, isAdmin = false }) {
       if (!groups[key]._subRows) groups[key]._subRows = [];
       groups[key]._subRows.push(row);
     });
-    const roundHalf = (v) =>
-      v > 0 ? Math.max(0.5, Math.round(v * 2) / 2).toString() : "none";
+    const sToHM = (s) => {
+      if (!(s > 0)) return "none";
+      const mins = Math.round(s / 60);
+      const h = Math.floor(mins / 60);
+      const m = mins % 60;
+      return `${h}:${String(m).padStart(2, "0")}`;
+    };
     return Object.values(groups).map((g) => ({
       ...g,
       rawSeconds: g._rawSeconds,
       additionalSeconds: g._additionalSeconds,
-      timeSpent: roundHalf(g._rawSeconds / 3600),
-      additionalTime: roundHalf(g._additionalSeconds / 3600),
+      timeSpent: sToHM(g._rawSeconds),
+      additionalTime: sToHM(g._additionalSeconds),
       notes: [...g._notes].filter(Boolean).join(" | "),
       _subRows: g._subRows || [],
     }));
@@ -2137,6 +2157,23 @@ export default function LegacyTimesheet({ wrikeData, isAdmin = false }) {
         </div>
       )}
 
+      {/* New week banner */}
+      {newWeekBanner && (
+        <div className="max-w-[1600px] mx-auto mb-3 flex items-center gap-3 px-4 py-3 bg-emerald-50 border border-emerald-200 rounded-2xl shadow-sm">
+          <span className="text-lg">🗓️</span>
+          <div className="flex-1">
+            <span className="font-black text-emerald-900 text-sm">New week!</span>
+            <span className="text-emerald-800 text-sm ml-1.5">Last week's entries are hidden here but still saved — they show up in the Jobs Feed.</span>
+          </div>
+          <button
+            onClick={dismissNewWeekBanner}
+            className="px-3 py-1.5 text-emerald-700 hover:text-emerald-900 text-sm font-bold rounded-xl transition-colors"
+          >
+            Got it
+          </button>
+        </div>
+      )}
+
       {/* --- STANDARD UI --- */}
       <div className="max-w-[1600px] mx-auto bg-white shadow-2xl rounded-2xl relative min-h-[calc(100vh-10rem)] flex flex-col border border-slate-200">
         {/* --- MODERN HEADER --- */}
@@ -2546,7 +2583,7 @@ export default function LegacyTimesheet({ wrikeData, isAdmin = false }) {
                       placeholder="Notes…"
                       rows={2}
                       disabled={!rowsAreEditable}
-                      className={`w-full text-[11px] bg-transparent border border-transparent rounded-lg px-2 py-1 resize-none transition-colors leading-relaxed placeholder:text-slate-300 ${
+                      className={`w-full text-[11px] bg-transparent border border-transparent rounded-lg px-2 py-1 resize-none overflow-hidden transition-colors leading-relaxed placeholder:text-slate-300 ${
                         !rowsAreEditable
                           ? "text-slate-400 cursor-not-allowed"
                           : "text-slate-700 hover:border-slate-200 focus:border-[#12a0e1] focus:bg-[#12a0e1]/5 outline-none"
@@ -2644,7 +2681,7 @@ export default function LegacyTimesheet({ wrikeData, isAdmin = false }) {
           </button>
           <div className="flex gap-3 flex-wrap">
             <button
-              onClick={handlePullTimes}
+              onClick={() => handlePullTimes()}
               disabled={isPulling || isDayFrozen}
               className={`flex items-center gap-2 px-5 py-2.5 text-sm font-bold border rounded-xl shadow-lg transition-all ${
                 isDayFrozen

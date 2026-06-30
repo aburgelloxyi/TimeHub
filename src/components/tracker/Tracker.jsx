@@ -10,6 +10,7 @@ import { useTrackerState } from "../../hooks/useTrackerState";
 import { useTaskActions } from "../../hooks/useTaskActions";
 import { useWrikeUser } from "../../hooks/useWrikeUser";
 import { useTasks } from "../../hooks/useTasks";
+import { getCurrentWeekStart } from "../../hooks/useLegacyRows";
 import { formatDurationText } from "../../utils/timeHelpers";
 import SearchableSelect from "../shared/SearchableSelect";
 import TriageModal from "./TriageModal";
@@ -48,8 +49,8 @@ export default function Tracker({ wrikeData, onNavigateToHub }) {
   const { wrikeUser, userStats, handleFetchLifetimeStats } =
     useWrikeUser(wrikeData, triggerToast);
 
-  // Tasks are Supabase-backed via useTasks — scoped to this Wrike user
-  const { tasks, setTasks, loading: tasksLoading, addTask, addTasks, updateTask, updateTasks, deleteTasks, importTasks } = useTasks(triggerToast, null, wrikeUser?.id);
+  // Tasks are Supabase-backed via useTasks — scoped to this Wrike user + current week
+  const { tasks, setTasks, loading: tasksLoading, addTask, addTasks, updateTask, updateTasks, deleteTasks, importTasks } = useTasks(triggerToast, null, wrikeUser?.id, getCurrentWeekStart());
 
   const stateWithPull = { ...state, tasks, setTasks, addTask, addTasks, updateTask, updateTasks, deleteTasks, importTasks, isPullingTime, setIsPullingTime, wrikeUser };
   const actions = useTaskActions(stateWithPull);

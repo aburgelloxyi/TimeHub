@@ -39,6 +39,7 @@ import LegacyTimesheet from "./components/LegacyTimesheets";
 import { useWrikeCache } from "./hooks/useWrikeCache";
 import Profile from "./components/Profile";
 import AdminModal from "./components/AdminModal";
+import Management from "./components/Management";
 
 export default function App() {
   const [activePage, setActivePage] = useState("timesheet");
@@ -669,6 +670,9 @@ export default function App() {
           activeSection={profileSection}
           setActiveSection={setProfileSection}
         />
+      )}
+      {activePage === "management" && (
+        <Management wrikeUserId={wrikeUserId} />
       )}
     </div>
   );

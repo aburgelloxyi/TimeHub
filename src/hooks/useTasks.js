@@ -3,8 +3,29 @@ import { supabase } from "../lib/supabaseClient";
 
 // --- Translators ---
 
-const secsToHours = (s) => (s > 0 ? (s / 3600).toFixed(2) : null);
-const hoursToSecs = (h) => (h && h !== "none" ? Math.round(parseFloat(h) * 3600) : 0);
+// Stores time as "H:MM" — human-readable in Supabase
+const secsToHM = (s) => {
+  if (!(s > 0)) return null;
+  const mins = Math.round(s / 60);
+  const h = Math.floor(mins / 60);
+  const m = mins % 60;
+  return `${h}:${String(m).padStart(2, "0")}`;
+};
+
+// Reads "H:MM" (new), decimal hours ("0.5"), or integer minutes ("30") — all legacy-compat
+const parseDbTime = (v) => {
+  if (!v || v === "none") return 0;
+  const s = String(v);
+  // New format: "H:MM"
+  const hm = s.match(/^(\d+):(\d{2})$/);
+  if (hm) return (parseInt(hm[1]) * 60 + parseInt(hm[2])) * 60;
+  const n = parseFloat(s);
+  if (isNaN(n) || n <= 0) return 0;
+  // Old decimal hours ("0.5", "1.50") → seconds
+  if (s.includes(".")) return Math.round(n * 3600);
+  // Old integer minutes ("30", "90") → seconds
+  return Math.round(n * 60);
+};
 
 const toDb = (task) => ({
   id: task.id,
@@ -18,9 +39,9 @@ const toDb = (task) => ({
   territory: task.territory ?? null,
   notes: task.notes ?? null,
   wrike_timelog_id: task.wrikeTimelogId ?? null,
-  // Time: DB stores decimal hours; in-memory uses seconds
-  time_spent: task.timeSpent ?? secsToHours(task.rawSeconds ?? 0),
-  additional_time: task.additionalTime ?? secsToHours(task.additionalSeconds ?? 0),
+  // Time: DB stores integer minutes (new) or decimal hours (old legacy rows)
+  time_spent: task.timeSpent ?? secsToHM(task.rawSeconds ?? 0),
+  additional_time: task.additionalTime ?? secsToHM(task.additionalSeconds ?? 0),
   // Legacy fields
   film_title: task.filmTitle ?? null,
   client: task.client ?? null,
@@ -42,11 +63,11 @@ const fromDb = (row) => ({
   territory: row.territory,
   notes: row.notes,
   wrikeTimelogId: row.wrike_timelog_id,
-  // Time: decimal hours from DB, seconds derived for in-memory use
+  // Time: raw DB value kept for legacy dropdown compat; seconds derived for in-memory use
   timeSpent: row.time_spent,
   additionalTime: row.additional_time,
-  rawSeconds: hoursToSecs(row.time_spent),
-  additionalSeconds: hoursToSecs(row.additional_time),
+  rawSeconds: parseDbTime(row.time_spent),
+  additionalSeconds: parseDbTime(row.additional_time),
   // Legacy fields
   filmTitle: row.film_title,
   client: row.client,
@@ -66,7 +87,7 @@ const fromDb = (row) => ({
  *                      so subsequent page loads are instant (no waiting for the
  *                      Wrike API call to complete before tasks appear).
  */
-export function useTasks(triggerToast, source = null, wrikeUserId = null) {
+export function useTasks(triggerToast, source = null, wrikeUserId = null, weekStart = null) {
   const [tasks, setTasks] = useState([]);
   const [loading, setLoading] = useState(true);
 
@@ -82,13 +103,14 @@ export function useTasks(triggerToast, source = null, wrikeUserId = null) {
   const uidRef = useRef(effectiveUid);
   useEffect(() => { uidRef.current = effectiveUid; }, [effectiveUid]);
 
-  // Re-fetch when source or user ID changes
+  // Re-fetch when source, user ID, or week changes
   useEffect(() => {
     const fetchTasks = async () => {
       setLoading(true);
       let query = supabase.from("tasks").select("*").order("id", { ascending: false });
       if (source) query = query.eq("source", source);
       if (effectiveUid) query = query.eq("wrike_user_id", effectiveUid);
+      if (weekStart) query = query.gte("date", weekStart);
 
       const { data, error } = await query;
 
@@ -96,13 +118,30 @@ export function useTasks(triggerToast, source = null, wrikeUserId = null) {
         console.error("Failed to load tasks:", error);
         triggerToast?.("Failed to load tasks from database.");
       } else {
-        setTasks((data ?? []).map(fromDb));
+        const mapped = (data ?? []).map(fromDb);
+        if (weekStart) {
+          // Normalise any "dd/mm/yyyy" dates to ISO before comparing.
+          // Old entries were saved with toLocaleDateString("en-GB") which sorts
+          // incorrectly against weekStart ("24/06/2026" > "2026-06-29" lexicographically).
+          const toIso = (d) => {
+            if (!d) return null;
+            if (/^\d{4}-\d{2}-\d{2}$/.test(d)) return d;
+            const m = d.match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
+            return m ? `${m[3]}-${m[2]}-${m[1]}` : null;
+          };
+          setTasks(mapped.filter(t => {
+            const iso = toIso(t.date);
+            return iso && iso >= weekStart;
+          }));
+        } else {
+          setTasks(mapped);
+        }
       }
       setLoading(false);
     };
 
     fetchTasks();
-  }, [source, effectiveUid]);
+  }, [source, effectiveUid, weekStart]);
 
   const addTask = useCallback(async (task) => {
     const t = { ...task, wrikeUserId: task.wrikeUserId ?? uidRef.current };
@@ -141,11 +180,11 @@ export function useTasks(triggerToast, source = null, wrikeUserId = null) {
     // Convert in-memory seconds to decimal hours before persisting
     const resolved = { ...changes };
     if ("rawSeconds" in resolved) {
-      resolved.timeSpent = secsToHours(resolved.rawSeconds ?? 0);
+      resolved.timeSpent = secsToHM(resolved.rawSeconds ?? 0);
       delete resolved.rawSeconds;
     }
     if ("additionalSeconds" in resolved) {
-      resolved.additionalTime = secsToHours(resolved.additionalSeconds ?? 0);
+      resolved.additionalTime = secsToHM(resolved.additionalSeconds ?? 0);
       delete resolved.additionalSeconds;
     }
 

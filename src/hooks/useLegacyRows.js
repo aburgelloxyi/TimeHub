@@ -1,4 +1,4 @@
-import { useCallback, useMemo } from "react";
+import { useCallback, useMemo, useRef } from "react";
 import { useTasks } from "./useTasks";
 
 // Round to nearest 0.5h step — minimum 0.5h for any logged time (never round to 0)
@@ -34,7 +34,21 @@ const normaliseLegacyRow = (row) => ({
  * (rows, setRows, addRow, updateRow, deleteRow, addRows)
  * so the component needs minimal changes.
  */
+// Returns "YYYY-MM-DD" for Monday of the current week
+export function getCurrentWeekStart() {
+  const now = new Date();
+  const day = now.getDay();
+  const monday = new Date(now);
+  monday.setDate(now.getDate() - (day === 0 ? 6 : day - 1));
+  return `${monday.getFullYear()}-${String(monday.getMonth() + 1).padStart(2, "0")}-${String(monday.getDate()).padStart(2, "0")}`;
+}
+
+const isoDate = (d = new Date()) =>
+  `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+
 export function useLegacyRows(triggerToast, wrikeUserId = null) {
+  const weekStart = useRef(getCurrentWeekStart()).current;
+
   const {
     tasks: rows,
     setTasks: setRows,
@@ -43,16 +57,20 @@ export function useLegacyRows(triggerToast, wrikeUserId = null) {
     addTasks,
     updateTask,
     deleteTasks,
-  } = useTasks(triggerToast, null, wrikeUserId);
+  } = useTasks(triggerToast, null, wrikeUserId, weekStart);
 
-  // Add a single blank row (from the + button)
+  // Add a single blank row (from the + button) — always stamp today's ISO date
   const addRow = useCallback(async (row) => {
-    await addTask({ ...normaliseLegacyRow(row), source: "legacy" });
+    await addTask({ ...normaliseLegacyRow(row), source: "legacy", date: row.date || isoDate() });
   }, [addTask]);
 
-  // Add multiple rows at once (from Wrike pull)
+  // Add multiple rows at once (from Wrike pull) — ensure ISO date on each
   const addRows = useCallback(async (newRows) => {
-    await addTasks(newRows.map((r) => ({ ...normaliseLegacyRow(r), source: "legacy" })));
+    await addTasks(newRows.map((r) => ({
+      ...normaliseLegacyRow(r),
+      source: "legacy",
+      date: /^\d{4}-\d{2}-\d{2}$/.test(r.date) ? r.date : isoDate(),
+    })));
   }, [addTasks]);
 
   // Update a single field on a row (called as updateRow(id, field, value))
@@ -70,7 +88,7 @@ export function useLegacyRows(triggerToast, wrikeUserId = null) {
     await deleteTasks([id]);
   }, [deleteTasks]);
 
-  // Normalise on read (projectDescription auto-derive)
+  // Normalise on read — week filtering is already applied inside useTasks
   const normalisedRows = useMemo(() => rows.map(normaliseLegacyRow), [rows]);
 
   return {

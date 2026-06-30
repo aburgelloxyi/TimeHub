@@ -18,15 +18,17 @@ export const supabase = createClient(supabaseUrl, supabaseAnonKey);
 })();
 
 /**
- * Returns a Set of all wrike_timelog_ids already stored for this user,
- * across ALL sources (tracker + legacy). Used for cross-page dedup on pull.
+ * Returns a Set of wrike_timelog_ids already stored for this user.
+ * Pass source="legacy" to only check legacy rows (so Legacy pull isn't
+ * blocked by timelogs already pulled by Tracker, and vice versa).
  */
-export async function fetchExistingTimelogIds(wrikeUserId) {
+export async function fetchExistingTimelogIds(wrikeUserId, source = null) {
   let query = supabase
     .from("tasks")
     .select("wrike_timelog_id")
     .not("wrike_timelog_id", "is", null);
   if (wrikeUserId) query = query.eq("wrike_user_id", wrikeUserId);
+  if (source) query = query.eq("source", source);
   const { data } = await query;
   return new Set(
     (data ?? []).flatMap((r) =>

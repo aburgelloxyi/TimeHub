@@ -233,6 +233,7 @@ export function CsvPreviewModal({
   campaignName,
   taskTitle,
   territoryName,
+  sourceFolder,
   onClose,
 }) {
   const [copied, setCopied] = useState(false);
@@ -294,13 +295,41 @@ export function CsvPreviewModal({
     return rows.join("\n");
   }, [formattedData]);
 
-  const handleCopy = () => {
-    const batchMatch = taskTitle?.match(/batch\s*[\w\d]+/i);
-    const batchStr = batchMatch ? batchMatch[0] : "";
+const handleCopy = () => {
+    let batchStr = "";
+    
+    if (taskTitle) {
+      const explicitBatchMatch = taskTitle.match(/batch\s*[\w\d]+/i);
+      
+      if (explicitBatchMatch) {
+        // If it explicitly says "Batch XYZ", grab it and underscore it
+        batchStr = explicitBatchMatch[0].replace(/\s+/g, "_");
+      } else if (territoryName) {
+        // Fallback: Look for text after the territory name
+        const safeTerr = territoryName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        // Match territory name and capture everything after, ignoring leading symbols/spaces
+        const regex = new RegExp(`${safeTerr}[\\s\\W]*([^$]+)`, "i");
+        const match = taskTitle.match(regex);
+        
+        if (match && match[1]) {
+          let afterText = match[1].trim();
+          // Remove the word "batch" if it happens to be at the start of the captured text
+          afterText = afterText.replace(/^batch[\s\W]*/i, "");
+          // Replace any spaces or remaining symbols with underscores, and trim ends
+          afterText = afterText.replace(/[\s\W]+/g, "_").replace(/^_|_$/g, "");
+          
+          if (afterText) {
+            batchStr = `Batch_${afterText}`;
+          }
+        }
+      }
+    }
 
     const metadata = `[METADATA]\nTerritory: ${
       territoryName || ""
-    }\nBatch: ${batchStr}\n[/METADATA]\n\n`;
+    }\nBatch: ${batchStr}\nSource Folder: ${
+      sourceFolder || ""
+    }\n[/METADATA]\n\n`;
     const payload = metadata + csvString;
 
     navigator.clipboard.writeText(payload).catch(() => {});
@@ -1368,6 +1397,11 @@ export default function TaskDetailModal({
           campaignName={campaignName}
           taskTitle={task.title}
           territoryName={smartTerritory}
+          sourceFolder={
+            folderPaths.find((f) => f.title.toUpperCase() === "FOLDER")?.url || 
+            folderPaths[0]?.url || 
+            ""
+          }
           onClose={() => setCsvPreviewData(null)}
         />
       )}

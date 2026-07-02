@@ -64,7 +64,7 @@ const TIME_OPTIONS = [
   ...Array.from({ length: 48 }, (_, i) => ((i + 1) * 0.5).toString()),
 ];
 
-// --- HELPER: Dark Mode Dynamic Status Tags ---
+// --- HELPER: Dark Mode Dynamic Status Tags --
 const getDarkTagStyle = (tag) => {
   const baseStyle =
     "text-[9px] font-black uppercase tracking-wider px-2 py-0.5 rounded-md border whitespace-nowrap inline-flex items-center justify-center shadow-sm";

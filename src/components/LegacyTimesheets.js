@@ -1003,7 +1003,13 @@ export default function LegacyTimesheet({ wrikeData, isAdmin = false }) {
         const groupName = fields.jobNumber || "Others (No Job Number)";
 
         let client = "";
-        let filmTitle = task?.projectName || "";
+        // Job number "Film Name : CODE, Description" is the ground truth — prefer it over
+        // task.projectName, which comes from fragile Wrike folder tree-climbing and can
+        // misfire on shared/multi-parent folder structures.
+        let filmTitle = "";
+        const jobColonMatch2 = (fields.jobNumber || "").match(/^([^:]+)\s*:/);
+        if (jobColonMatch2) filmTitle = jobColonMatch2[1].trim();
+        if (!filmTitle) filmTitle = task?.projectName || "";
         const searchTitle = (task?.title || "").toUpperCase();
         // Check FILM_MAPPINGS — match by value against jobNumber or filmTitle
         const _filmMatch2 = Object.entries(FILM_MAPPINGS).find(
@@ -1369,7 +1375,13 @@ export default function LegacyTimesheet({ wrikeData, isAdmin = false }) {
           const guessed = guessFieldsFromTask(task);
 
           let client = "";
-          let filmTitle = task?.projectName || "";
+          // Job number "Film Name : CODE, Description" is the ground truth — prefer it over
+          // task.projectName, which comes from fragile Wrike folder tree-climbing and can
+          // misfire on shared/multi-parent folder structures.
+          let filmTitle = "";
+          const jobColonMatch1 = (guessed.jobNumber || "").match(/^([^:]+)\s*:/);
+          if (jobColonMatch1) filmTitle = jobColonMatch1[1].trim();
+          if (!filmTitle) filmTitle = task?.projectName || "";
           if (
             filmTitle &&
             filmTitle === filmTitle.toUpperCase() &&
@@ -1421,7 +1433,7 @@ export default function LegacyTimesheet({ wrikeData, isAdmin = false }) {
             wrikeTimelogId: allIds.join(","),
             taskId: task?.id,
             dayOfWeek,
-            date: logDate.toISOString().slice(0, 10),
+            date: logDate.toLocaleDateString("en-GB"),
             jobNumber: guessed.jobNumber,
             client,
             filmTitle,

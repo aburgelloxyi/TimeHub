@@ -27,6 +27,9 @@ export const guessFieldsFromTask = (linkedTask, jobOptions = [], extraText = "")
   }
 
   // Derive film title: most-frequent folder before "DIGITAL" across all paths (avoids reference paths)
+  // NOTE: job-number-derived title (below, after guessedJob is computed) takes priority over this —
+  // projectName comes from fragile Wrike folder tree-climbing and can misfire on shared/multi-parent
+  // folder structures (e.g. picking up a sibling campaign's folder instead of the real one).
   let filmTitle = linkedTask.projectName || "";
   if (!filmTitle && pathText) {
     const pathSegments = pathText.match(/\/Volumes\/[^\s]+/gi) || [];
@@ -110,8 +113,11 @@ export const guessFieldsFromTask = (linkedTask, jobOptions = [], extraText = "")
     }
   }
 
-  // Fallback: extract film name from job number "Film Name : CODE, Description"
-  if (!filmTitle && guessedJob && guessedJob !== "⚠️ Unassigned") {
+  // Job number "Film Name : CODE, Description" is the ground truth — it's a stable,
+  // user-maintained format, whereas the projectName/path-derived filmTitle above comes from
+  // fragile Wrike folder tree-climbing that can misfire (e.g. picking a sibling campaign's
+  // folder). Always prefer the job-number-derived title when the job number has this format.
+  if (guessedJob && guessedJob !== "⚠️ Unassigned") {
     const jobColonMatch = guessedJob.match(/^([^:]+)\s*:/);
     if (jobColonMatch) filmTitle = jobColonMatch[1].trim();
   }

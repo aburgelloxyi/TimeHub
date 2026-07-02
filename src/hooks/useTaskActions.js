@@ -74,7 +74,7 @@ export function useTaskActions(state) {
       dayOfWeek: selectedDay,
       rawSeconds: finalSeconds,
       additionalSeconds: 0,
-      date: new Date().toISOString().slice(0, 10),
+      date: new Date().toLocaleDateString("en-GB"),
       timeLogged: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
     };
 
@@ -263,7 +263,16 @@ export function useTaskActions(state) {
       return;
     }
     const taskIds = groupTasks.map((t) => t.id);
-    updateTasks(taskIds, { jobNumber: editGroupForm.jobNumber, territory: editGroupForm.territory, category: editGroupForm.category });
+    // Re-derive filmTitle from the (possibly newly-picked) job number "Film Name : CODE, ..." —
+    // otherwise a stale filmTitle from a bad Wrike folder-tree guess would survive the edit.
+    const jobColonMatch = editGroupForm.jobNumber.match(/^([^:]+)\s*:/);
+    const filmTitle = jobColonMatch ? jobColonMatch[1].trim() : undefined;
+    updateTasks(taskIds, {
+      jobNumber: editGroupForm.jobNumber,
+      territory: editGroupForm.territory,
+      category: editGroupForm.category,
+      ...(filmTitle ? { filmTitle } : {}),
+    });
     if (editGroupForm.jobNumber && !jobOptions.includes(editGroupForm.jobNumber)) {
       setJobOptions((prev) => [...prev, editGroupForm.jobNumber]);
     }
@@ -455,7 +464,7 @@ export function useTaskActions(state) {
       dayOfWeek: selectedDay,
       rawSeconds: finalSeconds,
       additionalSeconds: 0,
-      date: new Date().toISOString().slice(0, 10),
+      date: new Date().toLocaleDateString("en-GB"),
       timeLogged: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
     };
     addTask(newTask);

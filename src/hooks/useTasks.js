@@ -107,10 +107,14 @@ export function useTasks(triggerToast, source = null, wrikeUserId = null, weekSt
   useEffect(() => {
     const fetchTasks = async () => {
       setLoading(true);
+      // Note: "date" is a text column with mixed historical formats (ISO and
+      // dd/mm/yyyy), so filtering it with .gte() at the DB level is unreliable
+      // (lexicographic string comparison, not a real date compare). Instead we
+      // fetch all matching rows and filter by weekStart client-side after
+      // normalising every date to ISO below.
       let query = supabase.from("tasks").select("*").order("id", { ascending: false });
       if (source) query = query.eq("source", source);
       if (effectiveUid) query = query.eq("wrike_user_id", effectiveUid);
-      if (weekStart) query = query.gte("date", weekStart);
 
       const { data, error } = await query;
 

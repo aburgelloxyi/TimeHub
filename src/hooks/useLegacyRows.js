@@ -43,8 +43,9 @@ export function getCurrentWeekStart() {
   return `${monday.getFullYear()}-${String(monday.getMonth() + 1).padStart(2, "0")}-${String(monday.getDate()).padStart(2, "0")}`;
 }
 
-const isoDate = (d = new Date()) =>
-  `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+// dd/mm/yyyy — the canonical stored format for task dates
+const dmyDate = (d = new Date()) =>
+  `${String(d.getDate()).padStart(2, "0")}/${String(d.getMonth() + 1).padStart(2, "0")}/${d.getFullYear()}`;
 
 export function useLegacyRows(triggerToast, wrikeUserId = null) {
   const weekStart = useRef(getCurrentWeekStart()).current;
@@ -59,17 +60,17 @@ export function useLegacyRows(triggerToast, wrikeUserId = null) {
     deleteTasks,
   } = useTasks(triggerToast, null, wrikeUserId, weekStart);
 
-  // Add a single blank row (from the + button) — always stamp today's ISO date
+  // Add a single blank row (from the + button) — always stamp today's date
   const addRow = useCallback(async (row) => {
-    await addTask({ ...normaliseLegacyRow(row), source: "legacy", date: row.date || isoDate() });
+    await addTask({ ...normaliseLegacyRow(row), source: "legacy", date: row.date || dmyDate() });
   }, [addTask]);
 
-  // Add multiple rows at once (from Wrike pull) — ensure ISO date on each
+  // Add multiple rows at once (from Wrike pull) — ensure a valid dd/mm/yyyy date on each
   const addRows = useCallback(async (newRows) => {
     await addTasks(newRows.map((r) => ({
       ...normaliseLegacyRow(r),
       source: "legacy",
-      date: /^\d{4}-\d{2}-\d{2}$/.test(r.date) ? r.date : isoDate(),
+      date: /^\d{2}\/\d{2}\/\d{4}$/.test(r.date) ? r.date : dmyDate(),
     })));
   }, [addTasks]);
 

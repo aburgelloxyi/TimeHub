@@ -1130,20 +1130,27 @@ function JobsFeedSection() {
 
   const load = useCallback(async () => {
     setLoading(true);
-    let q = supabase
+    // "date" is a text column with mixed historical formats (dd/mm/yyyy and
+    // ISO), so filtering it with .gte()/.lt() at the DB level is unreliable —
+    // it's a lexicographic string compare, not a real date compare. Fetch
+    // everything and filter by month client-side after normalising to ISO.
+    const { data: allTasks } = await supabase
       .from("tasks")
       .select("*")
       .order("id", { ascending: false })
       .limit(2000);
 
-    if (monthFilter) {
-      const start = `${monthFilter}-01`;
-      const end = new Date(start);
-      end.setMonth(end.getMonth() + 1);
-      q = q.gte("date", start).lt("date", end.toISOString().slice(0, 10));
-    }
+    const toIso = (d) => {
+      if (!d) return null;
+      if (/^\d{4}-\d{2}-\d{2}$/.test(d)) return d;
+      const m = d.match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
+      return m ? `${m[3]}-${m[2]}-${m[1]}` : null;
+    };
 
-    const { data: tasks } = await q;
+    const tasks = monthFilter
+      ? (allTasks || []).filter(t => (toIso(t.date) || "").startsWith(monthFilter))
+      : allTasks;
+
     if (!tasks?.length) { setEntries([]); setLoading(false); return; }
 
     const userIds = [...new Set(tasks.map(t => t.wrike_user_id).filter(Boolean))];

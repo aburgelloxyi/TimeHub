@@ -6,6 +6,7 @@ import React, {
   useRef,
 } from "react";
 import { useLegacyRows, getCurrentWeekStart } from "../hooks/useLegacyRows";
+import { useJobLookup } from "../hooks/useJobLookup";
 import {
   setWrikeUserId as stampWrikeUserId,
   fetchExistingTimelogIds,
@@ -487,6 +488,9 @@ export default function LegacyTimesheet({ wrikeData, isAdmin = false }) {
     updateRow,
     deleteRow,
   } = useLegacyRows(showToast, wrikeUserId);
+  // Job Book lookup — lets guessed job/film/client be overridden by admin-curated
+  // data, and self-populates Job Book from real usage the first time a job is seen.
+  const jobLookup = useJobLookup();
   useEffect(() => {
     if (!toast.show) return;
     const t = setTimeout(
@@ -1007,8 +1011,11 @@ export default function LegacyTimesheet({ wrikeData, isAdmin = false }) {
         // task.projectName, which comes from fragile Wrike folder tree-climbing and can
         // misfire on shared/multi-parent folder structures.
         let filmTitle = "";
-        const jobColonMatch2 = (fields.jobNumber || "").match(/^([^:]+)\s*:/);
-        if (jobColonMatch2) filmTitle = jobColonMatch2[1].trim();
+        // Split on " : " (space-colon-space) specifically, not the first bare colon — film
+        // titles can contain their own colon (e.g. "Paw Patrol: The Dino Movie : XY025793, ...").
+        if ((fields.jobNumber || "").includes(" : ")) {
+          filmTitle = fields.jobNumber.split(" : ")[0].trim();
+        }
         if (!filmTitle) filmTitle = task?.projectName || "";
         const searchTitle = (task?.title || "").toUpperCase();
         // Check FILM_MAPPINGS — match by value against jobNumber or filmTitle
@@ -1044,6 +1051,12 @@ export default function LegacyTimesheet({ wrikeData, isAdmin = false }) {
           filmTitle = "XYi Unbilled";
           if (!client) client = "Internal";
         }
+
+        // Job Book override — an admin-curated record beats any guess above
+        const known2 = jobLookup?.getJob?.(fields.jobNumber);
+        if (known2?.film_title) filmTitle = known2.film_title;
+        if (known2?.client) client = known2.client;
+        jobLookup?.ensureJob?.(fields.jobNumber, { filmTitle, client });
 
         if (!grouped[groupName]) {
           grouped[groupName] = [];
@@ -1379,8 +1392,11 @@ export default function LegacyTimesheet({ wrikeData, isAdmin = false }) {
           // task.projectName, which comes from fragile Wrike folder tree-climbing and can
           // misfire on shared/multi-parent folder structures.
           let filmTitle = "";
-          const jobColonMatch1 = (guessed.jobNumber || "").match(/^([^:]+)\s*:/);
-          if (jobColonMatch1) filmTitle = jobColonMatch1[1].trim();
+          // Split on " : " (space-colon-space) specifically, not the first bare colon — film
+          // titles can contain their own colon (e.g. "Paw Patrol: The Dino Movie : XY025793, ...").
+          if ((guessed.jobNumber || "").includes(" : ")) {
+            filmTitle = guessed.jobNumber.split(" : ")[0].trim();
+          }
           if (!filmTitle) filmTitle = task?.projectName || "";
           if (
             filmTitle &&
@@ -1427,6 +1443,12 @@ export default function LegacyTimesheet({ wrikeData, isAdmin = false }) {
             filmTitle = "XYi Unbilled";
             if (!client) client = "Internal";
           }
+
+          // Job Book override — an admin-curated record beats any guess above
+          const known1 = jobLookup?.getJob?.(guessed.jobNumber);
+          if (known1?.film_title) filmTitle = known1.film_title;
+          if (known1?.client) client = known1.client;
+          jobLookup?.ensureJob?.(guessed.jobNumber, { filmTitle, client });
 
           newRows.push({
             id: Date.now() + Math.floor(Math.random() * 1000),

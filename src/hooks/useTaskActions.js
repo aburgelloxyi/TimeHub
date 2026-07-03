@@ -170,7 +170,9 @@ export function useTaskActions(state) {
 
       const guessFields = (taskId, commentText, fallbackTitle) => {
         // Pass comment as extraText so territory aliases (e.g. UAE) in comments are resolved
-        const guessed = guessFieldsFromTask(taskMap[taskId], jobOptions, commentText || "");
+        const guessed = guessFieldsFromTask(taskMap[taskId], jobOptions, commentText || "", state.jobLookup?.getJob);
+        // Register this job number in Job Book the first time it's seen (no-op if already known)
+        state.jobLookup?.ensureJob(guessed.jobNumber, guessed);
         return { ...guessed, notes: commentText || guessed.notes || fallbackTitle };
       };
 
@@ -428,7 +430,7 @@ export function useTaskActions(state) {
 
   // --- Recent jobs ---
   const handleExpandRecentJob = (task) => {
-    const guessed = guessFieldsFromTask(task, jobOptions);
+    const guessed = guessFieldsFromTask(task, jobOptions, "", state.jobLookup?.getJob);
     setRecentTaskDraft({
       taskId: task.id,
       jobNumber: guessed.jobNumber !== "⚠️ Unassigned" ? guessed.jobNumber : "",

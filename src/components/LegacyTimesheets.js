@@ -540,6 +540,16 @@ export default function LegacyTimesheet({ wrikeData, isAdmin = false }) {
         return sum + t + a;
       }, 0);
 
+  // Formats a decimal-hours total as "H:MM" — decimal hours (e.g. "4.17h" for
+  // 4h10m) read like hundredths to a human, so display the same H:MM shape
+  // used everywhere else in the app instead.
+  const formatDayTotal = (hours) => {
+    const mins = Math.round(hours * 60);
+    const h = Math.floor(mins / 60);
+    const m = mins % 60;
+    return `${h}:${String(m).padStart(2, "0")}`;
+  };
+
   // --- Add blank row ---
   const handleAddRow = () => {
     if (frozenDays[activeDay]) return;
@@ -2308,7 +2318,7 @@ export default function LegacyTimesheet({ wrikeData, isAdmin = false }) {
                           : "text-slate-400"
                       }`}
                     >
-                      {getDayTotal(day).toFixed(2)}h
+                      {formatDayTotal(getDayTotal(day))}h
                     </span>
                   )}
                 </div>

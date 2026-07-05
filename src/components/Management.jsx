@@ -1149,7 +1149,18 @@ function JobsFeedSection() {
 
     const tasks = monthFilter
       ? (allTasks || []).filter(t => (toIso(t.date) || "").startsWith(monthFilter))
-      : allTasks;
+      : (allTasks || []);
+
+    // Sort by the job's actual date (not by row id / sync time) — id only
+    // reflects when a row was pulled into the app, which can be well after
+    // the work date it's tagged with. Rows without a parseable date fall
+    // to the bottom; ties break by most-recently-synced first.
+    tasks.sort((a, b) => {
+      const da = toIso(a.date) || "";
+      const db = toIso(b.date) || "";
+      if (da !== db) return db.localeCompare(da);
+      return (b.id || 0) - (a.id || 0);
+    });
 
     if (!tasks?.length) { setEntries([]); setLoading(false); return; }
 

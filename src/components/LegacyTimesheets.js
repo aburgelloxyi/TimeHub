@@ -5,7 +5,8 @@ import React, {
   useMemo,
   useRef,
 } from "react";
-import { useLegacyRows, getCurrentWeekStart } from "../hooks/useLegacyRows";
+import { useLegacyRows, getCurrentWeekStart, hmToHours } from "../hooks/useLegacyRows";
+import { roundToHalfHourSeconds } from "../utils/timeHelpers";
 import { useJobLookup } from "../hooks/useJobLookup";
 import {
   setWrikeUserId as stampWrikeUserId,
@@ -528,12 +529,14 @@ export default function LegacyTimesheet({ wrikeData, isAdmin = false }) {
     rows
       .filter((r) => r.dayOfWeek === day)
       .reduce((sum, r) => {
+        // hmToHours (not parseFloat) — timeSpent may be "H:MM" (Wrike pulls,
+        // unrounded) or a decimal string (manual TIME_OPTIONS picks)
         const t =
-          r.timeSpent === "none" || !r.timeSpent ? 0 : parseFloat(r.timeSpent);
+          r.timeSpent === "none" || !r.timeSpent ? 0 : hmToHours(r.timeSpent);
         const a =
           r.additionalTime === "none" || !r.additionalTime
             ? 0
-            : parseFloat(r.additionalTime);
+            : hmToHours(r.additionalTime);
         return sum + t + a;
       }, 0);
 
@@ -1532,9 +1535,6 @@ export default function LegacyTimesheet({ wrikeData, isAdmin = false }) {
       return;
     }
 
-    // Round seconds to nearest 30 min (0.5h) — timesheet website only accepts half-hours
-    const roundTo30 = (s) => s > 0 ? Math.max(1800, Math.round(s / 1800) * 1800) : 0;
-
     try {
       const mappedTasks = rows.map((row) => {
         const rawSecs = row.rawSeconds ?? 0;
@@ -1587,8 +1587,8 @@ export default function LegacyTimesheet({ wrikeData, isAdmin = false }) {
 
         return Object.values(consolidated).map((c) => ({
           ...c,
-          rawSeconds: roundTo30(c.rawSeconds),
-          additionalSeconds: c.additionalSeconds > 0 ? roundTo30(c.additionalSeconds) : 0,
+          rawSeconds: roundToHalfHourSeconds(c.rawSeconds),
+          additionalSeconds: c.additionalSeconds > 0 ? roundToHalfHourSeconds(c.additionalSeconds) : 0,
           notes: c.notesArray.filter(Boolean).join(" | "),
         }));
       };

@@ -4,7 +4,7 @@ import { useTasks } from "./useTasks";
 // Parses either a decimal string ("1.5") or an "H:MM" string ("1:30") into hours.
 // getTimesheetValue() in LegacyTimesheet.js produces H:MM for Wrike-pulled rows;
 // everything else (TIME_OPTIONS, manual edits) uses decimal strings.
-const hmToHours = (val) => {
+export const hmToHours = (val) => {
   if (typeof val !== "string" || !val.includes(":")) {
     const n = parseFloat(val);
     return isNaN(n) ? 0 : n;
@@ -13,29 +13,20 @@ const hmToHours = (val) => {
   return (h || 0) + (m || 0) / 60;
 };
 
-// Round to nearest 0.5h step — minimum 0.5h for any logged time (never round to 0)
-const roundHalf = (val) => {
-  if (!val || val === "none") return val;
-  const n = hmToHours(val);
-  if (isNaN(n) || n <= 0) return val;
-  const rounded = Math.round(n * 2) / 2;
-  return (rounded > 0 ? rounded : 0.5).toString();
-};
-
-// Normalise a legacy row on add/read — useTasks.fromDb already handles seconds↔hours
+// Normalise a legacy row on add/read — useTasks.fromDb already handles seconds↔hours.
+// No rounding here: Supabase stores the exact pulled/entered time (same as Tracker).
+// 0.5h rounding only happens at JSON-export time (see handleCopyJSON), since that's
+// the only consumer (the old timesheet website) that requires half-hour steps.
 const normaliseLegacyRow = (row) => ({
   ...row,
   territory: row.territory || "",
-  // Round to 0.5h steps for Legacy timesheet display
-  timeSpent: roundHalf(row.timeSpent) || row.timeSpent || "none",
-  additionalTime: row.additionalTime && row.additionalTime !== "none"
-    ? (roundHalf(row.additionalTime) || "none")
-    : (row.additionalTime || "none"),
-  // Derive rawSeconds from the rounded timeSpent for in-memory use.
-  // Uses hmToHours so "H:MM" values (from Wrike pulls) convert correctly
-  // instead of being truncated by parseFloat at the colon.
+  timeSpent: row.timeSpent || "none",
+  additionalTime: row.additionalTime || "none",
+  // Derive rawSeconds from timeSpent for in-memory use. Uses hmToHours so "H:MM"
+  // values (from Wrike pulls) convert correctly instead of being truncated by
+  // parseFloat at the colon.
   rawSeconds: row.rawSeconds || (row.timeSpent && row.timeSpent !== "none"
-    ? Math.round(hmToHours(roundHalf(row.timeSpent) || row.timeSpent) * 3600)
+    ? Math.round(hmToHours(row.timeSpent) * 3600)
     : 0),
   // Auto-derive project description from job number
   projectDescription: row.projectDescription ||

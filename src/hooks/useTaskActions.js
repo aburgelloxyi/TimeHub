@@ -1,6 +1,7 @@
 import { DAYS_OF_WEEK } from "../constants";
 import { guessFieldsFromTask } from "../utils/wrikeHelpers";
 import { fetchExistingTimelogIds } from "../lib/supabaseClient";
+import { roundToHalfHourSeconds } from "../utils/timeHelpers";
 
 /**
  * All task manipulation handlers: log, delete, edit group/task/time/note,
@@ -194,6 +195,7 @@ export function useTaskActions(state) {
         newTasks.push({
           id: Date.now() + Math.floor(Math.random() * 1000),
           wrikeTimelogId: log.id,
+          taskId: log.taskId,
           ...fields,
           projectDescription,
           dayOfWeek: DAYS_OF_WEEK.includes(logDayName) ? logDayName : "Monday",
@@ -214,6 +216,7 @@ export function useTaskActions(state) {
         newTasks.push({
           id: Date.now() + Math.floor(Math.random() * 1000),
           wrikeTimelogId: timerUniqueId,
+          taskId: timer.taskId,
           ...fields,
           notes: `${fields.notes} [Live Wrike Timer ⏱️]`,
           dayOfWeek: DAYS_OF_WEEK.includes(logDayName) ? logDayName : "Monday",
@@ -383,8 +386,12 @@ export function useTaskActions(state) {
         consolidated[key].notesArray.push(t.notes);
       }
     });
+    // Round to nearest 0.5h at export time only — the old timesheet website
+    // only accepts half-hour values. Supabase itself stores unrounded time.
     return Object.values(consolidated).map((c) => ({
       ...c,
+      rawSeconds: roundToHalfHourSeconds(c.rawSeconds),
+      additionalSeconds: c.additionalSeconds > 0 ? roundToHalfHourSeconds(c.additionalSeconds) : 0,
       notes: c.notesArray.filter(Boolean).join(" | "),
     }));
   };

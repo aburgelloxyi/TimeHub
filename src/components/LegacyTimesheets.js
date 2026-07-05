@@ -2308,7 +2308,7 @@ export default function LegacyTimesheet({ wrikeData, isAdmin = false }) {
                           : "text-slate-400"
                       }`}
                     >
-                      {getDayTotal(day)}h
+                      {getDayTotal(day).toFixed(2)}h
                     </span>
                   )}
                 </div>

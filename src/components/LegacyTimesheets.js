@@ -1,9 +1,7 @@
 import React, {
   useState,
   useEffect,
-  useLayoutEffect,
   useMemo,
-  useRef,
 } from "react";
 import { useLegacyRows, getCurrentWeekStart, hmToHours } from "../hooks/useLegacyRows";
 import { roundToHalfHourSeconds } from "../utils/timeHelpers";
@@ -36,387 +34,8 @@ import {
   REGION_ALIASES,
   FILM_MAPPINGS,
 } from "../constants.js";
-
-const COLUMNS = [
-  "Job Number",
-  "Client",
-  "Film Title",
-  "Project Description",
-  "Country",
-  "Category",
-  "Client Amends",
-  "Notes",
-  "3D",
-  "Time Spent",
-  "Additional Time",
-];
-
-const DAYS = [
-  "Monday",
-  "Tuesday",
-  "Wednesday",
-  "Thursday",
-  "Friday",
-  "Saturday",
-  "Sunday",
-];
-
-const TIME_OPTIONS = [
-  "none",
-  ...Array.from({ length: 48 }, (_, i) => ((i + 1) * 0.5).toString()),
-];
-
-// --- HELPER: Dark Mode Dynamic Status Tags --
-const getDarkTagStyle = (tag) => {
-  const baseStyle =
-    "text-[9px] font-black uppercase tracking-wider px-2 py-0.5 rounded-md border whitespace-nowrap inline-flex items-center justify-center shadow-sm";
-
-  if (!tag)
-    return `${baseStyle} bg-slate-800/50 text-slate-400 border-slate-700/50`;
-
-  const lowerTag = String(tag).toLowerCase();
-
-  if (lowerTag.includes("to amend"))
-    return `${baseStyle} bg-rose-500/10 text-rose-400 border-rose-500/20`;
-  if (lowerTag.includes("render review"))
-    return `${baseStyle} bg-indigo-500/10 text-indigo-400 border-indigo-500/20`;
-  if (lowerTag.includes("revised"))
-    return `${baseStyle} bg-teal-500/10 text-teal-400 border-teal-500/20`;
-  if (lowerTag.includes("creative approved"))
-    return `${baseStyle} bg-blue-500/10 text-blue-400 border-blue-500/20`;
-  if (lowerTag.includes("content approved"))
-    return `${baseStyle} bg-purple-500/10 text-purple-400 border-purple-500/20`;
-  if (lowerTag.includes("client review") || lowerTag.includes("content review"))
-    return `${baseStyle} bg-yellow-500/10 text-yellow-400 border-yellow-500/20`;
-  if (lowerTag.includes("motion"))
-    return `${baseStyle} bg-emerald-500/10 text-emerald-400 border-emerald-500/20`;
-  if (lowerTag.includes("digital"))
-    return `${baseStyle} bg-cyan-500/10 text-cyan-400 border-cyan-500/20`;
-  if (lowerTag.includes("prep for delivery"))
-    return `${baseStyle} bg-orange-500/10 text-orange-400 border-orange-500/20`;
-  if (lowerTag === "delivering" || lowerTag === "delivery")
-    return `${baseStyle} bg-amber-500/10 text-amber-400 border-amber-500/20`;
-  if (lowerTag.includes("on hold"))
-    return `${baseStyle} bg-red-500/10 text-red-400 border-red-500/20`;
-  if (lowerTag.includes("pm"))
-    return `${baseStyle} bg-fuchsia-500/10 text-fuchsia-400 border-fuchsia-500/20`;
-  if (lowerTag.includes("completed") || lowerTag.includes("delivered"))
-    return `${baseStyle} bg-emerald-500/10 text-emerald-400 border-emerald-500/20`;
-
-  return `${baseStyle} bg-slate-800/50 text-slate-300 border-slate-700/80`;
-};
-
-// --- MODERN SEARCHABLE SELECT FOR TABLE ROWS ---
-const TableSearchableSelect = ({
-  options,
-  value,
-  onChange,
-  placeholder,
-  getPrefix,
-  isGrouped = false,
-  dropdownId,
-  activeDropdown,
-  setActiveDropdown,
-  isCountry = false,
-  isTime = false,
-  isCategory = false,
-  isJob = false,
-  disabled = false,
-  isDarkModal = false,
-}) => {
-  const isOpen = activeDropdown === dropdownId && !disabled;
-  const [searchTerm, setSearchTerm] = useState(value || "");
-  const wrapperRef = useRef(null);
-  const [fixedStyle, setFixedStyle] = useState({});
-
-  useEffect(() => {
-    setSearchTerm(value || "");
-  }, [value]);
-
-  // Compute fixed position on open so the dropdown escapes any overflow container.
-  // useLayoutEffect fires before paint so the dropdown never renders at position 0,0.
-  useLayoutEffect(() => {
-    if (!isOpen || !wrapperRef.current) return;
-    const rect = wrapperRef.current.getBoundingClientRect();
-    const vw = window.innerWidth;
-    const vh = window.innerHeight;
-
-    let w = 300;
-    if (isCountry) w = Math.min(800, vw - 16);
-    else if (isCategory) w = Math.min(750, vw - 16);
-    else if (isTime) w = 160;
-
-    const rightAlign = isTime || (isCategory && !isDarkModal);
-    let left = rightAlign ? rect.right - w : rect.left;
-    left = Math.max(4, Math.min(left, vw - w - 4));
-
-    const spaceBelow = vh - rect.bottom;
-    const flipUp = spaceBelow < 220 && rect.top > spaceBelow;
-    const vertical = flipUp
-      ? { bottom: vh - rect.top + 4 }
-      : { top: rect.bottom + 4 };
-
-    setFixedStyle({
-      position: "fixed",
-      zIndex: 999999,
-      left,
-      width: w,
-      ...vertical,
-    });
-  }, [isOpen, isTime, isCountry, isCategory, isDarkModal]);
-
-  const filteredOptions = options.filter((opt) => {
-    if (searchTerm === value) return true;
-    return opt.toLowerCase().includes(searchTerm.toLowerCase());
-  });
-
-  const groupedOptions = {};
-  if (isGrouped) {
-    filteredOptions.forEach((opt) => {
-      let group = "Misc / General";
-      if (opt.includes(" : ")) group = opt.split(" : ")[0];
-      else if (opt.includes(" - ")) group = opt.split(" - ")[0];
-      else if (opt.startsWith("XYi")) group = "XYi Internal";
-
-      if (!groupedOptions[group]) groupedOptions[group] = [];
-      groupedOptions[group].push(opt);
-    });
-  }
-
-  const getDisplayLabel = (opt) => {
-    if (isJob) return opt;
-    if (isGrouped && opt.includes(" : "))
-      return opt.split(" : ").slice(1).join(" : ");
-    if (isGrouped && opt.includes(" - "))
-      return opt.split(" - ").slice(1).join(" - ");
-    return opt;
-  };
-
-  let gridClass = "grid-cols-1";
-  if (isCountry) gridClass = "grid-cols-2 sm:grid-cols-3 lg:grid-cols-4";
-  else if (isTime) gridClass = "grid-cols-2";
-
-  return (
-    <div
-      ref={wrapperRef}
-      className={`relative w-full ${isOpen ? "z-[999999]" : "z-50"}`}
-    >
-      {isOpen && (
-        <div
-          className="fixed inset-0 z-40"
-          onMouseDown={(e) => {
-            e.stopPropagation();
-            setActiveDropdown(null);
-            onChange(searchTerm);
-          }}
-        />
-      )}
-
-      <div
-        className={`relative flex items-center border rounded-xl z-50 transition-all ${
-          disabled
-            ? "opacity-45 cursor-not-allowed bg-transparent border-transparent"
-            : isOpen
-            ? `border-[#12a0e1] ring-4 ring-[#12a0e1]/10 ${
-                isDarkModal ? "bg-[#1e2530]" : "bg-white"
-              }`
-            : `border-transparent ${
-                isDarkModal
-                  ? "hover:border-[#384252] hover:bg-[#1e2530]"
-                  : "hover:border-slate-300 hover:bg-white/50 bg-transparent"
-              }`
-        }`}
-      >
-        {getPrefix && getPrefix(searchTerm) && (
-          <span
-            className={`pl-2.5 text-sm leading-none ${
-              disabled ? "opacity-50" : ""
-            }`}
-          >
-            {getPrefix(searchTerm)}
-          </span>
-        )}
-        <input
-          type="text"
-          value={searchTerm}
-          onChange={(e) => {
-            if (disabled) return;
-            setSearchTerm(e.target.value);
-            if (!isOpen) setActiveDropdown(dropdownId);
-          }}
-          onFocus={() => {
-            if (!disabled) setActiveDropdown(dropdownId);
-          }}
-          disabled={disabled}
-          placeholder={placeholder}
-          title={searchTerm}
-          className={`w-full py-2 px-2.5 bg-transparent text-[12px] font-semibold outline-none truncate ${
-            isDarkModal
-              ? "text-slate-100 placeholder:text-slate-600"
-              : "text-slate-800 placeholder:text-slate-400"
-          } ${isCountry && !isDarkModal ? "text-[#3b5998]" : ""} ${
-            isTime ? "text-center" : ""
-          } ${disabled ? "cursor-not-allowed" : ""}`}
-        />
-        <ChevronDown
-          className={`w-3.5 h-3.5 mr-2 shrink-0 transition-transform duration-200 ${
-            isOpen ? "rotate-180" : ""
-          } ${
-            disabled
-              ? "text-slate-300"
-              : isDarkModal
-              ? "text-slate-500 hover:text-slate-400 cursor-pointer"
-              : "text-slate-400 cursor-pointer"
-          }`}
-          onClick={() =>
-            !disabled && setActiveDropdown(isOpen ? null : dropdownId)
-          }
-        />
-      </div>
-
-      {isOpen && (
-        <div
-          style={fixedStyle}
-          className={`fixed border shadow-2xl max-h-[350px] overflow-y-auto custom-scrollbar animate-in fade-in slide-in-from-top-2 duration-200 rounded-2xl ${
-            isDarkModal
-              ? "bg-[#19202b] border-[#2d3748]"
-              : "bg-white border-slate-200"
-          }`}
-        >
-          {filteredOptions.length > 0 ? (
-            isGrouped ? (
-              Object.entries(groupedOptions)
-                .sort(([groupA], [groupB]) => {
-                  const aIsMatch = value && value.includes(groupA);
-                  const bIsMatch = value && value.includes(groupB);
-                  if (aIsMatch && !bIsMatch) return -1;
-                  if (!aIsMatch && bIsMatch) return 1;
-                  return 0;
-                })
-                .map(([groupName, items]) => (
-                  <div
-                    key={groupName}
-                    className={`border-b last:border-0 ${
-                      isDarkModal ? "border-[#263143]" : "border-slate-100"
-                    }`}
-                  >
-                    <div
-                      className={`px-4 py-2 text-[10px] font-bold uppercase tracking-widest sticky top-0 z-10 flex items-center justify-between ${
-                        isDarkModal
-                          ? "bg-[#202938] text-[#4ea8de]"
-                          : "bg-slate-50 text-[#12a0e1]"
-                      }`}
-                    >
-                      <span>{groupName}</span>
-                      {value && value.includes(groupName) && (
-                        <span
-                          className={`px-1.5 py-0.5 rounded-full text-[9px] font-black tracking-normal ${
-                            isDarkModal
-                              ? "bg-[#4ea8de]/20 text-[#4ea8de]"
-                              : "bg-[#12a0e1]/10 text-[#12a0e1]"
-                          }`}
-                        >
-                          ACTIVE
-                        </span>
-                      )}
-                    </div>
-                    <div
-                      className={`grid gap-x-4 gap-y-1 p-2.5 ${
-                        isCategory
-                          ? "grid-cols-1 sm:grid-cols-2 lg:grid-cols-3"
-                          : "grid-cols-1"
-                      }`}
-                    >
-                      {items.map((opt, i) => (
-                        <button
-                          type="button"
-                          key={i}
-                          onClick={() => {
-                            setSearchTerm(opt);
-                            onChange(opt);
-                            setActiveDropdown(null);
-                          }}
-                          className={`w-full text-left px-3 py-2 text-[11px] font-semibold transition-all rounded-xl flex items-start leading-tight ${
-                            value === opt
-                              ? isDarkModal
-                                ? "bg-[#12a0e1]/20 text-white font-bold"
-                                : "bg-[#12a0e1]/10 text-[#12a0e1]"
-                              : isDarkModal
-                              ? "text-slate-300 hover:bg-[#253042] hover:text-white"
-                              : "text-slate-700 hover:bg-[#12a0e1]/10 hover:text-[#12a0e1]"
-                          }`}
-                          title={opt}
-                        >
-                          <span
-                            className={
-                              isJob
-                                ? "whitespace-normal break-words"
-                                : "truncate"
-                            }
-                          >
-                            {getDisplayLabel(opt)}
-                          </span>
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-                ))
-            ) : (
-              <div className={`grid gap-1 p-2 ${gridClass}`}>
-                {[...filteredOptions]
-                  .sort((a, b) => {
-                    if (a === value) return -1;
-                    if (b === value) return 1;
-                    return 0;
-                  })
-                  .map((opt, i) => (
-                    <button
-                      type="button"
-                      key={i}
-                      onClick={() => {
-                        setSearchTerm(opt);
-                        onChange(opt);
-                        setActiveDropdown(null);
-                      }}
-                      className={`w-full text-left py-2 text-[11px] font-semibold transition-all rounded-xl flex items-center ${
-                        isTime
-                          ? "justify-center font-mono font-bold px-1"
-                          : "px-3 truncate"
-                      } ${
-                        value === opt
-                          ? isDarkModal
-                            ? "bg-[#12a0e1]/20 text-white font-bold"
-                            : "bg-[#12a0e1]/10 text-[#12a0e1]"
-                          : isDarkModal
-                          ? "text-slate-300 hover:bg-[#253042] hover:text-white"
-                          : "text-slate-700 hover:bg-[#12a0e1]/10 hover:text-[#12a0e1]"
-                      }`}
-                      title={opt}
-                    >
-                      {getPrefix && getPrefix(opt) && (
-                        <span className="mr-2 text-base leading-none shrink-0">
-                          {getPrefix(opt)}
-                        </span>
-                      )}
-                      <span className={isTime ? "" : "truncate"}>{opt}</span>
-                    </button>
-                  ))}
-              </div>
-            )
-          ) : (
-            <div
-              className={`px-4 py-3 text-xs italic ${
-                isDarkModal ? "text-slate-500" : "text-slate-400"
-              }`}
-            >
-              No matches found. Press enter to keep custom text.
-            </div>
-          )}
-        </div>
-      )}
-    </div>
-  );
-};
+import { COLUMNS, DAYS, TIME_OPTIONS, getDarkTagStyle } from "./legacy/legacyConstants";
+import TableSearchableSelect from "./legacy/TableSearchableSelect";
 
 export default function LegacyTimesheet({ wrikeData, isAdmin = false }) {
   const [activeDay, setActiveDay] = useState(() => {
@@ -440,12 +59,17 @@ export default function LegacyTimesheet({ wrikeData, isAdmin = false }) {
     localStorage.setItem("xyi_legacy_frozenDays", JSON.stringify(frozenDays));
   }, [frozenDays]);
 
-  // Auto-detect new week on mount
+  // Auto-detect new week on mount. frozenDays is keyed by weekday name only
+  // ("Monday", not "the Monday of week X"), so it has to be cleared whenever
+  // the week rolls over — otherwise a day frozen last week (e.g. to lock a
+  // submitted timesheet) stays frozen for every future occurrence of that
+  // weekday, silently blocking pulls/edits for the new week too.
   useEffect(() => {
     const current = getCurrentWeekStart();
     const stored = localStorage.getItem("xyi_last_week_start");
     if (stored && stored !== current) {
       setNewWeekBanner(true);
+      setFrozenDays({});
     }
     localStorage.setItem("xyi_last_week_start", current);
   }, []);
@@ -488,7 +112,14 @@ export default function LegacyTimesheet({ wrikeData, isAdmin = false }) {
     addRows,
     updateRow,
     deleteRow,
+    weekStart,
   } = useLegacyRows(showToast, wrikeUserId);
+
+  // "dd/mm/yyyy" -> "yyyy-mm-dd", for comparing against weekStart (ISO)
+  const toIsoDate = (d) => {
+    const m = typeof d === "string" && d.match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
+    return m ? `${m[3]}-${m[2]}-${m[1]}` : null;
+  };
   // Job Book lookup — lets guessed job/film/client be overridden by admin-curated
   // data, and self-populates Job Book from real usage the first time a job is seen.
   const jobLookup = useJobLookup();
@@ -1486,10 +1117,16 @@ export default function LegacyTimesheet({ wrikeData, isAdmin = false }) {
 
       if (newRows.length > 0) {
         addRows(newRows);
+        // The grid only shows rows from the current week (weekStart) — a
+        // debug pull for an older date saves fine but won't appear here, so
+        // say so instead of implying it's now visible in the table below.
+        const pulledBeforeThisWeek = newRows.some(
+          (r) => (toIsoDate(r.date) || "") < weekStart
+        );
         showToast(
-          `Pulled ${newRows.length} row${
-            newRows.length !== 1 ? "s" : ""
-          } from Wrike.`,
+          pulledBeforeThisWeek
+            ? `Pulled ${newRows.length} row${newRows.length !== 1 ? "s" : ""} from Wrike — from a previous week, so it won't show in this grid. Check Jobs Feed to verify.`
+            : `Pulled ${newRows.length} row${newRows.length !== 1 ? "s" : ""} from Wrike.`,
           "success"
         );
       } else {

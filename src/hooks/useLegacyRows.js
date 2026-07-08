@@ -106,5 +106,6 @@ export function useLegacyRows(triggerToast, wrikeUserId = null) {
     addRows,
     updateRow,
     deleteRow,
+    weekStart,
   };
 }

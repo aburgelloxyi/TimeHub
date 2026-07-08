@@ -4,6 +4,7 @@ import {
   Plus, Pencil, Trash2, X, Check, Search,
   RefreshCw, Shield, AlertTriangle, ChevronLeft, ChevronRight,
   ArrowUpAZ, ArrowDownAZ, LayoutDashboard, TrendingUp, CheckCircle2, UserCog, Activity,
+  FolderPlus, Folder, FolderOpen, Sparkles, Loader2,
 } from "lucide-react";
 import { supabase } from "../lib/supabaseClient";
 import { SEED_CLIENTS, SEED_PROJECT_DESCRIPTIONS } from "../data/seedData";
@@ -27,6 +28,7 @@ const PRINT_DIGITAL = ["Digital", "Print", "Both"];
 
 const TABS = [
   { id: "overview",  label: "Overview",            icon: LayoutDashboard },
+  { id: "filmSetup", label: "Film Setup",          icon: FolderPlus },
   { id: "jobs",      label: "Job Book",            icon: Briefcase },
   { id: "feed",      label: "Jobs Feed",           icon: Activity  },
   { id: "people",    label: "People",              icon: Users     },
@@ -39,7 +41,7 @@ const TABS = [
 
 const TAB_GROUPS = [
   { ids: ["overview"] },
-  { ids: ["jobs", "feed"],      label: "Jobs"      },
+  { ids: ["filmSetup", "jobs", "feed"],      label: "Jobs"      },
   { ids: ["people", "positions"], label: "Team"    },
   { ids: ["films", "clients", "categories", "descs"], label: "Reference" },
 ];
@@ -690,6 +692,60 @@ function ComboField({ label, value, onChange, options, placeholder, required, fi
   );
 }
 
+// Searchable, selection-only dropdown — same visual language as ComboField's
+// popup, but you can't commit free text, only pick an existing option. Use
+// for pickers whose values must reference an existing row (e.g. Film Setup's
+// film picker), as opposed to ComboField which lets you introduce new values.
+function StrictSelect({ value, onChange, options, placeholder, loading, className = "" }) {
+  const [q, setQ] = useState("");
+  const [open, setOpen] = useState(false);
+
+  const hits = useMemo(() => {
+    if (!q) return options.slice(0, 60);
+    return options.filter(o => o.toLowerCase().includes(q.toLowerCase())).slice(0, 60);
+  }, [options, q]);
+
+  return (
+    <div className={`relative ${className}`}>
+      <button type="button" disabled={loading}
+        onClick={() => setOpen(o => !o)}
+        className="w-full flex items-center justify-between gap-2 border border-[#dce4ec] rounded-xl px-3 py-2.5 text-sm font-bold text-[#122027] outline-none focus:border-[#12a0e1] bg-white disabled:opacity-50 transition-colors hover:border-[#12a0e1]">
+        <span className={value ? "" : "text-[#b0bec5] font-medium"}>
+          {loading ? "Loading…" : (value || placeholder || "Select…")}
+        </span>
+        <ChevronRight className={`w-3.5 h-3.5 text-[#768994] shrink-0 transition-transform ${open ? "rotate-90" : ""}`} />
+      </button>
+      {open && (
+        <>
+          <div className="fixed inset-0 z-[99]" onClick={() => setOpen(false)} />
+          <div className="absolute z-[100] left-0 right-0 mt-1.5 bg-white border border-[#dce4ec] rounded-2xl shadow-2xl overflow-hidden">
+            <div className="p-2 border-b border-[#dce4ec]/60">
+              <div className="relative">
+                <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-[#b0bec5]" />
+                <input autoFocus value={q} onChange={e => setQ(e.target.value)}
+                  placeholder="Search…"
+                  className="w-full pl-8 pr-2 py-1.5 text-sm text-[#122027] outline-none bg-slate-50 rounded-xl" />
+              </div>
+            </div>
+            <div className="max-h-52 overflow-y-auto">
+              {hits.length === 0 && <p className="px-4 py-3 text-sm text-[#b0bec5]">No matches</p>}
+              {hits.map(o => (
+                <button key={o} type="button"
+                  onClick={() => { onChange(o); setQ(""); setOpen(false); }}
+                  className={`w-full text-left px-4 py-2.5 text-sm border-b border-[#dce4ec]/60 last:border-0 transition-colors ${
+                    o === value ? "bg-[#12a0e1]/10 text-[#12a0e1] font-bold" : "text-[#122027] hover:bg-slate-50"
+                  }`}>
+                  {o}
+                </button>
+              ))}
+            </div>
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
 function PillField({ label, value, onChange, options, colorMap }) {
   return (
     <div>
@@ -896,6 +952,409 @@ function JobModal({ job, clients, films, categories, descs, onSave, onClose, sav
           </button>
         </div>
       </div>
+    </div>
+  );
+}
+
+// ── Film Setup: Wrike master-template folder trees ────────────────────────────
+// Mirrors each studio's "_STUDIO_MASTER_TEMPLATES" folder in Wrike. Every node
+// tagged jobNumber:true gets its own auto-generated job number when a film is
+// created — mirrors how the real template's "JOBNUMBER_..." folders are
+// currently hand-replaced per new job.
+const FOLDER_TEMPLATES = {
+  Paramount: {
+    label: "_Paramount_MASTER_TEMPLATES",
+    children: [
+      { label: "_House_Keeping" },
+      { label: "Digital" },
+      { label: "Launch", children: [
+        { label: "Artwork_Launch" },
+        { label: "Character_Poster_Launch" },
+        { label: "PLF_Launch" },
+        { label: "Reporting" },
+      ]},
+      { label: "Print", children: [
+        { label: "DOM" },
+        { label: "INT_Creative", children: [
+          { label: "JOBNUMBER_Finishing", jobNumber: true },
+          { label: "JOBNUMBER_Print_Quad_Creation_OV", jobNumber: true },
+          { label: "INTL", children: [
+            { label: "JOBNUMBER_CMYK_Conversions", jobNumber: true },
+            { label: "JOBNUMBER_INTL_Asset_Chart", jobNumber: true },
+            { label: "JOBNUMBER_INTL_Outdoor_Campaign_Bespoke", jobNumber: true },
+            { label: "JOBNUMBER_INTL_Outdoor_Campaign_Masters", jobNumber: true },
+            { label: "JOBNUMBER_INTL_PRINT_Outdoor_Campaign_Markets", jobNumber: true },
+            { label: "JOBNUMBER_Print_OV_Mechs", jobNumber: true },
+            { label: "JOBNUMBER_Standee", jobNumber: true },
+            { label: "JOBNUMBER_TYPE_Title_Adjustment", jobNumber: true },
+            { label: "JOBNUMBER_TYPE_Titles", jobNumber: true },
+          ]},
+        ]},
+      ]},
+    ],
+  },
+};
+
+const STUDIO_OPTIONS = ["Paramount", "Sony", "Universal"];
+// Studios we can currently fetch/test live from Wrike (have a master-template folder).
+// Paramount also ships a hardcoded fallback tree above; Universal is fetch-only.
+const TESTABLE_STUDIOS = new Set(["Paramount", "Universal"]);
+const JOB_STATUSES = ["Inactive", "Active", "Closed"];
+
+function FilmSetupSection({ setActiveTab }) {
+  const [studio, setStudio] = useState("Paramount");
+  const [filmTitle, setFilmTitle] = useState("");
+  const [status, setStatus] = useState("Inactive");
+  const [preview, setPreview] = useState(null); // { template, jobs: [{ label, description, code, jobNumber }] }
+  const [saving, setSaving] = useState(false);
+  const [created, setCreated] = useState(null);
+  const [loadingPreview, setLoadingPreview] = useState(false);
+  const [fetchedTemplate, setFetchedTemplate] = useState(null); // real subtree pulled live from Wrike
+  const [fetchingTemplate, setFetchingTemplate] = useState(false);
+  const [fetchInfo, setFetchInfo] = useState(null); // { rootLabel, jobCount } | { error }
+  const [films, setFilms] = useState([]);
+  const [filmsLoading, setFilmsLoading] = useState(true);
+
+  // Films are added in the Films tab first — this section only picks from that
+  // list, it never creates new films, so the two stay in sync by construction.
+  useEffect(() => {
+    supabase.from("films").select("title").order("title").then(({ data }) => {
+      setFilms((data || []).map(f => f.title));
+      setFilmsLoading(false);
+    });
+  }, []);
+
+  // Walk the template, collecting every jobNumber:true leaf with a human-readable description
+  const collectJobLeaves = (node) => {
+    let leaves = node.jobNumber
+      ? [{ label: node.label, description: node.label.replace(/^JOBNUMBER_?/i, "").replace(/_/g, " ").trim() || "General" }]
+      : [];
+    (node.children || []).forEach(c => { leaves = leaves.concat(collectJobLeaves(c)); });
+    return leaves;
+  };
+
+  // Pull the real master-template folder subtree from Wrike using the personal
+  // token already stored for the timesheet pulls. Builds the same
+  // { label, children, jobNumber } shape as the hardcoded FOLDER_TEMPLATES,
+  // tagging every "JOBNUMBER_..." folder so it gets a generated code.
+  const fetchTemplateFromWrike = async () => {
+    const token = localStorage.getItem("wrike_personal_token");
+    if (!token) { setFetchInfo({ error: "No Wrike token found — add it in Profile → Settings first." }); return; }
+    setFetchingTemplate(true);
+    setFetchInfo(null);
+    setPreview(null);
+    setCreated(null);
+    try {
+      const headers = { Authorization: `Bearer ${token}` };
+      const FF = encodeURIComponent("[childIds]");
+      const fd = {};
+      let url = `https://www.wrike.com/api/v4/folders?fields=${FF}`;
+      while (url) {
+        const res = await fetch(url, { headers });
+        if (!res.ok) throw new Error(`Wrike folders fetch failed (${res.status})`);
+        const json = await res.json();
+        (json.data || []).forEach(f => { fd[f.id] = { id: f.id, title: f.title, childIds: f.childIds || [] }; });
+        url = json.nextPageToken
+          ? `https://www.wrike.com/api/v4/folders?fields=${FF}&nextPageToken=${json.nextPageToken}`
+          : null;
+      }
+      // Find candidate master-template roots by fuzzy title match. There can be
+      // several ("_Paramount_MASTER_TEMPLATES", a "... copy", archived dupes), so
+      // build each subtree and pick the one with the most JOBNUMBER folders,
+      // penalising obvious duplicates — that's the real, populated template.
+      const wanted = studio.toUpperCase();
+      const candidates = Object.values(fd).filter(f => {
+        const norm = (f.title || "").toUpperCase().replace(/[_\s]+/g, " ");
+        return norm.includes(wanted) && norm.includes("MASTER TEMPLATE");
+      });
+      if (!candidates.length) throw new Error(`No "${studio}" master-template folder found in Wrike.`);
+
+      const buildFrom = (rootId) => {
+        const visited = new Set();
+        const build = (id) => {
+          if (visited.has(id)) return null;
+          visited.add(id);
+          const node = fd[id];
+          if (!node) return null;
+          const children = (node.childIds || []).map(build).filter(Boolean);
+          const out = { label: node.title };
+          if (children.length) out.children = children;
+          if (/JOBNUMBER/i.test(node.title || "")) out.jobNumber = true;
+          return out;
+        };
+        return build(rootId);
+      };
+
+      let best = null;
+      for (const cand of candidates) {
+        const tree = buildFrom(cand.id);
+        const jobCount = collectJobLeaves(tree).length;
+        const isDupe = /\b(COPY|ARCHIVE|ARCHIVED|OLD|BACKUP|BAK)\b/i.test(cand.title || "");
+        const score = jobCount - (isDupe ? 1e6 : 0) - (cand.title || "").length * 0.001;
+        if (!best || score > best.score) best = { tree, jobCount, title: cand.title, score };
+      }
+      setFetchedTemplate(best.tree);
+      setFetchInfo({ rootLabel: best.title, jobCount: best.jobCount });
+    } catch (e) {
+      setFetchInfo({ error: e.message });
+      setFetchedTemplate(null);
+    } finally {
+      setFetchingTemplate(false);
+    }
+  };
+
+  const generatePreview = useCallback(async () => {
+    if (!filmTitle.trim()) return;
+    const template = fetchedTemplate || FOLDER_TEMPLATES[studio];
+    if (!template) return;
+
+    setLoadingPreview(true);
+    // Find the highest existing XY###### code across jobs + tasks so new codes
+    // continue the real sequence rather than colliding with anything already in use.
+    const [{ data: jobRows }, { data: taskRows }] = await Promise.all([
+      supabase.from("jobs").select("job_number"),
+      supabase.from("tasks").select("job_number"),
+    ]);
+    let maxNum = 0;
+    [...(jobRows || []), ...(taskRows || [])].forEach(r => {
+      const m = (r.job_number || "").match(/XY(\d+)/);
+      if (m) maxNum = Math.max(maxNum, parseInt(m[1], 10));
+    });
+
+    const leaves = collectJobLeaves(template);
+    let next = maxNum + 1;
+    const jobsOut = leaves.map(l => {
+      const code = `XY${String(next++).padStart(6, "0")}`;
+      return { ...l, code, jobNumber: `${filmTitle.trim()} : ${code}, ${l.description}` };
+    });
+
+    setPreview({ template, jobs: jobsOut });
+    setCreated(null);
+    setLoadingPreview(false);
+  }, [filmTitle, studio, fetchedTemplate]);
+
+  const createFilmJobs = async () => {
+    if (!preview) return;
+    setSaving(true);
+    const title = filmTitle.trim();
+    const rows = preview.jobs.map(j => ({
+      job_number: j.jobNumber,
+      film_title: title,
+      status,
+      // Job Book's default view filters by month on start_date — stamp today so
+      // newly-created jobs are visible there immediately instead of vanishing.
+      start_date: new Date().toISOString().slice(0, 10),
+    }));
+    // Film is picked from the Films tab, never created here — the two tables
+    // stay in sync by construction (see the films picker below).
+    const { error } = await supabase.from("jobs").insert(rows);
+    setSaving(false);
+    if (!error) setCreated(rows.length);
+    else alert("Failed to create jobs: " + error.message);
+  };
+
+  const jobMapForTree = useMemo(() => {
+    const m = new Map();
+    (preview?.jobs || []).forEach(j => m.set(j.label, j));
+    return m;
+  }, [preview]);
+
+  // Recursive tree renderer — replaces the JOBNUMBER_ prefix with the generated code when previewing.
+  // Uses a path-based key since live Wrike data can have repeated folder names across branches.
+  // The root folder in Wrike is always renamed to the film itself (e.g. "Passenger",
+  // "Angry_Birds_3_Movie") rather than keeping the "_STUDIO_MASTER_TEMPLATES" name —
+  // mirror that here once a film is picked.
+  const renderTree = (node, depth = 0, path = "0") => {
+    const generated = jobMapForTree.get(node.label);
+    const displayLabel = depth === 0 && filmTitle.trim()
+      ? filmTitle.trim().replace(/\s+/g, "_")
+      : generated ? node.label.replace(/^JOBNUMBER/i, generated.code) : node.label;
+    return (
+      <div key={path}>
+        <div className="flex items-center gap-1.5 py-1" style={{ paddingLeft: depth * 18 }}>
+          {node.children?.length
+            ? <FolderOpen className="w-3.5 h-3.5 text-[#f4b740] shrink-0" />
+            : <Folder className="w-3.5 h-3.5 text-[#b0bec5] shrink-0" />}
+          <span className={`text-[12px] ${generated ? "font-mono font-bold text-[#12a0e1]" : "text-[#122027]"}`}>
+            {displayLabel}
+          </span>
+        </div>
+        {node.children?.map((c, i) => renderTree(c, depth + 1, `${path}-${i}`))}
+      </div>
+    );
+  };
+
+  const reset = () => {
+    setFilmTitle("");
+    setPreview(null);
+    setCreated(null);
+    // keep fetchedTemplate so another film can be created from the same pull
+  };
+
+  // What to display: the generated preview's tree if present, else the freshly-fetched tree.
+  const templateToShow = preview?.template || fetchedTemplate;
+  const hasTemplate = !!(fetchedTemplate || FOLDER_TEMPLATES[studio]);
+  const pendingLeaves = !preview && fetchedTemplate ? collectJobLeaves(fetchedTemplate) : [];
+
+  return (
+    <div className="flex flex-col gap-5">
+      <div className="bg-[#f8fafc] border border-[#dce4ec] rounded-2xl p-4">
+        <p className="text-xs text-[#768994] leading-relaxed">
+          Prototype: add the film in the <span className="font-bold text-[#122027]">Films</span> tab first, then
+          come back here — <span className="font-bold text-[#122027]">Fetch Template</span> pulls the studio's
+          real master-template folder tree live from Wrike, pick the film, then generate the structure with
+          real, sequential job numbers substituted for every
+          <span className="font-mono text-[#122027]"> JOBNUMBER_...</span> folder, and create the matching
+          Job Book entries. Wrike folder creation isn't wired up yet — this only writes to Job Book for now.
+        </p>
+      </div>
+
+      <div className="grid grid-cols-2 gap-4">
+        <div>
+          <label className="block text-[10px] font-black uppercase tracking-widest text-[#768994] mb-1.5">Studio Template</label>
+          <div className="flex gap-2">
+            {STUDIO_OPTIONS.map(s => {
+              const available = TESTABLE_STUDIOS.has(s);
+              return (
+                <button key={s} disabled={!available}
+                  onClick={() => { setStudio(s); setPreview(null); setCreated(null); setFetchedTemplate(null); setFetchInfo(null); }}
+                  className={`px-3 py-2 rounded-xl text-xs font-bold border transition-all ${
+                    studio === s
+                      ? "bg-[#122027] text-white border-[#122027]"
+                      : available
+                        ? "bg-white text-[#122027] border-[#dce4ec] hover:border-[#12a0e1]"
+                        : "bg-slate-50 text-slate-300 border-slate-100 cursor-not-allowed"
+                  }`}>
+                  {s}{!available && " (soon)"}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+        <div>
+          <label className="block text-[10px] font-black uppercase tracking-widest text-[#768994] mb-1.5">Status</label>
+          <div className="flex gap-2">
+            {JOB_STATUSES.map(s => (
+              <button key={s} onClick={() => setStatus(s)}
+                className={`px-3 py-2 rounded-xl text-xs font-bold border transition-all ${
+                  status === s ? "bg-[#12a0e1] text-white border-[#12a0e1]" : "bg-white text-[#122027] border-[#dce4ec] hover:border-[#12a0e1]"
+                }`}>
+                {s}
+              </button>
+            ))}
+          </div>
+        </div>
+      </div>
+
+      <div className="flex items-center gap-3 flex-wrap">
+        <button onClick={fetchTemplateFromWrike} disabled={fetchingTemplate || !TESTABLE_STUDIOS.has(studio)}
+          className="flex items-center gap-2 px-4 py-2 bg-white border border-[#12a0e1] text-[#12a0e1] hover:bg-[#12a0e1] hover:text-white text-xs font-bold rounded-xl transition-all disabled:opacity-40">
+          {fetchingTemplate ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5" />}
+          {fetchingTemplate ? "Fetching from Wrike…" : `Fetch ${studio} template from Wrike`}
+        </button>
+        {fetchInfo?.error && <span className="text-xs font-bold text-red-500">{fetchInfo.error}</span>}
+        {fetchInfo && !fetchInfo.error && (
+          <span className="text-xs font-bold text-[#1cc1a5]">
+            Loaded “{fetchInfo.rootLabel}” — {fetchInfo.jobCount} job folder{fetchInfo.jobCount === 1 ? "" : "s"}
+          </span>
+        )}
+        {fetchedTemplate && (
+          <span className="text-[10px] font-black uppercase tracking-wider text-[#12a0e1] bg-[#12a0e1]/10 px-2 py-1 rounded-lg">Live Wrike Data</span>
+        )}
+      </div>
+
+      <div>
+        <label className="block text-[10px] font-black uppercase tracking-widest text-[#768994] mb-1.5">Film</label>
+        <div className="flex gap-2">
+          <StrictSelect value={filmTitle} onChange={v => { setFilmTitle(v); setPreview(null); setCreated(null); }}
+            options={films} placeholder="Select a film…" loading={filmsLoading} className="flex-1" />
+          <button onClick={generatePreview} disabled={!filmTitle.trim() || loadingPreview || !hasTemplate}
+            title={!hasTemplate ? "Fetch the template from Wrike first" : ""}
+            className="flex items-center gap-2 px-5 py-2.5 bg-[#122027] hover:bg-[#1a2e38] text-white text-sm font-bold rounded-xl transition-all disabled:opacity-40">
+            {loadingPreview && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
+            Generate Preview
+          </button>
+        </div>
+        {!filmsLoading && films.length === 0 && (
+          <p className="text-xs text-[#768994] mt-1.5">
+            No films yet — add one in the{" "}
+            <button onClick={() => setActiveTab?.("films")} className="text-[#12a0e1] font-bold hover:underline">Films</button> tab first.
+          </p>
+        )}
+      </div>
+
+      {templateToShow && (
+        <div className="grid grid-cols-2 gap-4">
+          <div className="border border-[#dce4ec] rounded-2xl p-4 max-h-[420px] overflow-y-auto">
+            <p className="text-[10px] font-black uppercase tracking-widest text-[#768994] mb-2">
+              Folder Preview{fetchedTemplate ? " · live from Wrike" : ""}
+            </p>
+            {renderTree(templateToShow)}
+          </div>
+          <div className="border border-[#dce4ec] rounded-2xl p-4 max-h-[420px] overflow-y-auto">
+            {preview ? (
+              <>
+                <p className="text-[10px] font-black uppercase tracking-widest text-[#768994] mb-2">
+                  {preview.jobs.length} Job Number{preview.jobs.length === 1 ? "" : "s"} To Create
+                </p>
+                <div className="flex flex-col gap-1.5">
+                  {preview.jobs.map(j => (
+                    <div key={j.code} className="flex items-center justify-between text-[11px] border-b border-[#f0f4f8] pb-1.5">
+                      <span className="font-mono font-bold text-[#12a0e1]">{j.code}</span>
+                      <span className="text-[#768994] text-right">{j.description}</span>
+                    </div>
+                  ))}
+                </div>
+              </>
+            ) : (
+              <>
+                <p className="text-[10px] font-black uppercase tracking-widest text-[#768994] mb-2">
+                  {pendingLeaves.length} Job Folder{pendingLeaves.length === 1 ? "" : "s"} Detected
+                </p>
+                <p className="text-[11px] text-[#768994] mb-2">Enter a film name and hit Generate Preview to assign sequential codes.</p>
+                <div className="flex flex-col gap-1">
+                  {pendingLeaves.map((l, i) => (
+                    <div key={l.label + i} className="text-[11px] font-mono text-[#122027] border-b border-[#f0f4f8] py-1">{l.label}</div>
+                  ))}
+                </div>
+              </>
+            )}
+          </div>
+        </div>
+      )}
+
+      {preview && (
+        <div className="flex items-center gap-3">
+          {created == null ? (
+            <>
+              <button onClick={createFilmJobs} disabled={saving}
+                className="flex items-center gap-2 px-6 py-2.5 bg-[#1cc1a5] hover:bg-[#17a68d] text-white text-sm font-bold rounded-2xl transition-all disabled:opacity-50 shadow-sm">
+                {saving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Check className="w-3.5 h-3.5" />}
+                Create Film &amp; Jobs
+              </button>
+              <button disabled
+                title="Coming soon — will use the Wrike API to duplicate the template folder automatically"
+                className="flex items-center gap-2 px-5 py-2.5 bg-slate-100 text-slate-400 text-sm font-bold rounded-2xl cursor-not-allowed">
+                <FolderPlus className="w-3.5 h-3.5" /> Push Folders to Wrike (Soon)
+              </button>
+            </>
+          ) : (
+            <>
+              <span className="flex items-center gap-2 px-4 py-2.5 bg-[#1cc1a5]/10 text-[#1cc1a5] text-sm font-bold rounded-2xl">
+                <CheckCircle2 className="w-3.5 h-3.5" /> Created {created} job{created === 1 ? "" : "s"} in Job Book
+              </span>
+              <button onClick={() => setActiveTab?.("jobs")}
+                className="px-4 py-2.5 bg-[#122027] hover:bg-[#1a2e38] text-white text-sm font-bold rounded-2xl transition-all">
+                View in Job Book
+              </button>
+              <button onClick={reset}
+                className="px-4 py-2.5 bg-white border border-[#dce4ec] hover:border-[#12a0e1] text-[#122027] text-sm font-bold rounded-2xl transition-all">
+                Start Another Film
+              </button>
+            </>
+          )}
+        </div>
+      )}
     </div>
   );
 }
@@ -1861,6 +2320,7 @@ export default function Management({ wrikeUserId }) {
           </div>
 
           {activeTab === "overview"   && <OverviewSection setActiveTab={setActiveTab} />}
+          {activeTab === "filmSetup"  && <FilmSetupSection setActiveTab={setActiveTab} />}
           {activeTab === "jobs"       && <JobBookSection />}
           {activeTab === "feed"       && <JobsFeedSection />}
           {activeTab === "people"     && <PeopleSection />}

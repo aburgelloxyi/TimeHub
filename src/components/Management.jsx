@@ -1083,10 +1083,6 @@ function JobsSetupSection({ setActiveTab }) {
   const [innerTab, setInnerTab] = useState("campaign");
   const [studio, setStudio] = useState("Paramount");
   const [filmTitle, setFilmTitle] = useState("");
-  const [preview, setPreview] = useState(null); // { template, jobs: [{ label, description, code, jobNumber }] }
-  const [saving, setSaving] = useState(false);
-  const [created, setCreated] = useState(null);
-  const [loadingPreview, setLoadingPreview] = useState(false);
   const [fetchedTemplate, setFetchedTemplate] = useState(null); // real subtree pulled live from Wrike
   const [fetchingTemplate, setFetchingTemplate] = useState(false);
   const [fetchInfo, setFetchInfo] = useState(null); // { rootLabel, jobCount } | { error }
@@ -1097,6 +1093,15 @@ function JobsSetupSection({ setActiveTab }) {
   const [descs, setDescs] = useState([]);
   const [customSaving, setCustomSaving] = useState(false);
   const [customCreated, setCustomCreated] = useState(null); // job_number of the row just created
+
+  // Slots already activated for the selected film — { [templateSlotLabel]: jobRow }.
+  // Nothing gets created until a slot is clicked, so a film never ends up with a
+  // pile of job numbers nobody asked for — you activate exactly what's needed,
+  // as and when the work comes in, and can come back to activate more later.
+  const [slotJobs, setSlotJobs] = useState({});
+  const [loadingSlots, setLoadingSlots] = useState(false);
+  const [activatingSlot, setActivatingSlot] = useState(null); // slot label currently being created
+  const [activateError, setActivateError] = useState(null);
 
   // Films are added in the Films tab first — this section only picks from that
   // list, it never creates new films, so the two stay in sync by construction.
@@ -1148,8 +1153,6 @@ function JobsSetupSection({ setActiveTab }) {
     if (!token) { setFetchInfo({ error: "No Wrike token found — add it in Profile → Settings first." }); return; }
     setFetchingTemplate(true);
     setFetchInfo(null);
-    setPreview(null);
-    setCreated(null);
     try {
       const headers = { Authorization: `Bearer ${token}` };
       const FF = encodeURIComponent("[childIds]");
@@ -1209,100 +1212,99 @@ function JobsSetupSection({ setActiveTab }) {
     }
   };
 
-  const generatePreview = useCallback(async () => {
-    if (!filmTitle.trim()) return;
-    const template = fetchedTemplate || FOLDER_TEMPLATES[studio];
-    if (!template) return;
+  // Load which slots are already activated for the selected film — keyed by
+  // template_slot, so we know per JOBNUMBER_ folder whether it already has a
+  // real job number or is still a pending, un-clicked placeholder.
+  const loadSlotJobs = useCallback(async (film) => {
+    if (!film) { setSlotJobs({}); return; }
+    setLoadingSlots(true);
+    const { data } = await supabase.from("jobs").select("*").eq("film_title", film).not("template_slot", "is", null);
+    const map = {};
+    (data || []).forEach(j => { map[j.template_slot] = j; });
+    setSlotJobs(map);
+    setLoadingSlots(false);
+  }, []);
 
-    setLoadingPreview(true);
-    // Find the highest existing XY###### code across jobs + tasks so new codes
-    // continue the real sequence rather than colliding with anything already in use.
-    const [{ data: jobRows }, { data: taskRows }] = await Promise.all([
-      supabase.from("jobs").select("job_number"),
-      supabase.from("tasks").select("job_number"),
-    ]);
-    let maxNum = 0;
-    [...(jobRows || []), ...(taskRows || [])].forEach(r => {
-      const m = (r.job_number || "").match(/XY(\d+)/);
-      if (m) maxNum = Math.max(maxNum, parseInt(m[1], 10));
-    });
+  useEffect(() => { loadSlotJobs(filmTitle); }, [filmTitle, loadSlotJobs]);
 
-    const leaves = collectJobLeaves(template);
-    let next = maxNum + 1;
-    const jobsOut = leaves.map(l => {
-      const code = `XY${String(next++).padStart(6, "0")}`;
-      return { ...l, code, jobNumber: `${filmTitle.trim()} : ${code}, ${l.description}` };
-    });
-
-    setPreview({ template, jobs: jobsOut });
-    setCreated(null);
-    setLoadingPreview(false);
-  }, [filmTitle, studio, fetchedTemplate]);
-
-  const createFilmJobs = async () => {
-    if (!preview) return;
-    setSaving(true);
-    const title = filmTitle.trim();
-    const rows = preview.jobs.map(j => ({
-      job_number: j.jobNumber,
-      film_title: title,
-      // Status starts Inactive for every new job — Active/Closed get set later
-      // in Job Book as billing info comes in and the job wraps up.
-      status: "Inactive",
-      // Job Book's default view filters by month on start_date — stamp today so
-      // newly-created jobs are visible there immediately instead of vanishing.
-      start_date: new Date().toISOString().slice(0, 10),
-    }));
-    // Film is picked from the Films tab, never created here — the two tables
-    // stay in sync by construction (see the films picker below).
-    const { error } = await supabase.from("jobs").insert(rows);
-    setSaving(false);
-    if (!error) setCreated(rows.length);
-    else alert("Failed to create jobs: " + error.message);
+  // Activate exactly one slot: allocate the next sequential XY code fresh
+  // (reflects anything created anywhere since we last looked), create one job
+  // for it, and mark it activated locally. Nothing else in the template is
+  // touched — the rest stay pending until someone clicks them too.
+  const activateSlot = async (leaf) => {
+    if (!filmTitle.trim() || activatingSlot || slotJobs[leaf.label]) return;
+    setActivatingSlot(leaf.label);
+    setActivateError(null);
+    try {
+      const [{ data: jobRows }, { data: taskRows }] = await Promise.all([
+        supabase.from("jobs").select("job_number"),
+        supabase.from("tasks").select("job_number"),
+      ]);
+      let maxNum = 0;
+      [...(jobRows || []), ...(taskRows || [])].forEach(r => {
+        const m = (r.job_number || "").match(/XY(\d+)/);
+        if (m) maxNum = Math.max(maxNum, parseInt(m[1], 10));
+      });
+      const code = `XY${String(maxNum + 1).padStart(6, "0")}`;
+      const row = {
+        job_number: `${filmTitle.trim()} : ${code}, ${leaf.description}`,
+        film_title: filmTitle.trim(),
+        template_slot: leaf.label,
+        status: "Inactive",
+        start_date: new Date().toISOString().slice(0, 10),
+      };
+      const { data, error } = await supabase.from("jobs").insert(row).select().single();
+      if (error) throw error;
+      setSlotJobs(prev => ({ ...prev, [leaf.label]: data }));
+    } catch (e) {
+      setActivateError(e.code === "23505" ? "That job number was just taken by another activation — try again." : e.message);
+    } finally {
+      setActivatingSlot(null);
+    }
   };
 
-  const jobMapForTree = useMemo(() => {
-    const m = new Map();
-    (preview?.jobs || []).forEach(j => m.set(j.label, j));
-    return m;
-  }, [preview]);
-
-  // Recursive tree renderer — replaces the JOBNUMBER_ prefix with the generated code when previewing.
-  // Uses a path-based key since live Wrike data can have repeated folder names across branches.
-  // The root folder in Wrike is always renamed to the film itself (e.g. "Passenger",
-  // "Angry_Birds_3_Movie") rather than keeping the "_STUDIO_MASTER_TEMPLATES" name —
-  // mirror that here once a film is picked.
+  // Recursive tree renderer — activated JOBNUMBER_ leaves show their real code;
+  // pending ones stay clickable placeholders you can activate right in the tree.
+  // Uses a path-based key since live Wrike data can have repeated folder names
+  // across branches. The root folder in Wrike is always renamed to the film
+  // itself (e.g. "Passenger") rather than keeping the "_STUDIO_MASTER_TEMPLATES"
+  // name — mirror that here once a film is picked.
   const renderTree = (node, depth = 0, path = "0") => {
-    const generated = jobMapForTree.get(node.label);
-    const displayLabel = depth === 0 && filmTitle.trim()
-      ? filmTitle.trim().replace(/\s+/g, "_")
-      : generated ? node.label.replace(/^JOBNUMBER/i, generated.code) : node.label;
+    const isSlot = !!node.jobNumber;
+    const activated = isSlot ? slotJobs[node.label] : null;
+    const isActivating = activatingSlot === node.label;
+    const leafDesc = isSlot ? node.label.replace(/^JOBNUMBER_?/i, "").replace(/_/g, " ").trim() || "General" : null;
+
+    let displayLabel = node.label;
+    if (depth === 0 && filmTitle.trim()) displayLabel = filmTitle.trim().replace(/\s+/g, "_");
+    else if (activated) displayLabel = node.label.replace(/^JOBNUMBER/i, activated.job_number.match(/XY\d+/)?.[0] || "XY??????");
+
     return (
       <div key={path}>
-        <div className="flex items-center gap-1.5 py-1" style={{ paddingLeft: depth * 18 }}>
+        <div
+          onClick={isSlot && !activated && !isActivating && filmTitle.trim() ? () => activateSlot({ label: node.label, description: leafDesc }) : undefined}
+          className={`flex items-center gap-1.5 py-1 ${isSlot && !activated && filmTitle.trim() ? "cursor-pointer hover:bg-[#12a0e1]/5 rounded-lg -mx-1 px-1" : ""}`}
+          style={{ paddingLeft: depth * 18 }}>
           {node.children?.length
             ? <FolderOpen className="w-3.5 h-3.5 text-[#f4b740] shrink-0" />
-            : <Folder className="w-3.5 h-3.5 text-[#b0bec5] shrink-0" />}
-          <span className={`text-[12px] ${generated ? "font-mono font-bold text-[#12a0e1]" : "text-[#122027]"}`}>
+            : <Folder className={`w-3.5 h-3.5 shrink-0 ${isSlot && !activated ? "text-[#12a0e1]" : "text-[#b0bec5]"}`} />}
+          <span className={`text-[12px] ${activated ? "font-mono font-bold text-[#12a0e1]" : isSlot ? "text-[#122027] font-bold" : "text-[#122027]"}`}>
             {displayLabel}
           </span>
+          {isSlot && !activated && !isActivating && filmTitle.trim() && (
+            <span className="text-[9px] font-black uppercase tracking-wider text-[#12a0e1] bg-[#12a0e1]/10 px-1.5 py-0.5 rounded ml-1">Click to activate</span>
+          )}
+          {isActivating && <Loader2 className="w-3 h-3 animate-spin text-[#12a0e1] ml-1" />}
         </div>
         {node.children?.map((c, i) => renderTree(c, depth + 1, `${path}-${i}`))}
       </div>
     );
   };
 
-  const reset = () => {
-    setFilmTitle("");
-    setPreview(null);
-    setCreated(null);
-    // keep fetchedTemplate so another film can be created from the same pull
-  };
-
-  // What to display: the generated preview's tree if present, else the freshly-fetched tree.
-  const templateToShow = preview?.template || fetchedTemplate;
   const hasTemplate = !!(fetchedTemplate || FOLDER_TEMPLATES[studio]);
-  const pendingLeaves = !preview && fetchedTemplate ? collectJobLeaves(fetchedTemplate) : [];
+  const templateToShow = fetchedTemplate || (hasTemplate ? FOLDER_TEMPLATES[studio] : null);
+  const allLeaves = templateToShow ? collectJobLeaves(templateToShow) : [];
+  const activatedCount = allLeaves.filter(l => slotJobs[l.label]).length;
 
   return (
     <div className="flex flex-col gap-5">
@@ -1338,12 +1340,10 @@ function JobsSetupSection({ setActiveTab }) {
     <div className="flex flex-col gap-5">
       <div className="bg-[#f8fafc] border border-[#dce4ec] rounded-2xl p-4">
         <p className="text-xs text-[#768994] leading-relaxed">
-          Prototype: add the film in the <span className="font-bold text-[#122027]">Films</span> tab first, then
-          come back here — <span className="font-bold text-[#122027]">Fetch Template</span> pulls the studio's
-          real master-template folder tree live from Wrike, pick the film, then generate the structure with
-          real, sequential job numbers substituted for every
-          <span className="font-mono text-[#122027]"> JOBNUMBER_...</span> folder, and create the matching
-          Job Book entries. Wrike folder creation isn't wired up yet — this only writes to Job Book for now.
+          Pick a film and fetch its studio template to see every possible job slot. Nothing is created just
+          from looking — <span className="font-bold text-[#122027]">click a slot</span> to allocate a real job
+          number for it right then and add it to Job Book. Come back to this same page any time to activate
+          more slots as work actually comes in, so you never end up with numbers nobody used.
         </p>
       </div>
 
@@ -1354,7 +1354,7 @@ function JobsSetupSection({ setActiveTab }) {
             const available = TESTABLE_STUDIOS.has(s);
             return (
               <button key={s} disabled={!available}
-                onClick={() => { setStudio(s); setPreview(null); setCreated(null); setFetchedTemplate(null); setFetchInfo(null); }}
+                onClick={() => { setStudio(s); setFetchedTemplate(null); setFetchInfo(null); }}
                 className={`px-3 py-2 rounded-xl text-xs font-bold border transition-all ${
                   studio === s
                     ? "bg-[#122027] text-white border-[#122027]"
@@ -1388,16 +1388,8 @@ function JobsSetupSection({ setActiveTab }) {
 
       <div>
         <label className="block text-[10px] font-black uppercase tracking-widest text-[#768994] mb-1.5">Film</label>
-        <div className="flex gap-2">
-          <StrictSelect value={filmTitle} onChange={v => { setFilmTitle(v); setPreview(null); setCreated(null); }}
-            options={films} placeholder="Select a film…" loading={filmsLoading} className="flex-1" />
-          <button onClick={generatePreview} disabled={!filmTitle.trim() || loadingPreview || !hasTemplate}
-            title={!hasTemplate ? "Fetch the template from Wrike first" : ""}
-            className="flex items-center gap-2 px-5 py-2.5 bg-[#122027] hover:bg-[#1a2e38] text-white text-sm font-bold rounded-xl transition-all disabled:opacity-40">
-            {loadingPreview && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
-            Generate Preview
-          </button>
-        </div>
+        <StrictSelect value={filmTitle} onChange={v => setFilmTitle(v)}
+          options={films} placeholder="Select a film…" loading={filmsLoading} />
         {!filmsLoading && films.length === 0 && (
           <p className="text-xs text-[#768994] mt-1.5">
             No films yet — add one in the{" "}
@@ -1407,76 +1399,68 @@ function JobsSetupSection({ setActiveTab }) {
       </div>
 
       {templateToShow && (
-        <div className="grid grid-cols-2 gap-4">
-          <div className="border border-[#dce4ec] rounded-2xl p-4 max-h-[420px] overflow-y-auto">
-            <p className="text-[10px] font-black uppercase tracking-widest text-[#768994] mb-2">
-              Folder Preview{fetchedTemplate ? " · live from Wrike" : ""}
-            </p>
-            {renderTree(templateToShow)}
+        <>
+          <div className="flex items-center gap-3 flex-wrap">
+            <span className="text-xs font-bold text-[#768994]">
+              {filmTitle.trim()
+                ? `${activatedCount} / ${allLeaves.length} job number${allLeaves.length === 1 ? "" : "s"} activated for “${filmTitle}”`
+                : `${allLeaves.length} job slot${allLeaves.length === 1 ? "" : "s"} in this template — select a film above to activate any of them`}
+            </span>
+            {loadingSlots && <Loader2 className="w-3.5 h-3.5 animate-spin text-[#768994]" />}
+            {activateError && <span className="text-xs font-bold text-red-500">{activateError}</span>}
           </div>
-          <div className="border border-[#dce4ec] rounded-2xl p-4 max-h-[420px] overflow-y-auto">
-            {preview ? (
-              <>
-                <p className="text-[10px] font-black uppercase tracking-widest text-[#768994] mb-2">
-                  {preview.jobs.length} Job Number{preview.jobs.length === 1 ? "" : "s"} To Create
-                </p>
-                <div className="flex flex-col gap-1.5">
-                  {preview.jobs.map(j => (
-                    <div key={j.code} className="flex items-center justify-between text-[11px] border-b border-[#f0f4f8] pb-1.5">
-                      <span className="font-mono font-bold text-[#12a0e1]">{j.code}</span>
-                      <span className="text-[#768994] text-right">{j.description}</span>
-                    </div>
-                  ))}
-                </div>
-              </>
-            ) : (
-              <>
-                <p className="text-[10px] font-black uppercase tracking-widest text-[#768994] mb-2">
-                  {pendingLeaves.length} Job Folder{pendingLeaves.length === 1 ? "" : "s"} Detected
-                </p>
-                <p className="text-[11px] text-[#768994] mb-2">Enter a film name and hit Generate Preview to assign sequential codes.</p>
-                <div className="flex flex-col gap-1">
-                  {pendingLeaves.map((l, i) => (
-                    <div key={l.label + i} className="text-[11px] font-mono text-[#122027] border-b border-[#f0f4f8] py-1">{l.label}</div>
-                  ))}
-                </div>
-              </>
-            )}
-          </div>
-        </div>
-      )}
 
-      {preview && (
-        <div className="flex items-center gap-3">
-          {created == null ? (
-            <>
-              <button onClick={createFilmJobs} disabled={saving}
-                className="flex items-center gap-2 px-6 py-2.5 bg-[#1cc1a5] hover:bg-[#17a68d] text-white text-sm font-bold rounded-2xl transition-all disabled:opacity-50 shadow-sm">
-                {saving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Check className="w-3.5 h-3.5" />}
-                Create Film &amp; Jobs
-              </button>
-              <button disabled
-                title="Coming soon — will use the Wrike API to duplicate the template folder automatically"
-                className="flex items-center gap-2 px-5 py-2.5 bg-slate-100 text-slate-400 text-sm font-bold rounded-2xl cursor-not-allowed">
-                <FolderPlus className="w-3.5 h-3.5" /> Push Folders to Wrike (Soon)
-              </button>
-            </>
-          ) : (
-            <>
-              <span className="flex items-center gap-2 px-4 py-2.5 bg-[#1cc1a5]/10 text-[#1cc1a5] text-sm font-bold rounded-2xl">
-                <CheckCircle2 className="w-3.5 h-3.5" /> Created {created} job{created === 1 ? "" : "s"} in Job Book
-              </span>
-              <button onClick={() => setActiveTab?.("jobs")}
-                className="px-4 py-2.5 bg-[#122027] hover:bg-[#1a2e38] text-white text-sm font-bold rounded-2xl transition-all">
-                View in Job Book
-              </button>
-              <button onClick={reset}
-                className="px-4 py-2.5 bg-white border border-[#dce4ec] hover:border-[#12a0e1] text-[#122027] text-sm font-bold rounded-2xl transition-all">
-                Start Another Film
-              </button>
-            </>
-          )}
-        </div>
+          <div className="grid grid-cols-2 gap-4">
+            <div className="border border-[#dce4ec] rounded-2xl p-4 max-h-[420px] overflow-y-auto">
+              <p className="text-[10px] font-black uppercase tracking-widest text-[#768994] mb-2">
+                Folder Preview{fetchedTemplate ? " · live from Wrike" : ""}
+              </p>
+              {renderTree(templateToShow)}
+            </div>
+            <div className="border border-[#dce4ec] rounded-2xl p-4 max-h-[420px] overflow-y-auto">
+              <p className="text-[10px] font-black uppercase tracking-widest text-[#768994] mb-2">Job Slots</p>
+              <div className="flex flex-col gap-1.5">
+                {allLeaves.map(l => {
+                  const activated = slotJobs[l.label];
+                  const isActivating = activatingSlot === l.label;
+                  const code = activated?.job_number.match(/XY\d+/)?.[0];
+                  const canActivate = filmTitle.trim() && !activated && !isActivating;
+                  return (
+                    <button key={l.label} disabled={!canActivate}
+                      onClick={() => activateSlot(l)}
+                      title={!filmTitle.trim() && !activated ? "Select a film above first" : ""}
+                      className={`flex items-center justify-between text-[11px] border-b border-[#f0f4f8] pb-1.5 pt-0.5 text-left transition-colors ${
+                        canActivate ? "hover:bg-[#12a0e1]/5 rounded-lg -mx-1 px-1" : "cursor-default"
+                      }`}>
+                      <span className={activated ? "text-[#768994]" : "text-[#122027] font-bold"}>{l.description}</span>
+                      {activated ? (
+                        <span className="font-mono font-bold text-[#12a0e1]">{code}</span>
+                      ) : isActivating ? (
+                        <Loader2 className="w-3.5 h-3.5 animate-spin text-[#12a0e1]" />
+                      ) : (
+                        <span className={`text-[9px] font-black uppercase tracking-wider px-2 py-0.5 rounded-full ${
+                          filmTitle.trim() ? "text-[#12a0e1] bg-[#12a0e1]/10" : "text-[#b0bec5] bg-slate-100"
+                        }`}>Activate</span>
+                      )}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-3">
+            <button onClick={() => setActiveTab?.("jobs")}
+              className="px-4 py-2.5 bg-[#122027] hover:bg-[#1a2e38] text-white text-sm font-bold rounded-2xl transition-all">
+              View in Job Book
+            </button>
+            <button disabled
+              title="Coming soon — will use the Wrike API to create the folder automatically when a slot is activated"
+              className="flex items-center gap-2 px-5 py-2.5 bg-slate-100 text-slate-400 text-sm font-bold rounded-2xl cursor-not-allowed">
+              <FolderPlus className="w-3.5 h-3.5" /> Push Folders to Wrike (Soon)
+            </button>
+          </div>
+        </>
       )}
     </div>
       )}

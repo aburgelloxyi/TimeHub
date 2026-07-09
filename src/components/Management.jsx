@@ -28,7 +28,7 @@ const PRINT_DIGITAL = ["Digital", "Print", "Both"];
 
 const TABS = [
   { id: "overview",  label: "Overview",            icon: LayoutDashboard },
-  { id: "filmSetup", label: "Film Setup",          icon: FolderPlus },
+  { id: "jobsSetup", label: "Jobs Setup",          icon: FolderPlus },
   { id: "jobs",      label: "Job Book",            icon: Briefcase },
   { id: "feed",      label: "Jobs Feed",           icon: Activity  },
   { id: "people",    label: "People",              icon: Users     },
@@ -41,7 +41,7 @@ const TABS = [
 
 const TAB_GROUPS = [
   { ids: ["overview"] },
-  { ids: ["filmSetup", "jobs", "feed"],      label: "Jobs"      },
+  { ids: ["jobsSetup", "jobs", "feed"],      label: "Jobs"      },
   { ids: ["people", "positions"], label: "Team"    },
   { ids: ["films", "clients", "categories", "descs"], label: "Reference" },
 ];
@@ -793,8 +793,12 @@ const CAT_FILTERS = [
 ];
 const PD_COLOR_MAP = { Digital: "bg-cyan-600 border-cyan-600", Print: "bg-orange-500 border-orange-500", Both: "bg-violet-600 border-violet-600" };
 
-// ── Job Form Modal ─────────────────────────────────────────────────────────────
-function JobModal({ job, clients, films, categories, descs, onSave, onClose, saving }) {
+// ── Job Form ───────────────────────────────────────────────────────────────────
+// Fields + footer for creating/editing a Job Book row. Shared by JobModal (edit,
+// from Job Book) and the Custom Job tab in Jobs Setup (create) — same form,
+// different chrome around it (layout="modal" adds the fixed-footer/scroll
+// behaviour a popup needs; layout="inline" just flows in the page).
+function JobForm({ job, clients, films, categories, descs, onSave, onCancel, saving, submitLabel, layout = "modal" }) {
   const isEdit = !!job?.id;
   const [orderedByOpts, setOrderedByOpts] = useState([]);
   const [billedToOpts, setBilledToOpts]   = useState([]);
@@ -812,6 +816,7 @@ function JobModal({ job, clients, films, categories, descs, onSave, onClose, sav
   }, []);
 
   const [form, setForm] = useState({
+    job_number: job?.job_number || "",
     start_date: job?.start_date ? job.start_date.slice(0, 10) : new Date().toISOString().slice(0, 10),
     client: job?.client || "",
     film_title: job?.film_title || "",
@@ -830,7 +835,124 @@ function JobModal({ job, clients, films, categories, descs, onSave, onClose, sav
   });
 
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
+  const bodyClass = layout === "modal" ? "overflow-y-auto flex-1 px-6 py-5 space-y-6" : "space-y-6";
+  const footerClass = layout === "modal"
+    ? "px-6 py-4 border-t border-[#dce4ec] flex justify-end gap-2 shrink-0"
+    : "pt-5 border-t border-[#dce4ec] flex justify-end gap-2";
 
+  return (
+    <>
+      <div className={bodyClass}>
+        <div>
+          <FieldLabel text="Job Number" required />
+          <input value={form.job_number} onChange={e => set("job_number", e.target.value)}
+            placeholder="e.g. The Odyssey : XY025999, Finishing"
+            className={`${MODAL_INPUT} font-mono`} />
+        </div>
+
+        <div className="grid grid-cols-2 gap-5">
+          <div>
+            <FieldLabel text="Start Date" required />
+            <input type="date" value={form.start_date} onChange={e => set("start_date", e.target.value)}
+              className={MODAL_INPUT} />
+          </div>
+          <PillField label="Office" value={form.office} onChange={v => set("office", v)} options={OFFICES} />
+        </div>
+
+        <div className="grid grid-cols-2 gap-5">
+          <ComboField label="Client" required value={form.client} onChange={v => set("client", v)}
+            options={clients} placeholder="Search clients…" filters={CLIENT_FILTERS} />
+          <PillField label="Print / Digital" value={form.print_digital} onChange={v => set("print_digital", v)}
+            options={PRINT_DIGITAL} colorMap={PD_COLOR_MAP} />
+        </div>
+
+        <ComboField label="Film Title" value={form.film_title} onChange={v => set("film_title", v)}
+          options={films} placeholder="Search films, or type something else (e.g. Studio Management)…" />
+
+        <ComboField label="Project Description" value={form.project_description}
+          onChange={v => set("project_description", v)}
+          options={descs} placeholder="Search descriptions or type a new one…"
+          filters={DESC_FILTERS} />
+
+        <ComboField label="Item Category" value={form.job_work_category}
+          onChange={v => set("job_work_category", v)}
+          options={categories} placeholder="Search categories…"
+          filters={CAT_FILTERS} />
+
+        <div className="grid grid-cols-2 gap-5">
+          <ComboField label="Ordered By" value={form.ordered_by} onChange={v => set("ordered_by", v)}
+            options={orderedByOpts} placeholder="Name or type new…" />
+          <ComboField label="Billed To" value={form.billed_to} onChange={v => set("billed_to", v)}
+            options={billedToOpts} placeholder="Company or name…" />
+        </div>
+
+        <div>
+          <p className="text-[10px] font-black uppercase tracking-widest text-[#768994] mb-3">Costs</p>
+          <div className="grid grid-cols-3 gap-4">
+            {[["Fixed", "fixed_cost"], ["3rd Party", "third_party_cost"], ["Estimated", "estimated_cost"]].map(([lbl, field]) => (
+              <div key={field}>
+                <FieldLabel text={lbl} />
+                <div className="relative">
+                  <span className="absolute left-3.5 top-1/2 -translate-y-1/2 text-[#768994] text-sm font-bold select-none">£</span>
+                  <input type="number" step="0.01" min="0" value={form[field]}
+                    onChange={e => set(field, e.target.value)} placeholder="0.00"
+                    className={`${MODAL_INPUT} pl-8`} />
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        <div className="grid grid-cols-2 gap-5">
+          <div>
+            <FieldLabel text="Completed Date" />
+            <input type="date" value={form.completed_date} onChange={e => set("completed_date", e.target.value)}
+              className={MODAL_INPUT} />
+          </div>
+          <div className="flex items-end">
+            <button type="button" onClick={() => set("job_done", !form.job_done)}
+              className={`flex items-center gap-2.5 w-full px-4 py-2.5 rounded-2xl border font-bold text-sm transition-all ${
+                form.job_done
+                  ? "bg-[#1cc1a5]/10 border-[#1cc1a5] text-[#1cc1a5]"
+                  : "bg-white border-[#dce4ec] text-[#768994] hover:border-[#1cc1a5]/50"
+              }`}>
+              <div className={`w-5 h-5 rounded-lg border-2 flex items-center justify-center shrink-0 transition-colors ${
+                form.job_done ? "bg-[#1cc1a5] border-[#1cc1a5]" : "border-[#dce4ec]"
+              }`}>
+                {form.job_done && <Check className="w-3 h-3 text-white" />}
+              </div>
+              Job Done
+            </button>
+          </div>
+        </div>
+
+        <div>
+          <FieldLabel text="Notes" />
+          <textarea value={form.notes} onChange={e => set("notes", e.target.value)}
+            rows={3} placeholder="Any additional notes…"
+            className={`${MODAL_INPUT} resize-none`} />
+        </div>
+      </div>
+
+      <div className={footerClass}>
+        {onCancel && (
+          <button onClick={onCancel}
+            className="px-5 py-2.5 text-sm font-bold text-[#768994] hover:text-[#122027] bg-white border border-[#dce4ec] rounded-2xl transition-all">
+            Cancel
+          </button>
+        )}
+        <button onClick={() => onSave(form)} disabled={saving || !form.job_number.trim() || !form.client || !form.start_date}
+          className="flex items-center gap-2 px-6 py-2.5 bg-[#12a0e1] hover:bg-[#0d8bc4] text-white text-sm font-bold rounded-2xl transition-all disabled:opacity-50 shadow-sm">
+          {saving ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Check className="w-3.5 h-3.5" />}
+          {submitLabel || (isEdit ? "Save Changes" : "Create Job")}
+        </button>
+      </div>
+    </>
+  );
+}
+
+// ── Job Form Modal (edit only — creation now lives in Jobs Setup > Custom Job) ─
+function JobModal({ job, clients, films, categories, descs, onSave, onClose, saving }) {
   return (
     // onMouseDown instead of onClick: fires before blur, so the close is instant
     // and never races with a combobox dropdown's state updates.
@@ -839,118 +961,18 @@ function JobModal({ job, clients, films, categories, descs, onSave, onClose, sav
       <div className="bg-white rounded-3xl shadow-2xl w-full max-w-2xl max-h-[92vh] flex flex-col overflow-hidden border border-[#dce4ec]"
         onMouseDown={e => e.stopPropagation()}>
 
-        {/* Header */}
         <div className="px-6 pt-5 pb-4 border-b border-[#dce4ec] flex items-center justify-between shrink-0">
           <div>
             <p className="text-[9px] font-black uppercase tracking-widest text-[#12a0e1] mb-0.5">Job Book</p>
-            <h2 className="text-xl font-black text-[#122027]">
-              {isEdit ? `Edit ${job.job_number}` : "New Job"}
-            </h2>
+            <h2 className="text-xl font-black text-[#122027]">Edit {job?.job_number}</h2>
           </div>
           <button onClick={onClose} className="p-2 hover:bg-slate-100 rounded-xl text-slate-400 hover:text-slate-600 transition-colors">
             <X className="w-4 h-4" />
           </button>
         </div>
 
-        {/* Body */}
-        <div className="overflow-y-auto flex-1 px-6 py-5 space-y-6">
-
-          <div className="grid grid-cols-2 gap-5">
-            <div>
-              <FieldLabel text="Start Date" required />
-              <input type="date" value={form.start_date} onChange={e => set("start_date", e.target.value)}
-                className={MODAL_INPUT} />
-            </div>
-            <PillField label="Office" value={form.office} onChange={v => set("office", v)} options={OFFICES} />
-          </div>
-
-          <div className="grid grid-cols-2 gap-5">
-            <ComboField label="Client" required value={form.client} onChange={v => set("client", v)}
-              options={clients} placeholder="Search clients…" filters={CLIENT_FILTERS} />
-            <PillField label="Print / Digital" value={form.print_digital} onChange={v => set("print_digital", v)}
-              options={PRINT_DIGITAL} colorMap={PD_COLOR_MAP} />
-          </div>
-
-          <ComboField label="Film Title" value={form.film_title} onChange={v => set("film_title", v)}
-            options={films} placeholder="Search films…" />
-
-          <ComboField label="Project Description" value={form.project_description}
-            onChange={v => set("project_description", v)}
-            options={descs} placeholder="Search descriptions or type a new one…"
-            filters={DESC_FILTERS} />
-
-          <ComboField label="Item Category" value={form.job_work_category}
-            onChange={v => set("job_work_category", v)}
-            options={categories} placeholder="Search categories…"
-            filters={CAT_FILTERS} />
-
-          <div className="grid grid-cols-2 gap-5">
-            <ComboField label="Ordered By" value={form.ordered_by} onChange={v => set("ordered_by", v)}
-              options={orderedByOpts} placeholder="Name or type new…" />
-            <ComboField label="Billed To" value={form.billed_to} onChange={v => set("billed_to", v)}
-              options={billedToOpts} placeholder="Company or name…" />
-          </div>
-
-          <div>
-            <p className="text-[10px] font-black uppercase tracking-widest text-[#768994] mb-3">Costs</p>
-            <div className="grid grid-cols-3 gap-4">
-              {[["Fixed", "fixed_cost"], ["3rd Party", "third_party_cost"], ["Estimated", "estimated_cost"]].map(([lbl, field]) => (
-                <div key={field}>
-                  <FieldLabel text={lbl} />
-                  <div className="relative">
-                    <span className="absolute left-3.5 top-1/2 -translate-y-1/2 text-[#768994] text-sm font-bold select-none">£</span>
-                    <input type="number" step="0.01" min="0" value={form[field]}
-                      onChange={e => set(field, e.target.value)} placeholder="0.00"
-                      className={`${MODAL_INPUT} pl-8`} />
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-
-          <div className="grid grid-cols-2 gap-5">
-            <div>
-              <FieldLabel text="Completed Date" />
-              <input type="date" value={form.completed_date} onChange={e => set("completed_date", e.target.value)}
-                className={MODAL_INPUT} />
-            </div>
-            <div className="flex items-end">
-              <button type="button" onClick={() => set("job_done", !form.job_done)}
-                className={`flex items-center gap-2.5 w-full px-4 py-2.5 rounded-2xl border font-bold text-sm transition-all ${
-                  form.job_done
-                    ? "bg-[#1cc1a5]/10 border-[#1cc1a5] text-[#1cc1a5]"
-                    : "bg-white border-[#dce4ec] text-[#768994] hover:border-[#1cc1a5]/50"
-                }`}>
-                <div className={`w-5 h-5 rounded-lg border-2 flex items-center justify-center shrink-0 transition-colors ${
-                  form.job_done ? "bg-[#1cc1a5] border-[#1cc1a5]" : "border-[#dce4ec]"
-                }`}>
-                  {form.job_done && <Check className="w-3 h-3 text-white" />}
-                </div>
-                Job Done
-              </button>
-            </div>
-          </div>
-
-          <div>
-            <FieldLabel text="Notes" />
-            <textarea value={form.notes} onChange={e => set("notes", e.target.value)}
-              rows={3} placeholder="Any additional notes…"
-              className={`${MODAL_INPUT} resize-none`} />
-          </div>
-        </div>
-
-        {/* Footer */}
-        <div className="px-6 py-4 border-t border-[#dce4ec] flex justify-end gap-2 shrink-0">
-          <button onClick={onClose}
-            className="px-5 py-2.5 text-sm font-bold text-[#768994] hover:text-[#122027] bg-white border border-[#dce4ec] rounded-2xl transition-all">
-            Cancel
-          </button>
-          <button onClick={() => onSave(form)} disabled={saving || !form.client || !form.start_date}
-            className="flex items-center gap-2 px-6 py-2.5 bg-[#12a0e1] hover:bg-[#0d8bc4] text-white text-sm font-bold rounded-2xl transition-all disabled:opacity-50 shadow-sm">
-            {saving ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Check className="w-3.5 h-3.5" />}
-            {isEdit ? "Save Changes" : "Create Job"}
-          </button>
-        </div>
+        <JobForm job={job} clients={clients} films={films} categories={categories} descs={descs}
+          onSave={onSave} onCancel={onClose} saving={saving} layout="modal" />
       </div>
     </div>
   );
@@ -1001,7 +1023,13 @@ const STUDIO_OPTIONS = ["Paramount", "Sony", "Universal"];
 const TESTABLE_STUDIOS = new Set(["Paramount", "Universal"]);
 const JOB_STATUSES = ["Inactive", "Active", "Closed"];
 
-function FilmSetupSection({ setActiveTab }) {
+const JOBS_SETUP_TABS = [
+  { id: "campaign", label: "Bulk Campaign", desc: "Generate a whole campaign's job numbers at once from a studio's Wrike folder template.", icon: FolderPlus, color: "from-blue-500 to-[#12a0e1]" },
+  { id: "custom",   label: "Custom Job",    desc: "Add a single one-off job manually, with its own job number and details.", icon: Plus, color: "from-emerald-500 to-teal-600" },
+];
+
+function JobsSetupSection({ setActiveTab }) {
+  const [innerTab, setInnerTab] = useState("campaign");
   const [studio, setStudio] = useState("Paramount");
   const [filmTitle, setFilmTitle] = useState("");
   const [status, setStatus] = useState("Inactive");
@@ -1014,6 +1042,11 @@ function FilmSetupSection({ setActiveTab }) {
   const [fetchInfo, setFetchInfo] = useState(null); // { rootLabel, jobCount } | { error }
   const [films, setFilms] = useState([]);
   const [filmsLoading, setFilmsLoading] = useState(true);
+  const [clients, setClients] = useState([]);
+  const [categories, setCategories] = useState([]);
+  const [descs, setDescs] = useState([]);
+  const [customSaving, setCustomSaving] = useState(false);
+  const [customCreated, setCustomCreated] = useState(null); // job_number of the row just created
 
   // Films are added in the Films tab first — this section only picks from that
   // list, it never creates new films, so the two stay in sync by construction.
@@ -1022,7 +1055,30 @@ function FilmSetupSection({ setActiveTab }) {
       setFilms((data || []).map(f => f.title));
       setFilmsLoading(false);
     });
+    supabase.from("clients").select("name").order("name").then(({ data }) => setClients((data || []).map(c => c.name)));
+    supabase.from("job_categories").select("name").order("name").then(({ data }) => setCategories((data || []).map(c => c.name)));
+    supabase.from("project_descriptions").select("description").order("description").then(({ data }) => setDescs((data || []).map(d => d.description)));
   }, []);
+
+  const handleCreateCustomJob = async (form) => {
+    setCustomSaving(true);
+    const payload = {
+      ...form,
+      start_date: form.start_date || null,
+      completed_date: form.completed_date || null,
+      fixed_cost: form.fixed_cost === "" ? null : parseFloat(form.fixed_cost),
+      third_party_cost: form.third_party_cost === "" ? null : parseFloat(form.third_party_cost),
+      estimated_cost: form.estimated_cost === "" ? null : parseFloat(form.estimated_cost),
+    };
+    const { error } = await supabase.from("jobs").insert(payload);
+    setCustomSaving(false);
+    if (!error) setCustomCreated(form.job_number);
+    else alert(
+      error.code === "23505"
+        ? `Job number "${form.job_number}" already exists in Job Book.`
+        : "Failed to create job: " + error.message
+    );
+  };
 
   // Walk the template, collecting every jobNumber:true leaf with a human-readable description
   const collectJobLeaves = (node) => {
@@ -1198,6 +1254,36 @@ function FilmSetupSection({ setActiveTab }) {
 
   return (
     <div className="flex flex-col gap-5">
+      <div className="grid grid-cols-2 gap-4">
+        {JOBS_SETUP_TABS.map(t => {
+          const Icon = t.icon;
+          const active = innerTab === t.id;
+          return (
+            <button key={t.id} onClick={() => setInnerTab(t.id)}
+              className={`text-left rounded-2xl p-5 border-2 transition-all ${
+                active
+                  ? "border-[#12a0e1] bg-[#12a0e1]/5 shadow-md"
+                  : "border-[#dce4ec] bg-white hover:border-slate-300 hover:shadow-sm"
+              }`}>
+              <div className="flex items-start justify-between mb-3">
+                <div className={`w-10 h-10 rounded-xl bg-gradient-to-br ${t.color} flex items-center justify-center shadow-sm`}>
+                  <Icon className="w-5 h-5 text-white" />
+                </div>
+                {active && (
+                  <div className="w-5 h-5 rounded-full bg-[#12a0e1] flex items-center justify-center shrink-0">
+                    <Check className="w-3 h-3 text-white" />
+                  </div>
+                )}
+              </div>
+              <p className="text-sm font-black text-[#122027] mb-1">{t.label}</p>
+              <p className="text-xs text-[#768994] leading-relaxed">{t.desc}</p>
+            </button>
+          );
+        })}
+      </div>
+
+      {innerTab === "campaign" && (
+    <div className="flex flex-col gap-5">
       <div className="bg-[#f8fafc] border border-[#dce4ec] rounded-2xl p-4">
         <p className="text-xs text-[#768994] leading-relaxed">
           Prototype: add the film in the <span className="font-bold text-[#122027]">Films</span> tab first, then
@@ -1356,11 +1442,36 @@ function FilmSetupSection({ setActiveTab }) {
         </div>
       )}
     </div>
+      )}
+
+      {innerTab === "custom" && (
+        <div>
+          {customCreated == null ? (
+            <JobForm clients={clients} films={films} categories={categories} descs={descs}
+              onSave={handleCreateCustomJob} saving={customSaving} submitLabel="Create Job" layout="inline" />
+          ) : (
+            <div className="flex items-center gap-3 py-4">
+              <span className="flex items-center gap-2 px-4 py-2.5 bg-[#1cc1a5]/10 text-[#1cc1a5] text-sm font-bold rounded-2xl">
+                <CheckCircle2 className="w-3.5 h-3.5" /> Created {customCreated} in Job Book
+              </span>
+              <button onClick={() => setActiveTab?.("jobs")}
+                className="px-4 py-2.5 bg-[#122027] hover:bg-[#1a2e38] text-white text-sm font-bold rounded-2xl transition-all">
+                View in Job Book
+              </button>
+              <button onClick={() => setCustomCreated(null)}
+                className="px-4 py-2.5 bg-white border border-[#dce4ec] hover:border-[#12a0e1] text-[#122027] text-sm font-bold rounded-2xl transition-all">
+                Add Another Job
+              </button>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
   );
 }
 
 // ── Job Book Section ───────────────────────────────────────────────────────────
-function JobBookSection() {
+function JobBookSection({ setActiveTab }) {
   const [jobs, setJobs]         = useState([]);
   const [loading, setLoading]   = useState(true);
   const [search, setSearch]     = useState("");
@@ -1476,9 +1587,9 @@ function JobBookSection() {
             className="w-full pl-9 pr-4 py-2 text-sm border border-[#dce4ec] rounded-xl outline-none focus:border-[#12a0e1] bg-white"
           />
         </div>
-        <button onClick={() => { setEditJob(null); setShowModal(true); }}
+        <button onClick={() => setActiveTab?.("jobsSetup")}
           className="flex items-center gap-1.5 px-4 py-2 bg-[#12a0e1] hover:bg-[#0d8bc4] text-white text-sm font-bold rounded-xl transition-all shrink-0">
-          <Plus className="w-4 h-4" /> New Job
+          <Plus className="w-4 h-4" /> Add Jobs
         </button>
       </div>
 
@@ -2320,8 +2431,8 @@ export default function Management({ wrikeUserId }) {
           </div>
 
           {activeTab === "overview"   && <OverviewSection setActiveTab={setActiveTab} />}
-          {activeTab === "filmSetup"  && <FilmSetupSection setActiveTab={setActiveTab} />}
-          {activeTab === "jobs"       && <JobBookSection />}
+          {activeTab === "jobsSetup"  && <JobsSetupSection setActiveTab={setActiveTab} />}
+          {activeTab === "jobs"       && <JobBookSection setActiveTab={setActiveTab} />}
           {activeTab === "feed"       && <JobsFeedSection />}
           {activeTab === "people"     && <PeopleSection />}
           {activeTab === "films"      && <SimpleListSection table="films" labelField="title" label="Films" placeholder="Film title…" />}

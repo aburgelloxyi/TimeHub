@@ -792,6 +792,9 @@ const CAT_FILTERS = [
   { label: "XYi",    gradient: "from-violet-500 to-violet-700",  match: s => s.startsWith("XYi")    },
 ];
 const PD_COLOR_MAP = { Digital: "bg-cyan-600 border-cyan-600", Print: "bg-orange-500 border-orange-500", Both: "bg-violet-600 border-violet-600" };
+const JOB_STATUSES = ["Inactive", "Active", "Closed"];
+const STATUS_COLOR_MAP = { Inactive: "bg-slate-400 border-slate-400", Active: "bg-[#12a0e1] border-[#12a0e1]", Closed: "bg-[#1cc1a5] border-[#1cc1a5]" };
+const STATUS_BADGE = { Inactive: "bg-slate-100 text-slate-500", Active: "bg-[#12a0e1]/10 text-[#12a0e1]", Closed: "bg-[#1cc1a5]/10 text-[#1cc1a5]" };
 
 // ── Job Form ───────────────────────────────────────────────────────────────────
 // Fields + footer for creating/editing a Job Book row. Shared by JobModal (edit,
@@ -802,6 +805,7 @@ function JobForm({ job, clients, films, categories, descs, onSave, onCancel, sav
   const isEdit = !!job?.id;
   const [orderedByOpts, setOrderedByOpts] = useState([]);
   const [billedToOpts, setBilledToOpts]   = useState([]);
+  const [nextCode, setNextCode] = useState(null); // e.g. "XY025999" — allocated once when creating a new job
 
   useEffect(() => {
     supabase.from("jobs")
@@ -814,6 +818,23 @@ function JobForm({ job, clients, films, categories, descs, onSave, onCancel, sav
         setBilledToOpts([...new Set(data.map(r => r.billed_to).filter(Boolean))].sort());
       });
   }, []);
+
+  // New jobs get the next sequential XY code auto-allocated, same source of truth
+  // (max across jobs + tasks) as the Bulk Campaign flow — never manually typed.
+  useEffect(() => {
+    if (isEdit) return;
+    Promise.all([
+      supabase.from("jobs").select("job_number"),
+      supabase.from("tasks").select("job_number"),
+    ]).then(([{ data: jobRows }, { data: taskRows }]) => {
+      let maxNum = 0;
+      [...(jobRows || []), ...(taskRows || [])].forEach(r => {
+        const m = (r.job_number || "").match(/XY(\d+)/);
+        if (m) maxNum = Math.max(maxNum, parseInt(m[1], 10));
+      });
+      setNextCode(`XY${String(maxNum + 1).padStart(6, "0")}`);
+    });
+  }, [isEdit]);
 
   const [form, setForm] = useState({
     job_number: job?.job_number || "",
@@ -831,6 +852,7 @@ function JobForm({ job, clients, films, categories, descs, onSave, onCancel, sav
     estimated_cost: job?.estimated_cost ?? "",
     completed_date: job?.completed_date ? job.completed_date.slice(0, 10) : "",
     job_done: job?.job_done || false,
+    status: job?.status || "Inactive",
     notes: job?.notes || "",
   });
 
@@ -840,14 +862,41 @@ function JobForm({ job, clients, films, categories, descs, onSave, onCancel, sav
     ? "px-6 py-4 border-t border-[#dce4ec] flex justify-end gap-2 shrink-0"
     : "pt-5 border-t border-[#dce4ec] flex justify-end gap-2";
 
+  // Live preview: "Film Title : XY025999, Project Description" — updates as you type
+  const livePreview = useMemo(() => {
+    if (!nextCode) return "";
+    const film = form.film_title.trim();
+    const desc = form.project_description.trim();
+    let s = film ? `${film} : ${nextCode}` : nextCode;
+    if (desc) s += `, ${desc}`;
+    return s;
+  }, [nextCode, form.film_title, form.project_description]);
+
+  const canSave = isEdit
+    ? form.job_number.trim() && form.client && form.start_date
+    : nextCode && form.client && form.start_date;
+
+  const handleSave = () => onSave(isEdit ? form : { ...form, job_number: livePreview });
+
   return (
     <>
       <div className={bodyClass}>
         <div>
           <FieldLabel text="Job Number" required />
-          <input value={form.job_number} onChange={e => set("job_number", e.target.value)}
-            placeholder="e.g. The Odyssey : XY025999, Finishing"
-            className={`${MODAL_INPUT} font-mono`} />
+          {isEdit ? (
+            <input value={form.job_number} onChange={e => set("job_number", e.target.value)}
+              placeholder="e.g. The Odyssey : XY025999, Finishing"
+              className={`${MODAL_INPUT} font-mono`} />
+          ) : (
+            <>
+              <div className={`${MODAL_INPUT} font-mono bg-slate-50 flex items-center min-h-[42px]`}>
+                {nextCode ? livePreview : "Allocating next job number…"}
+              </div>
+              <p className="text-[10px] text-[#768994] mt-1.5">
+                Auto-allocated — updates live as you fill in the film and project description below.
+              </p>
+            </>
+          )}
         </div>
 
         <div className="grid grid-cols-2 gap-5">
@@ -903,6 +952,9 @@ function JobForm({ job, clients, films, categories, descs, onSave, onCancel, sav
           </div>
         </div>
 
+        <PillField label="Status" value={form.status} onChange={v => set("status", v)}
+          options={JOB_STATUSES} colorMap={STATUS_COLOR_MAP} />
+
         <div className="grid grid-cols-2 gap-5">
           <div>
             <FieldLabel text="Completed Date" />
@@ -941,7 +993,7 @@ function JobForm({ job, clients, films, categories, descs, onSave, onCancel, sav
             Cancel
           </button>
         )}
-        <button onClick={() => onSave(form)} disabled={saving || !form.job_number.trim() || !form.client || !form.start_date}
+        <button onClick={handleSave} disabled={saving || !canSave}
           className="flex items-center gap-2 px-6 py-2.5 bg-[#12a0e1] hover:bg-[#0d8bc4] text-white text-sm font-bold rounded-2xl transition-all disabled:opacity-50 shadow-sm">
           {saving ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Check className="w-3.5 h-3.5" />}
           {submitLabel || (isEdit ? "Save Changes" : "Create Job")}
@@ -1021,7 +1073,6 @@ const STUDIO_OPTIONS = ["Paramount", "Sony", "Universal"];
 // Studios we can currently fetch/test live from Wrike (have a master-template folder).
 // Paramount also ships a hardcoded fallback tree above; Universal is fetch-only.
 const TESTABLE_STUDIOS = new Set(["Paramount", "Universal"]);
-const JOB_STATUSES = ["Inactive", "Active", "Closed"];
 
 const JOBS_SETUP_TABS = [
   { id: "campaign", label: "Bulk Campaign", desc: "Generate a whole campaign's job numbers at once from a studio's Wrike folder template.", icon: FolderPlus, color: "from-blue-500 to-[#12a0e1]" },
@@ -1032,7 +1083,6 @@ function JobsSetupSection({ setActiveTab }) {
   const [innerTab, setInnerTab] = useState("campaign");
   const [studio, setStudio] = useState("Paramount");
   const [filmTitle, setFilmTitle] = useState("");
-  const [status, setStatus] = useState("Inactive");
   const [preview, setPreview] = useState(null); // { template, jobs: [{ label, description, code, jobNumber }] }
   const [saving, setSaving] = useState(false);
   const [created, setCreated] = useState(null);
@@ -1196,7 +1246,9 @@ function JobsSetupSection({ setActiveTab }) {
     const rows = preview.jobs.map(j => ({
       job_number: j.jobNumber,
       film_title: title,
-      status,
+      // Status starts Inactive for every new job — Active/Closed get set later
+      // in Job Book as billing info comes in and the job wraps up.
+      status: "Inactive",
       // Job Book's default view filters by month on start_date — stamp today so
       // newly-created jobs are visible there immediately instead of vanishing.
       start_date: new Date().toISOString().slice(0, 10),
@@ -1295,40 +1347,25 @@ function JobsSetupSection({ setActiveTab }) {
         </p>
       </div>
 
-      <div className="grid grid-cols-2 gap-4">
-        <div>
-          <label className="block text-[10px] font-black uppercase tracking-widest text-[#768994] mb-1.5">Studio Template</label>
-          <div className="flex gap-2">
-            {STUDIO_OPTIONS.map(s => {
-              const available = TESTABLE_STUDIOS.has(s);
-              return (
-                <button key={s} disabled={!available}
-                  onClick={() => { setStudio(s); setPreview(null); setCreated(null); setFetchedTemplate(null); setFetchInfo(null); }}
-                  className={`px-3 py-2 rounded-xl text-xs font-bold border transition-all ${
-                    studio === s
-                      ? "bg-[#122027] text-white border-[#122027]"
-                      : available
-                        ? "bg-white text-[#122027] border-[#dce4ec] hover:border-[#12a0e1]"
-                        : "bg-slate-50 text-slate-300 border-slate-100 cursor-not-allowed"
-                  }`}>
-                  {s}{!available && " (soon)"}
-                </button>
-              );
-            })}
-          </div>
-        </div>
-        <div>
-          <label className="block text-[10px] font-black uppercase tracking-widest text-[#768994] mb-1.5">Status</label>
-          <div className="flex gap-2">
-            {JOB_STATUSES.map(s => (
-              <button key={s} onClick={() => setStatus(s)}
+      <div>
+        <label className="block text-[10px] font-black uppercase tracking-widest text-[#768994] mb-1.5">Studio Template</label>
+        <div className="flex gap-2">
+          {STUDIO_OPTIONS.map(s => {
+            const available = TESTABLE_STUDIOS.has(s);
+            return (
+              <button key={s} disabled={!available}
+                onClick={() => { setStudio(s); setPreview(null); setCreated(null); setFetchedTemplate(null); setFetchInfo(null); }}
                 className={`px-3 py-2 rounded-xl text-xs font-bold border transition-all ${
-                  status === s ? "bg-[#12a0e1] text-white border-[#12a0e1]" : "bg-white text-[#122027] border-[#dce4ec] hover:border-[#12a0e1]"
+                  studio === s
+                    ? "bg-[#122027] text-white border-[#122027]"
+                    : available
+                      ? "bg-white text-[#122027] border-[#dce4ec] hover:border-[#12a0e1]"
+                      : "bg-slate-50 text-slate-300 border-slate-100 cursor-not-allowed"
                 }`}>
-                {s}
+                {s}{!available && " (soon)"}
               </button>
-            ))}
-          </div>
+            );
+          })}
         </div>
       </div>
 
@@ -1554,6 +1591,14 @@ function JobBookSection({ setActiveTab }) {
     setJobs(prev => prev.map(j => j.id === job.id ? { ...j, job_done: !j.job_done } : j));
   };
 
+  // Click cycles Inactive -> Active -> Closed -> Inactive, matching the workflow:
+  // new jobs start Inactive, go Active once billing info is filled in, Closed when done.
+  const cycleStatus = async (job) => {
+    const next = JOB_STATUSES[(JOB_STATUSES.indexOf(job.status || "Inactive") + 1) % JOB_STATUSES.length];
+    await supabase.from("jobs").update({ status: next }).eq("id", job.id);
+    setJobs(prev => prev.map(j => j.id === job.id ? { ...j, status: next } : j));
+  };
+
   const deleteJob = async (id) => {
     if (!confirm("Delete this job?")) return;
     await supabase.from("jobs").delete().eq("id", id);
@@ -1621,7 +1666,7 @@ function JobBookSection({ setActiveTab }) {
           <table className="w-full text-xs">
             <thead>
               <tr className="bg-slate-50 border-b border-[#dce4ec]">
-                {["Job #","Date","Client","Office","P/D","Film Title","Project Description","Costs","Ordered By","Billed To","Done",""].map(h => (
+                {["Job #","Date","Client","Office","P/D","Film Title","Project Description","Costs","Ordered By","Billed To","Status","Done",""].map(h => (
                   <th key={h} className="px-3 py-2.5 text-left text-[9px] font-black uppercase tracking-widest text-[#768994] whitespace-nowrap">
                     {h}
                   </th>
@@ -1630,7 +1675,7 @@ function JobBookSection({ setActiveTab }) {
             </thead>
             <tbody>
               {paginated.length === 0 ? (
-                <tr><td colSpan={12} className="text-center py-12 text-[#768994] italic">No jobs found</td></tr>
+                <tr><td colSpan={13} className="text-center py-12 text-[#768994] italic">No jobs found</td></tr>
               ) : paginated.map(j => (
                 <tr key={j.id} className={`border-b border-[#dce4ec] last:border-0 hover:bg-slate-50/50 transition-colors ${j.job_done ? "opacity-50" : ""}`}>
                   <td className="px-3 py-2.5">
@@ -1653,6 +1698,12 @@ function JobBookSection({ setActiveTab }) {
                   <td className="px-3 py-2.5 whitespace-nowrap font-bold text-[#122027]">{formatCost(j)}</td>
                   <td className="px-3 py-2.5 text-[#768994]">{j.ordered_by || "—"}</td>
                   <td className="px-3 py-2.5 text-[#768994]">{j.billed_to || "—"}</td>
+                  <td className="px-3 py-2.5">
+                    <button onClick={() => cycleStatus(j)} title="Click to change status"
+                      className={`text-[9px] font-black px-2 py-1 rounded-full transition-colors ${STATUS_BADGE[j.status || "Inactive"]}`}>
+                      {j.status || "Inactive"}
+                    </button>
+                  </td>
                   <td className="px-3 py-2.5">
                     <button onClick={() => toggleDone(j)} title="Toggle done">
                       <div className={`w-4 h-4 rounded border-2 flex items-center justify-center transition-colors ${j.job_done ? "bg-[#1cc1a5] border-[#1cc1a5]" : "border-[#dce4ec] hover:border-[#1cc1a5]"}`}>

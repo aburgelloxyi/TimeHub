@@ -23,6 +23,7 @@ import {
   ExternalLink,
 } from "lucide-react";
 import { supabase } from "../lib/supabaseClient";
+import { PAGE_GRADIENTS } from "../lib/pageGradients";
 import { useTasks } from "../hooks/useTasks";
 import { useWrikeUser } from "../hooks/useWrikeUser";
 import { startWrikeOAuth, disconnectWrike, fetchWrikeOAuthStatus } from "../lib/wrikeApi";
@@ -1239,14 +1240,15 @@ export default function Profile({ wrikeData, onTokenChange, activeSection: activ
         </div>
       )}
       <div className="max-w-[1400px] mx-auto px-4 sm:px-6 pt-8 space-y-6">
-        {/* Hero header */}
-        <div className="bg-white border border-[#dce4ec] rounded-[2rem] overflow-hidden shadow-sm">
-          {/* Gradient bar */}
-          <div className="h-1.5 bg-gradient-to-r from-[#12a0e1] to-[#1cc1a5]" />
+        {/* Hero header — gradient-filled to match the Home screen's "Profile
+            hub" row/wash color (PAGE_GRADIENTS.profile), so the exit-wash
+            transition from Home resolves directly into this header instead
+            of cutting to an unrelated white card. */}
+        <div className={`bg-gradient-to-br ${PAGE_GRADIENTS.profile} rounded-[2rem] overflow-hidden shadow-sm shadow-blue-600/20`}>
           <div className="p-6 sm:p-8 flex flex-col sm:flex-row items-start sm:items-center gap-6">
             {/* Avatar */}
             <div className="relative shrink-0">
-              <div className="w-20 h-20 rounded-2xl bg-gradient-to-br from-[#12a0e1] to-[#1cc1a5] flex items-center justify-center text-white text-2xl font-black shadow-lg shadow-[#12a0e1]/20">
+              <div className="w-20 h-20 rounded-2xl bg-white/15 border border-white/20 flex items-center justify-center text-white text-2xl font-black backdrop-blur-sm">
                 {initials}
               </div>
               {/* Active dot */}
@@ -1255,22 +1257,22 @@ export default function Profile({ wrikeData, onTokenChange, activeSection: activ
 
             {/* Identity */}
             <div className="flex-1 min-w-0">
-              <h1 className="text-3xl font-black tracking-tight text-[#122027]">
+              <h1 className="text-3xl font-black tracking-tight text-white">
                 {displayName}
               </h1>
               <div className="flex flex-wrap items-center gap-2.5 mt-2">
                 {profile?.email && (
-                  <span className="text-xs text-[#768994] font-medium">
+                  <span className="text-xs text-white/80 font-medium">
                     {profile.email}
                   </span>
                 )}
                 {wrikeUser?.id && (
-                  <span className="text-[10px] font-black text-[#768994] bg-slate-100 px-2.5 py-1 rounded-full uppercase tracking-wider">
+                  <span className="text-[10px] font-black text-white/90 bg-white/15 px-2.5 py-1 rounded-full uppercase tracking-wider">
                     Wrike · {wrikeUser.id.slice(0, 8)}…
                   </span>
                 )}
                 {profile?.updated_at && (
-                  <span className="text-[10px] font-black text-[#1cc1a5] bg-[#1cc1a5]/10 px-2.5 py-1 rounded-full uppercase tracking-wider flex items-center gap-1">
+                  <span className="text-[10px] font-black text-white bg-white/15 px-2.5 py-1 rounded-full uppercase tracking-wider flex items-center gap-1">
                     <div className="w-1.5 h-1.5 rounded-full bg-[#1cc1a5]" />{" "}
                     Active
                   </span>
@@ -1289,10 +1291,10 @@ export default function Profile({ wrikeData, onTokenChange, activeSection: activ
                 },
               ].map(({ label, value }) => (
                 <div key={label} className="text-center">
-                  <div className="text-xl font-black text-[#122027]">
+                  <div className="text-xl font-black text-white">
                     {value}
                   </div>
-                  <div className="text-[10px] font-black text-[#768994] uppercase tracking-wider mt-0.5">
+                  <div className="text-[10px] font-black text-white/70 uppercase tracking-wider mt-0.5">
                     {label}
                   </div>
                 </div>

@@ -168,6 +168,16 @@ export function useWrikeCache() {
   const [syncError, setSyncError]               = useState(null);
   const syncingRef  = useRef(false);
   const scanningRef = useRef(false);
+  // Dictionaries needed to enrich a single webhook-pushed task outside of a
+  // full sync() call — sync() only keeps these as local variables, so we
+  // mirror the latest copy here whenever mount-load or sync() refreshes them.
+  const enrichCtxRef = useRef({
+    folderDictionary: {},
+    contactDictionary: {},
+    statusDictionary: {},
+    childToParent: {},
+    filmCodeMappings: {},
+  });
 
   const wrikeUserId = localStorage.getItem("wrike_user_id");
 
@@ -214,6 +224,13 @@ export function useWrikeCache() {
       if (meta?.film_code_mappings && Object.keys(meta.film_code_mappings).length) {
         setFilmCodeMappings(meta.film_code_mappings);
       }
+      enrichCtxRef.current = {
+        folderDictionary: meta?.folder_dictionary || {},
+        contactDictionary: meta?.contact_dictionary || {},
+        statusDictionary: meta?.status_dictionary || {},
+        childToParent: buildChildToParent(meta?.folder_dictionary || {}),
+        filmCodeMappings: meta?.film_code_mappings || {},
+      };
 
       // --- SELF-HEAL + STUDIO BACKFILL ---
       // MATRIX tasks that predate parentIds in FIELDS_FILTER have parentIds=undefined.
@@ -293,6 +310,7 @@ export function useWrikeCache() {
           }
         }
         console.log(`[WrikeCache] backfill: ${Object.keys(fd).length} folders, ${Object.keys(c2p).length} parent links`);
+        enrichCtxRef.current = { ...enrichCtxRef.current, folderDictionary: fd, childToParent: c2p };
         const derived = deriveFolderCampaigns(fd);
         if (derived.length > 0) {
           console.log(`[WrikeCache] folder campaigns derived: ${derived.length}`);
@@ -451,6 +469,13 @@ export function useWrikeCache() {
         status_dictionary:  needsMetaRefresh ? statusDictionary  : (meta?.status_dictionary  ?? {}),
         film_code_mappings: mergedFilmMappings,
       });
+      enrichCtxRef.current = {
+        folderDictionary,
+        contactDictionary,
+        statusDictionary,
+        childToParent,
+        filmCodeMappings: mergedFilmMappings,
+      };
 
       // Merge new tasks into state, then backfill studioName on any task still missing it.
       // Archived tasks (outside the lookback window) are never re-enriched, so we use the
@@ -501,6 +526,96 @@ export function useWrikeCache() {
   }, [wrikeUserId, sync]);
 
   const syncNow = useCallback(() => sync({ fullRefresh: true }), [sync]);
+
+  // --- Live updates: Wrike webhook events pushed via Supabase Realtime ---
+  // The Worker (worker/index.js) receives Wrike webhooks and writes lightweight
+  // {task_id, event_type} rows into wrike_webhook_events. We pick those up here,
+  // fetch just the changed task(s), and run them through the same enrichTasks
+  // pipeline sync() uses — this is the fast path; sync()'s 15-min poll remains
+  // the fallback for missed webhook deliveries or when no tab is open.
+  const handleWebhookTaskIds = useCallback(async (ids) => {
+    if (!ids.length) return;
+
+    let ctx = enrichCtxRef.current;
+    if (Object.keys(ctx.folderDictionary).length === 0) {
+      // No dictionaries in memory yet (e.g. tab just opened, sync() hasn't run) —
+      // fall back to the last synced copy in Supabase.
+      const { data: meta } = await supabase
+        .from("wrike_sync_meta")
+        .select("folder_dictionary,contact_dictionary,status_dictionary,film_code_mappings")
+        .order("last_synced_at", { ascending: false })
+        .limit(1)
+        .single();
+      ctx = {
+        folderDictionary: meta?.folder_dictionary || {},
+        contactDictionary: meta?.contact_dictionary || {},
+        statusDictionary: meta?.status_dictionary || {},
+        childToParent: buildChildToParent(meta?.folder_dictionary || {}),
+        filmCodeMappings: meta?.film_code_mappings || {},
+      };
+      enrichCtxRef.current = ctx;
+    }
+
+    const raw = await fetchTasksByIds(ids);
+    if (!raw.length) return;
+
+    const enriched = enrichTasks(
+      raw,
+      ctx.folderDictionary,
+      ctx.contactDictionary,
+      ctx.statusDictionary,
+      ctx.childToParent,
+      ctx.filmCodeMappings
+    );
+
+    const rows = enriched.map((t) => ({
+      id: t.id,
+      wrike_user_id: wrikeUserId,
+      task_data: t,
+      updated_date: t.updatedDate ?? null,
+    }));
+    await supabase.from("wrike_tasks_cache").upsert(rows);
+
+    setTasks((prev) => {
+      const map = new Map(prev.map((p) => [p.id, p]));
+      enriched.forEach((t) => map.set(t.id, t));
+      return [...map.values()];
+    });
+    console.log(`[WrikeCache] realtime: updated ${enriched.length} task(s) from webhook event(s)`);
+  }, [wrikeUserId]);
+
+  useEffect(() => {
+    if (!wrikeUserId) return;
+
+    let pendingIds = new Set();
+    let debounceTimer = null;
+    const flush = () => {
+      const ids = [...pendingIds];
+      pendingIds = new Set();
+      debounceTimer = null;
+      handleWebhookTaskIds(ids);
+    };
+
+    const channel = supabase
+      .channel("wrike_webhook_events_live")
+      .on(
+        "postgres_changes",
+        { event: "INSERT", schema: "public", table: "wrike_webhook_events" },
+        (payload) => {
+          const taskId = payload.new?.task_id;
+          if (!taskId) return;
+          pendingIds.add(taskId);
+          if (debounceTimer) clearTimeout(debounceTimer);
+          debounceTimer = setTimeout(flush, 2000);
+        }
+      )
+      .subscribe();
+
+    return () => {
+      if (debounceTimer) clearTimeout(debounceTimer);
+      supabase.removeChannel(channel);
+    };
+  }, [wrikeUserId, handleWebhookTaskIds]);
 
   // --- Broad film-code mapping scan (all tasks, not just Motion-filtered) ---
   // Fetches every task from the last 2 years with minimal fields (parentIds only),

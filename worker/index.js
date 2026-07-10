@@ -33,6 +33,12 @@ export default {
     if (url.pathname === "/api/wrike/oauth/status") {
       return handleStatus(request, env);
     }
+    if (url.pathname === "/api/wrike/webhook/register" && request.method === "POST") {
+      return handleWebhookRegister(request, url, env);
+    }
+    if (url.pathname === "/api/wrike/webhook" && request.method === "POST") {
+      return handleWebhookEvent(request, env);
+    }
     if (url.pathname.startsWith("/api/wrike/")) {
       return handleProxy(request, url, env);
     }
@@ -122,6 +128,51 @@ async function deleteTokenRow(env, wrikeUserId) {
   await sbFetch(env, `/wrike_oauth_tokens?wrike_user_id=eq.${encodeURIComponent(wrikeUserId)}`, {
     method: "DELETE",
   });
+}
+
+async function getWebhookConfig(env) {
+  const res = await sbFetch(env, `/wrike_webhook_config?select=*&limit=1`);
+  if (!res.ok) return null;
+  const rows = await res.json();
+  return rows[0] || null;
+}
+
+async function upsertWebhookConfig(env, { webhookId, secret }) {
+  const res = await sbFetch(env, `/wrike_webhook_config?on_conflict=id`, {
+    method: "POST",
+    headers: { Prefer: "resolution=merge-duplicates,return=representation" },
+    body: JSON.stringify({ id: true, webhook_id: webhookId, secret }),
+  });
+  if (!res.ok) throw new Error(`Supabase upsert failed: ${res.status} ${await res.text()}`);
+  return (await res.json())[0];
+}
+
+async function insertWebhookEvent(env, { taskId, eventType, occurredAt }) {
+  await sbFetch(env, `/wrike_webhook_events`, {
+    method: "POST",
+    body: JSON.stringify({ task_id: taskId, event_type: eventType, occurred_at: occurredAt }),
+  });
+}
+
+// ── HMAC helpers (Wrike webhook signature verification) ─────────────────────
+
+async function hmacSha256Hex(secret, message) {
+  const key = await crypto.subtle.importKey(
+    "raw",
+    new TextEncoder().encode(secret),
+    { name: "HMAC", hash: "SHA-256" },
+    false,
+    ["sign"]
+  );
+  const sig = await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(message));
+  return [...new Uint8Array(sig)].map((b) => b.toString(16).padStart(2, "0")).join("");
+}
+
+function timingSafeEqual(a, b) {
+  if (a.length !== b.length) return false;
+  let diff = 0;
+  for (let i = 0; i < a.length; i++) diff |= a.charCodeAt(i) ^ b.charCodeAt(i);
+  return diff === 0;
 }
 
 // ── Wrike OAuth helpers ───────────────────────────────────────────────────────
@@ -257,6 +308,85 @@ async function handleStatus(request, env) {
   if (!session) return json({ connected: false });
   const row = await getTokenRowBySession(env, session);
   return json({ connected: !!row, wrikeUserId: row?.wrike_user_id || null });
+}
+
+// One-time admin action: register an account-wide Wrike webhook pointed at
+// this Worker's /api/wrike/webhook endpoint. Any connected user's token
+// works — the webhook fires for the whole account regardless of who
+// registered it.
+async function handleWebhookRegister(request, url, env) {
+  const cookies = parseCookies(request);
+  const session = cookies[SESSION_COOKIE];
+  if (!session) return json({ error: "not_connected" }, { status: 401 });
+
+  const row = await getTokenRowBySession(env, session);
+  if (!row) return json({ error: "not_connected" }, { status: 401 });
+
+  const secret = crypto.randomUUID().replace(/-/g, "") + crypto.randomUUID().replace(/-/g, "");
+  const hookUrl = `${url.origin}/api/wrike/webhook`;
+
+  const body = new URLSearchParams({ hookUrl, secret });
+  const res = await fetch(`https://${row.api_host}/api/v4/webhooks`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${row.access_token}`,
+      "Content-Type": "application/x-www-form-urlencoded",
+    },
+    body,
+  });
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    return json({ error: "wrike_webhook_create_failed", detail: text }, { status: 502 });
+  }
+  const data = await res.json();
+  const webhookId = data.data?.[0]?.id;
+  if (!webhookId) return json({ error: "no_webhook_id_returned" }, { status: 502 });
+
+  await upsertWebhookConfig(env, { webhookId, secret });
+  return json({ ok: true, webhookId });
+}
+
+// Public endpoint Wrike calls directly (no session cookie). Handles both the
+// registration handshake (X-Hook-Secret) and real event deliveries
+// (X-Hook-Signature), per https://developers.wrike.com/docs/webhooks.
+async function handleWebhookEvent(request, env) {
+  const config = await getWebhookConfig(env);
+  if (!config) return json({ error: "webhook_not_configured" }, { status: 404 });
+
+  const rawBody = await request.text();
+  const hookSecretHeader = request.headers.get("X-Hook-Secret");
+
+  if (hookSecretHeader) {
+    // Handshake: prove we know the secret by signing the value Wrike sent us.
+    const signature = await hmacSha256Hex(config.secret, hookSecretHeader);
+    return new Response(null, { status: 200, headers: { "X-Hook-Signature": signature } });
+  }
+
+  const signatureHeader = request.headers.get("X-Hook-Signature") || "";
+  const expected = await hmacSha256Hex(config.secret, rawBody);
+  if (!timingSafeEqual(signatureHeader, expected)) {
+    // Signature mismatch — not from Wrike. Discard per Wrike's docs.
+    return json({ error: "invalid_signature" }, { status: 401 });
+  }
+
+  let events;
+  try {
+    events = JSON.parse(rawBody);
+  } catch {
+    return json({ error: "invalid_body" }, { status: 400 });
+  }
+  if (!Array.isArray(events)) events = [events];
+
+  for (const evt of events) {
+    if (!evt?.taskId) continue; // ignore folder/comment/attachment-only events
+    await insertWebhookEvent(env, {
+      taskId: evt.taskId,
+      eventType: evt.eventType || null,
+      occurredAt: evt.lastUpdatedDate || new Date().toISOString(),
+    });
+  }
+
+  return json({ ok: true });
 }
 
 async function handleProxy(request, url, env) {

@@ -7,8 +7,10 @@ import { MOTION_TEAM_NAME_MAP } from "../constants";
 
 const FIELDS = encodeURIComponent("[customFields,parentIds,responsibleIds,subTaskIds,description]");
 
-// yyyy-MM-ddTHH:mm:ss, no ms/offset — matches Wrike's expected dueDate format.
-const toWrikeDate = (d) => new Date(d).toISOString().split(".")[0] + "Z";
+// yyyy-MM-ddTHH:mm:ss — Wrike's dueDate filter rejects a trailing "Z"
+// (unlike the updatedDate filter elsewhere, which requires one); confirmed
+// via the actual 400 "Parameter 'dueDate' value is invalid" response.
+const toWrikeDate = (d) => new Date(d).toISOString().split(".")[0];
 
 function endOfNextWorkWeek() {
   const now = new Date();

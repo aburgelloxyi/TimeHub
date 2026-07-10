@@ -1144,27 +1144,25 @@ function JobsSetupSection({ setActiveTab }) {
     return leaves;
   };
 
-  // Pull the real master-template folder subtree from Wrike using the personal
-  // token already stored for the timesheet pulls. Builds the same
-  // { label, children, jobNumber } shape as the hardcoded FOLDER_TEMPLATES,
-  // tagging every "JOBNUMBER_..." folder so it gets a generated code.
+  // Pull the real master-template folder subtree from Wrike via the OAuth
+  // proxy. Builds the same { label, children, jobNumber } shape as the
+  // hardcoded FOLDER_TEMPLATES, tagging every "JOBNUMBER_..." folder so it
+  // gets a generated code.
   const fetchTemplateFromWrike = async () => {
-    const token = localStorage.getItem("wrike_personal_token");
-    if (!token) { setFetchInfo({ error: "No Wrike token found — add it in Profile → Settings first." }); return; }
+    if (!localStorage.getItem("wrike_user_id")) { setFetchInfo({ error: "Wrike not connected — connect it in Profile → Settings first." }); return; }
     setFetchingTemplate(true);
     setFetchInfo(null);
     try {
-      const headers = { Authorization: `Bearer ${token}` };
       const FF = encodeURIComponent("[childIds]");
       const fd = {};
-      let url = `https://www.wrike.com/api/v4/folders?fields=${FF}`;
+      let url = `/api/wrike/folders?fields=${FF}`;
       while (url) {
-        const res = await fetch(url, { headers });
+        const res = await fetch(url);
         if (!res.ok) throw new Error(`Wrike folders fetch failed (${res.status})`);
         const json = await res.json();
         (json.data || []).forEach(f => { fd[f.id] = { id: f.id, title: f.title, childIds: f.childIds || [] }; });
         url = json.nextPageToken
-          ? `https://www.wrike.com/api/v4/folders?fields=${FF}&nextPageToken=${json.nextPageToken}`
+          ? `/api/wrike/folders?fields=${FF}&nextPageToken=${json.nextPageToken}`
           : null;
       }
       // Find candidate master-template roots by fuzzy title match. There can be
@@ -2215,16 +2213,14 @@ function PeopleSection() {
   };
 
   const syncFromWrike = async () => {
-    const token = localStorage.getItem("wrike_personal_token");
-    if (!token) { setSyncMsg("No Wrike token found — log in with your personal token first."); return; }
+    if (!localStorage.getItem("wrike_user_id")) { setSyncMsg("Wrike not connected — connect it in Profile → Settings first."); return; }
     setSyncing(true);
     setSyncMsg("");
     try {
       // Fetch contacts and groups in parallel
-      const headers = { Authorization: `Bearer ${token}` };
       const [contactsRes, groupsRes] = await Promise.all([
-        fetch("https://www.wrike.com/api/v4/contacts", { headers }),
-        fetch("https://www.wrike.com/api/v4/groups", { headers }),
+        fetch("/api/wrike/contacts"),
+        fetch("/api/wrike/groups"),
       ]);
       if (!contactsRes.ok) throw new Error(`Wrike contacts error ${contactsRes.status}`);
 

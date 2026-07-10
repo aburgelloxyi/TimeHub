@@ -21,29 +21,27 @@ const LOOKBACK_MONTHS   = 2;                 // how far back the full refresh wi
 // ---------------------------------------------------------------------------
 // Fetch folders, contacts, workflows from Wrike
 // ---------------------------------------------------------------------------
-async function fetchWrikeMeta(token) {
-  const headers = { Authorization: `Bearer ${token}` };
-
+async function fetchWrikeMeta() {
   // Paginate folders — childIds is NOT returned by default on the flat /folders
   // list, so request it explicitly. We store childIds and build a reverse
   // childToParent map for upward tree climbing (parentIds is never returned).
   const folderDictionary = {};
   const FOLDER_FIELDS = encodeURIComponent("[childIds]");
-  let folderUrl = `https://www.wrike.com/api/v4/folders?fields=${FOLDER_FIELDS}`;
+  let folderUrl = `/api/wrike/folders?fields=${FOLDER_FIELDS}`;
   while (folderUrl) {
-    const fRes = await fetch(folderUrl, { headers });
+    const fRes = await fetch(folderUrl);
     if (!fRes.ok) { console.warn("[WrikeCache] folders fetch failed", fRes.status); break; }
     const fJson = await fRes.json();
     fJson.data?.forEach((f) => { folderDictionary[f.id] = { id: f.id, title: f.title, childIds: f.childIds || [] }; });
     folderUrl = fJson.nextPageToken
-      ? `https://www.wrike.com/api/v4/folders?fields=${FOLDER_FIELDS}&nextPageToken=${fJson.nextPageToken}`
+      ? `/api/wrike/folders?fields=${FOLDER_FIELDS}&nextPageToken=${fJson.nextPageToken}`
       : null;
   }
   console.log(`[WrikeCache] folder dictionary loaded: ${Object.keys(folderDictionary).length} folders`);
 
   const [cRes, wRes] = await Promise.all([
-    fetch("https://www.wrike.com/api/v4/contacts",  { headers }),
-    fetch("https://www.wrike.com/api/v4/workflows", { headers }),
+    fetch("/api/wrike/contacts"),
+    fetch("/api/wrike/workflows"),
   ]);
 
   const contactDictionary = {};
@@ -62,17 +60,17 @@ async function fetchWrikeMeta(token) {
 // ---------------------------------------------------------------------------
 // Paginate through Wrike tasks updated after `sinceIso`
 // ---------------------------------------------------------------------------
-async function fetchWrikeTasks(token, sinceIso) {
+async function fetchWrikeTasks(sinceIso) {
   const dateFilter = encodeURIComponent(`{"start":"${sinceIso}"}`);
   let rawTasks = [];
   let nextPageToken = null;
 
   while (true) {
     const url = nextPageToken
-      ? `https://www.wrike.com/api/v4/tasks?nextPageToken=${nextPageToken}`
-      : `https://www.wrike.com/api/v4/tasks?fields=${FIELDS_FILTER}&updatedDate=${dateFilter}&pageSize=1000`;
-    console.log("[WrikeCache] fetching:", url.replace(/Bearer\s\S+/, "Bearer ***"));
-    const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
+      ? `/api/wrike/tasks?nextPageToken=${nextPageToken}`
+      : `/api/wrike/tasks?fields=${FIELDS_FILTER}&updatedDate=${dateFilter}&pageSize=1000`;
+    console.log("[WrikeCache] fetching:", url);
+    const res = await fetch(url);
     if (!res.ok) {
       const body = await res.text().catch(() => "");
       console.error("[WrikeCache] 400 body:", body);
@@ -93,16 +91,15 @@ async function fetchWrikeTasks(token, sinceIso) {
 // 2+, so tasks from later pages come back without their description — which is
 // where the MATRIX table + notes live. Fetching by ID guarantees we get them.
 // ---------------------------------------------------------------------------
-async function fetchTasksByIds(token, ids) {
+async function fetchTasksByIds(ids) {
   const out = [];
-  const headers = { Authorization: `Bearer ${token}` };
   // Batch up to 100 IDs per request — Wrike supports comma-separated IDs
   // and returns description by default (no fields param needed).
   const BATCH = 100;
   for (let i = 0; i < ids.length; i += BATCH) {
     const batch = ids.slice(i, i + BATCH);
     try {
-      const r = await fetch(`https://www.wrike.com/api/v4/tasks/${batch.join(",")}`, { headers });
+      const r = await fetch(`/api/wrike/tasks/${batch.join(",")}`);
       if (r.ok) {
         const tasks = (await r.json()).data || [];
         out.push(...tasks);
@@ -110,7 +107,7 @@ async function fetchTasksByIds(token, ids) {
         // Batch failed — fall back to individual fetches for this batch
         for (const id of batch) {
           try {
-            const r2 = await fetch(`https://www.wrike.com/api/v4/tasks/${id}`, { headers });
+            const r2 = await fetch(`/api/wrike/tasks/${id}`);
             if (r2.ok) {
               const task = (await r2.json()).data?.[0];
               if (task) out.push(task);
@@ -173,7 +170,6 @@ export function useWrikeCache() {
   const scanningRef = useRef(false);
 
   const wrikeUserId = localStorage.getItem("wrike_user_id");
-  const token       = localStorage.getItem("wrike_personal_token");
 
   // --- Load cached tasks from Supabase immediately on mount ---
   // Load all rows regardless of wrike_user_id — single-team tool, cache is shared
@@ -224,13 +220,13 @@ export function useWrikeCache() {
       // Re-fetch those by ID to get full data. Also re-fetch any still missing tableHtml.
       // After repair, fetch a fresh folder dict if the Supabase copy is sparse, then
       // backfill studioName on every task that still lacks it.
-      if (token && loaded.length) {
+      if (wrikeUserId && loaded.length) {
         const broken = loaded.filter(
           (t) => t.title?.toUpperCase().includes("MATRIX") && (!t.tableHtml || !t.parentIds?.length)
         );
         if (broken.length > 0) {
           console.log(`[WrikeCache] repairing ${broken.length} MATRIX tasks (missing table/parentIds)`);
-          const refetched = await fetchTasksByIds(token, broken.map((t) => t.id));
+          const refetched = await fetchTasksByIds(broken.map((t) => t.id));
           const refetchedById = new Map(refetched.map((t) => [t.id, t]));
           const repaired = broken
             .filter((t) => refetchedById.get(t.id))
@@ -272,11 +268,11 @@ export function useWrikeCache() {
           console.log("[WrikeCache] folder dict sparse or missing childIds — fetching fresh from Wrike");
           const freshFd = {};
           const FF = encodeURIComponent("[childIds]");
-          let folderUrl = `https://www.wrike.com/api/v4/folders?fields=${FF}`;
+          let folderUrl = `/api/wrike/folders?fields=${FF}`;
           let logged = false;
           while (folderUrl) {
             try {
-              const fRes = await fetch(folderUrl, { headers: { Authorization: `Bearer ${token}` } });
+              const fRes = await fetch(folderUrl);
               if (!fRes.ok) { console.warn("[WrikeCache] folders fetch failed", fRes.status); break; }
               const fJson = await fRes.json();
               if (!logged && fJson.data?.[0]) {
@@ -285,7 +281,7 @@ export function useWrikeCache() {
               }
               fJson.data?.forEach((f) => { freshFd[f.id] = { id: f.id, title: f.title, childIds: f.childIds || [] }; });
               folderUrl = fJson.nextPageToken
-                ? `https://www.wrike.com/api/v4/folders?fields=${FF}&nextPageToken=${fJson.nextPageToken}`
+                ? `/api/wrike/folders?fields=${FF}&nextPageToken=${fJson.nextPageToken}`
                 : null;
             } catch { break; }
           }
@@ -326,7 +322,7 @@ export function useWrikeCache() {
 
   // --- Core sync function ---
   const sync = useCallback(async ({ fullRefresh = false } = {}) => {
-    if (!token) return;
+    if (!wrikeUserId) return;
     if (syncingRef.current) return;
     syncingRef.current = true;
     setIsSyncing(true);
@@ -336,9 +332,7 @@ export function useWrikeCache() {
       // Resolve wrike_user_id — re-fetch from API if localStorage was cleared
       let userId = wrikeUserId;
       if (!userId) {
-        const meRes = await fetch("https://www.wrike.com/api/v4/contacts?me=true", {
-          headers: { Authorization: `Bearer ${token}` },
-        });
+        const meRes = await fetch("/api/wrike/contacts?me=true");
         if (meRes.ok) {
           const meJson = await meRes.json();
           userId = meJson.data?.[0]?.id;
@@ -380,15 +374,15 @@ export function useWrikeCache() {
       const existingFilmMappings = meta?.film_code_mappings || {};
 
       if (needsMetaRefresh) {
-        ({ folderDictionary, contactDictionary, statusDictionary } = await fetchWrikeMeta(token));
+        ({ folderDictionary, contactDictionary, statusDictionary } = await fetchWrikeMeta());
       }
 
       // Fetch tasks changed since last sync
-      const rawTasks = await fetchWrikeTasks(token, sinceIso);
+      const rawTasks = await fetchWrikeTasks(sinceIso);
 
       // Hydrate any missing archive folder IDs
       if (rawTasks.length > 0) {
-        await hydrateMissingFolders(rawTasks, folderDictionary, token);
+        await hydrateMissingFolders(rawTasks, folderDictionary);
       }
 
       // Filter to the motion-team-relevant subset FIRST (filter only uses base
@@ -400,7 +394,7 @@ export function useWrikeCache() {
       const missingDesc = relevant.filter((t) => !t.description).map((t) => t.id);
       if (missingDesc.length > 0) {
         console.log(`[WrikeCache] re-fetching descriptions for ${missingDesc.length} tasks`);
-        const refetched = await fetchTasksByIds(token, missingDesc);
+        const refetched = await fetchTasksByIds(missingDesc);
         const byId = new Map(refetched.map((t) => [t.id, t]));
         relevant.forEach((t) => {
           const full = byId.get(t.id);
@@ -497,14 +491,14 @@ export function useWrikeCache() {
       syncingRef.current = false;
       setIsSyncing(false);
     }
-  }, [token, wrikeUserId]);
+  }, [wrikeUserId]);
 
   // --- Background sync on mount (after cache loads) ---
   useEffect(() => {
-    if (!token) return;
+    if (!wrikeUserId) return;
     const t = setTimeout(() => sync(), 500);
     return () => clearTimeout(t);
-  }, [token, sync]);
+  }, [wrikeUserId, sync]);
 
   const syncNow = useCallback(() => sync({ fullRefresh: true }), [sync]);
 
@@ -513,7 +507,7 @@ export function useWrikeCache() {
   // runs getFilmName via tree-climb on each, and persists newly discovered code→name
   // pairs without touching last_synced_at or the task cache.
   const scanFilmMappings = useCallback(async () => {
-    if (!token) return;
+    if (!wrikeUserId) return;
     if (scanningRef.current) return;
     scanningRef.current = true;
     setIsScanning(true);
@@ -534,15 +528,15 @@ export function useWrikeCache() {
       // Fetch a fresh folder dict if the cached one is too sparse to tree-climb
       if (Object.keys(fd).length < 100) {
         const FF = encodeURIComponent("[childIds]");
-        let url = `https://www.wrike.com/api/v4/folders?fields=${FF}`;
+        let url = `/api/wrike/folders?fields=${FF}`;
         while (url) {
           try {
-            const r = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
+            const r = await fetch(url);
             if (!r.ok) break;
             const j = await r.json();
             j.data?.forEach((f) => { fd[f.id] = { id: f.id, title: f.title, childIds: f.childIds || [] }; });
             url = j.nextPageToken
-              ? `https://www.wrike.com/api/v4/folders?fields=${FF}&nextPageToken=${j.nextPageToken}`
+              ? `/api/wrike/folders?fields=${FF}&nextPageToken=${j.nextPageToken}`
               : null;
           } catch { break; }
         }
@@ -564,9 +558,9 @@ export function useWrikeCache() {
       let nextPageToken = null;
       while (true) {
         const url = nextPageToken
-          ? `https://www.wrike.com/api/v4/tasks?nextPageToken=${nextPageToken}`
-          : `https://www.wrike.com/api/v4/tasks?fields=${SCAN_FIELDS}&updatedDate=${dateFilter}&pageSize=1000`;
-        const r = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
+          ? `/api/wrike/tasks?nextPageToken=${nextPageToken}`
+          : `/api/wrike/tasks?fields=${SCAN_FIELDS}&updatedDate=${dateFilter}&pageSize=1000`;
+        const r = await fetch(url);
         if (!r.ok) { console.warn("[FilmScan] task fetch failed", r.status); break; }
         const j = await r.json();
         allTasks = [...allTasks, ...(j.data || [])];
@@ -610,7 +604,10 @@ export function useWrikeCache() {
       scanningRef.current = false;
       setIsScanning(false);
     }
-  }, [token, wrikeUserId, filmCodeMappings]);
+  }, [wrikeUserId, filmCodeMappings]);
 
-  return { tasks, folderCampaigns, filmCodeMappings, isSyncing, isScanning, lastSynced, syncError, syncNow, scanFilmMappings };
+  // `sync` (soft) respects the 15-min interval — cheap to call speculatively,
+  // e.g. whenever a page that depends on fresh data becomes active.
+  // `syncNow` forces a full refresh regardless of how recently synced.
+  return { tasks, folderCampaigns, filmCodeMappings, isSyncing, isScanning, lastSynced, syncError, sync, syncNow, scanFilmMappings };
 }

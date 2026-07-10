@@ -211,11 +211,8 @@ export default function LegacyTimesheet({ wrikeData, isAdmin = false }) {
   const [isFetchingModalData, setIsFetchingModalData] = useState(false);
 
   useEffect(() => {
-    const token = localStorage.getItem("wrike_personal_token");
-    if (token && !wrikeFullName) {
-      fetch("https://www.wrike.com/api/v4/contacts?me=true", {
-        headers: { Authorization: `Bearer ${token}` },
-      })
+    if (!wrikeFullName) {
+      fetch("/api/wrike/contacts?me=true")
         .then((res) => res.json())
         .then((json) => {
           if (json.data && json.data.length > 0) {
@@ -238,20 +235,17 @@ export default function LegacyTimesheet({ wrikeData, isAdmin = false }) {
   }, [wrikeUserId]);
 
   const handleSyncMyJobs = async (silent = false) => {
-    const token = localStorage.getItem("wrike_personal_token");
-    if (!token || !wrikeUserId) {
+    if (!wrikeUserId) {
       if (!silent)
         showToast(
-          "Missing Wrike token or User ID. Please check your connection."
+          "Wrike not connected. Please connect it in Profile → Settings."
         );
       return null;
     }
 
     setIsSyncingJobs(true);
     try {
-      const wfRes = await fetch("https://www.wrike.com/api/v4/workflows", {
-        headers: { Authorization: `Bearer ${token}` },
-      });
+      const wfRes = await fetch("/api/wrike/workflows");
       const wfJson = await wfRes.json();
       const statusDict = {};
       if (wfJson.data) {
@@ -276,12 +270,10 @@ export default function LegacyTimesheet({ wrikeData, isAdmin = false }) {
       // QUERY 1: Fetch ALL Active Tasks
       const activeStatusFilter = encodeURIComponent('["Active"]');
       while (hasMore) {
-        let url = `https://www.wrike.com/api/v4/tasks?responsibles=${responsiblesFilter}&status=${activeStatusFilter}&fields=${fieldsFilter}&pageSize=1000`;
+        let url = `/api/wrike/tasks?responsibles=${responsiblesFilter}&status=${activeStatusFilter}&fields=${fieldsFilter}&pageSize=1000`;
         if (nextPageToken) url += `&nextPageToken=${nextPageToken}`;
 
-        const res = await fetch(url, {
-          headers: { Authorization: `Bearer ${token}` },
-        });
+        const res = await fetch(url);
         if (!res.ok) throw new Error(`Wrike API Error: ${res.status}`);
 
         const json = await res.json();
@@ -300,12 +292,10 @@ export default function LegacyTimesheet({ wrikeData, isAdmin = false }) {
       nextPageToken = null;
       hasMore = true;
       while (hasMore) {
-        let url = `https://www.wrike.com/api/v4/tasks?responsibles=${responsiblesFilter}&status=${completedStatusFilter}&fields=${fieldsFilter}&updatedDate=${dateFilter}&pageSize=1000`;
+        let url = `/api/wrike/tasks?responsibles=${responsiblesFilter}&status=${completedStatusFilter}&fields=${fieldsFilter}&updatedDate=${dateFilter}&pageSize=1000`;
         if (nextPageToken) url += `&nextPageToken=${nextPageToken}`;
 
-        const res = await fetch(url, {
-          headers: { Authorization: `Bearer ${token}` },
-        });
+        const res = await fetch(url);
         if (!res.ok) throw new Error(`Wrike API Error: ${res.status}`);
 
         const json = await res.json();
@@ -524,7 +514,6 @@ export default function LegacyTimesheet({ wrikeData, isAdmin = false }) {
     setIsFetchingModalData(true);
 
     try {
-      const token = localStorage.getItem("wrike_personal_token");
       const now = new Date();
 
       const toLocalDateStr = (d) =>
@@ -545,10 +534,7 @@ export default function LegacyTimesheet({ wrikeData, isAdmin = false }) {
       );
 
       // --- STEP 1: Fetch today's timelogs (source of truth for worked-on tasks) ---
-      const timelogRes = await fetch(
-        `https://www.wrike.com/api/v4/contacts/${wrikeUserId}/timelogs`,
-        { headers: { Authorization: `Bearer ${token}` } }
-      );
+      const timelogRes = await fetch(`/api/wrike/contacts/${wrikeUserId}/timelogs`);
       const timelogJson = await timelogRes.json();
       const logs = (timelogJson.data || []).filter((l) => {
         const d = l.trackedDate?.split("T")[0];
@@ -574,16 +560,11 @@ export default function LegacyTimesheet({ wrikeData, isAdmin = false }) {
       for (const taskId of todayLoggedTaskIds) {
         try {
           // Attempt A: full fields
-          let res = await fetch(
-            `https://www.wrike.com/api/v4/tasks/${taskId}?fields=${fieldsFilter}`,
-            { headers: { Authorization: `Bearer ${token}` } }
-          );
+          let res = await fetch(`/api/wrike/tasks/${taskId}?fields=${fieldsFilter}`);
 
           // Attempt B: bare fetch if fields caused a 400
           if (!res.ok) {
-            res = await fetch(`https://www.wrike.com/api/v4/tasks/${taskId}`, {
-              headers: { Authorization: `Bearer ${token}` },
-            });
+            res = await fetch(`/api/wrike/tasks/${taskId}`);
           }
 
           if (res.ok) {
@@ -917,7 +898,7 @@ export default function LegacyTimesheet({ wrikeData, isAdmin = false }) {
   // Fetch task details for IDs missing from the local task list (e.g. user
   // logged time then was removed as a responsible). Returns an updated copy of
   // the task array with the recovered tasks appended.
-  const fetchMissingTasks = async (currentTasks, logEntries, token) => {
+  const fetchMissingTasks = async (currentTasks, logEntries) => {
     const existingIds = new Set(currentTasks.map((t) => t.id));
     const missingIds = [...new Set(logEntries.map((l) => l.taskId))].filter(
       (id) => !existingIds.has(id)
@@ -932,12 +913,7 @@ export default function LegacyTimesheet({ wrikeData, isAdmin = false }) {
     for (let i = 0; i < missingIds.length; i += 100) {
       const chunk = missingIds.slice(i, i + 100);
       try {
-        const res = await fetch(
-          `https://www.wrike.com/api/v4/tasks/${chunk.join(
-            ","
-          )}?fields=${fieldsFilter}`,
-          { headers: { Authorization: `Bearer ${token}` } }
-        );
+        const res = await fetch(`/api/wrike/tasks/${chunk.join(",")}?fields=${fieldsFilter}`);
         const json = await res.json();
         if (json.data) {
           recovered = [...recovered, ...json.data.map(enrichWrikeTask)];
@@ -953,13 +929,8 @@ export default function LegacyTimesheet({ wrikeData, isAdmin = false }) {
   const dismissNewWeekBanner = () => setNewWeekBanner(false);
 
   const handlePullTimes = async (dateStr = null) => {
-    const token = localStorage.getItem("wrike_personal_token");
-    if (!token) {
-      showToast("Please set your Wrike token in the API tab first.");
-      return;
-    }
     if (!wrikeUserId) {
-      showToast("Loading your Wrike profile — please wait a moment.");
+      showToast("Please connect Wrike in Profile → Settings first.");
       return;
     }
 
@@ -976,10 +947,7 @@ export default function LegacyTimesheet({ wrikeData, isAdmin = false }) {
       ).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
       const targetDateStr = (typeof dateStr === "string" && dateStr) ? dateStr : todayStr;
 
-      const res = await fetch(
-        `https://www.wrike.com/api/v4/contacts/${wrikeUserId}/timelogs`,
-        { headers: { Authorization: `Bearer ${token}` } }
-      );
+      const res = await fetch(`/api/wrike/contacts/${wrikeUserId}/timelogs`);
       const json = await res.json();
       const logs = (json.data || []).filter(
         (l) => l.trackedDate?.split("T")[0] === targetDateStr
@@ -987,7 +955,7 @@ export default function LegacyTimesheet({ wrikeData, isAdmin = false }) {
 
       // Recover any tasks where the user was removed as a responsible —
       // their timelogs still exist but the task won't appear in handleSyncMyJobs
-      currentTasks = await fetchMissingTasks(currentTasks, logs, token);
+      currentTasks = await fetchMissingTasks(currentTasks, logs);
 
       // Fetch existing timelog IDs across ALL sources so we don't duplicate
       // entries that were already pulled in Tracker (or vice versa)

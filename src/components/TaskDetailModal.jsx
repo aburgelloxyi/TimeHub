@@ -473,14 +473,10 @@ export function AttachmentThumb({
       ? { icon: "📊", bg: "bg-green-50 border-green-200" }
       : { icon: "📎", bg: "bg-slate-50 border-slate-200" };
 
-  const downloadUrl = `https://www.wrike.com/api/v4/attachments/${attachment.id}/download`;
+  const downloadUrl = `/api/wrike/attachments/${attachment.id}/download`;
 
   const fetchBlob = async () => {
-    const token = localStorage.getItem("wrike_personal_token");
-    if (!token) throw new Error("No token");
-    const res = await fetch(downloadUrl, {
-      headers: { Authorization: `Bearer ${token}` },
-    });
+    const res = await fetch(downloadUrl);
     if (!res.ok) throw new Error("HTTP " + res.status);
     return res.blob();
   };
@@ -554,14 +550,12 @@ export function AttachmentThumb({
       >
         {loading ? (
           <div className="w-4 h-4 border-2 border-slate-300 border-t-[#12a0e1] rounded-full animate-spin" />
-        ) : kind === "image" && attachment.previewUrl ? (
-          <img
-            src={attachment.previewUrl}
-            alt={attachment.name}
-            className="w-full h-full object-cover rounded-xl"
-            onError={(e) => { e.currentTarget.replaceWith(Object.assign(document.createElement("span"), { textContent: "🖼️", className: "text-3xl" })); }}
-          />
         ) : (
+          // Icon-only placeholder for every kind, including images — no
+          // eager <img src> here. Rendering attachment.previewUrl directly
+          // made the browser download the actual image bytes for every
+          // image attachment on every task opened, whether viewed or not;
+          // now the real fetch only happens on click, via handleOpen.
           <>
             <span className={large ? "text-3xl" : "text-xl"}>{icon}</span>
             <span className="text-[7px] font-black text-slate-400 uppercase tracking-wide px-1 text-center leading-none">
@@ -622,16 +616,9 @@ export function FilePreviewLightbox({
 
   const navigateTo = async (att) => {
     if (navLoading) return;
-    const token = localStorage.getItem("wrike_personal_token");
-    if (!token) return;
     setNavLoading(true);
     try {
-      const res = await fetch(
-        `https://www.wrike.com/api/v4/attachments/${att.id}/download`,
-        {
-          headers: { Authorization: `Bearer ${token}` },
-        }
-      );
+      const res = await fetch(`/api/wrike/attachments/${att.id}/download`);
       if (!res.ok) throw new Error("HTTP " + res.status);
       const raw = await res.blob();
       const typed = new Blob([raw], { type: mimeForAttachment(att) });
@@ -1039,15 +1026,13 @@ export default function TaskDetailModal({
 
   useEffect(() => {
     if (!task || attachmentsProp) return;
-    const token = localStorage.getItem("wrike_personal_token");
-    if (!token) return;
     let cancelled = false;
-    fetch(`https://www.wrike.com/api/v4/tasks/${task.id}/attachments`, {
-      headers: { Authorization: `Bearer ${token}` },
-    })
+    fetch(`/api/wrike/tasks/${task.id}/attachments`)
       .then((r) => r.json())
       .then((data) => {
-        if (!cancelled) setFetchedAttachments(data.data || []);
+        // Only PDFs matter here (delivery specs) — images/docs/etc. are
+        // dropped before they ever reach state or render a thumbnail.
+        if (!cancelled) setFetchedAttachments((data.data || []).filter((a) => attachmentKind(a) === "pdf"));
       })
       .catch(() => {
         if (!cancelled) setFetchedAttachments([]);
@@ -1067,15 +1052,9 @@ export default function TaskDetailModal({
       ""
     ).toLowerCase();
     if (!status.includes("amend")) return;
-    const token = localStorage.getItem("wrike_personal_token");
-    if (!token) return;
-    const headers = { Authorization: `Bearer ${token}` };
     let cancelled = false;
     setAmendLoading(true);
-    fetch(
-      `https://www.wrike.com/api/v4/tasks/${task.id}/comments?plainText=true`,
-      { headers }
-    )
+    fetch(`/api/wrike/tasks/${task.id}/comments?plainText=true`)
       .then((r) => r.json())
       .then(async (data) => {
         const comments = data.data || [];
@@ -1085,10 +1064,7 @@ export default function TaskDetailModal({
         )[0];
         let author = "";
         try {
-          const cRes = await fetch(
-            `https://www.wrike.com/api/v4/contacts/${latest.authorId}`,
-            { headers }
-          );
+          const cRes = await fetch(`/api/wrike/contacts/${latest.authorId}`);
           const cJson = await cRes.json();
           const c = cJson.data?.[0];
           if (c) author = `${c.firstName || ""} ${c.lastName || ""}`.trim();

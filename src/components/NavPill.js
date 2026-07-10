@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from "react";
+import { motion, AnimatePresence } from "framer-motion";
 import {
   TimerIcon,
   LayoutList,
@@ -12,6 +13,7 @@ import {
   CheckCircle,
   Settings,
   Shield,
+  Home,
 } from "lucide-react";
 import { supabase } from "../lib/supabaseClient";
 import { MANAGEMENT_IDS } from "./Management";
@@ -79,8 +81,8 @@ export default function ApplePillNav({ activePage, setActivePage, hubSection, se
         const navRect = navElement.getBoundingClientRect();
         const activeRect = activeElement.getBoundingClientRect();
         setPillStyle({ left: activeRect.left - navRect.left, width: activeRect.width });
-      } else if (activePage === "profile") {
-        // Hide the sliding pill when profile is active
+      } else {
+        // Hide the sliding pill on pages outside the tool nav (home, profile, management)
         setPillStyle({ left: 0, width: 0 });
       }
     };
@@ -93,10 +95,45 @@ export default function ApplePillNav({ activePage, setActivePage, hubSection, se
 
   const isProfile = activePage === "profile";
 
+  // The blobs on the home landing page are the navigation — a duplicate pill
+  // nav above them would just be noise. But instead of unmounting instantly
+  // (which yanked the exiting page up by the nav's height mid-fade), the nav
+  // collapses over the same duration/easing as the page transition.
   return (
-    <div className="flex flex-col items-center w-full pt-6 gap-2">
+    <AnimatePresence initial={false}>
+      {activePage !== "home" && (
+        <motion.div
+          key="pill-nav"
+          initial={{ height: 0, opacity: 0 }}
+          animate={{
+            height: "auto",
+            opacity: 1,
+            // Clip while the height animates, but the My Hub hover menu
+            // hangs below the nav's box, so release the clip once settled.
+            transitionEnd: { overflow: "visible" },
+          }}
+          exit={{ height: 0, opacity: 0, overflow: "hidden" }}
+          transition={{ duration: 0.25, ease: [0.25, 0.1, 0.25, 1] }}
+          style={{ overflow: "hidden" }}
+        >
+          {/* No `gap` here on purpose: row 2 animates its own margin-top, so
+              the spacing collapses with the row instead of snapping at the end. */}
+          <div className="flex flex-col items-center w-full pt-6">
       {/* ── Row 1: main nav + My Hub button ── */}
       <div className="flex items-center gap-6">
+        {/* Home — takes you back to the blob landing page */}
+        <button
+          onClick={() => setActivePage("home")}
+          title="Home"
+          className={`flex items-center justify-center w-9 h-9 rounded-full border transition-all duration-300 ${
+            activePage === "home"
+              ? "bg-gradient-to-br from-[#12a0e1] to-[#1cc1a5] text-white border-transparent shadow-lg shadow-[#12a0e1]/30"
+              : "bg-white text-[#768994] border-black/5 shadow hover:text-[#122027]"
+          }`}
+        >
+          <Home className="w-4 h-4" strokeWidth={2.5} />
+        </button>
+
         {/* Main tool pill nav */}
         <nav
           ref={navRef}
@@ -206,28 +243,45 @@ export default function ApplePillNav({ activePage, setActivePage, hubSection, se
         </div>
       </div>
 
-      {/* ── Row 2: Hub section shortcuts (only when My Hub is active) ── */}
-      {isProfile && (
-        <div className="flex items-center gap-1.5 p-1 bg-white/70 backdrop-blur-md rounded-full border border-black/5 shadow-sm">
-          {hubSections.map(({ id, label, icon: Icon }) => {
-            const isActive = hubSection === id;
-            return (
-              <button
-                key={id}
-                onClick={() => setHubSection?.(id)}
-                className={`flex items-center gap-1.5 px-3.5 py-1.5 rounded-full text-[11px] font-bold tracking-tight transition-all duration-200 ${
-                  isActive
-                    ? "bg-gradient-to-br from-[#12a0e1] to-[#1cc1a5] text-white shadow-sm"
-                    : "text-[#768994] hover:text-[#122027] hover:bg-white"
-                }`}
-              >
-                <Icon className="w-3 h-3 shrink-0" strokeWidth={isActive ? 2.5 : 2} />
-                {label}
-              </button>
-            );
-          })}
-        </div>
+      {/* ── Row 2: Hub section shortcuts (only when My Hub is active) ──
+          Height + margin animate on mount/unmount so the nav grows and
+          shrinks smoothly; an instant unmount here used to yank the page
+          below it upwards mid-transition when leaving Profile. */}
+      <AnimatePresence initial={false}>
+        {isProfile && (
+          <motion.div
+            key="hub-shortcuts"
+            initial={{ height: 0, marginTop: 0, opacity: 0 }}
+            animate={{ height: "auto", marginTop: 8, opacity: 1 }}
+            exit={{ height: 0, marginTop: 0, opacity: 0 }}
+            transition={{ duration: 0.25, ease: [0.25, 0.1, 0.25, 1] }}
+            className="overflow-hidden"
+          >
+            <div className="flex items-center gap-1.5 p-1 bg-white/70 backdrop-blur-md rounded-full border border-black/5 shadow-sm">
+              {hubSections.map(({ id, label, icon: Icon }) => {
+                const isActive = hubSection === id;
+                return (
+                  <button
+                    key={id}
+                    onClick={() => setHubSection?.(id)}
+                    className={`flex items-center gap-1.5 px-3.5 py-1.5 rounded-full text-[11px] font-bold tracking-tight transition-all duration-200 ${
+                      isActive
+                        ? "bg-gradient-to-br from-[#12a0e1] to-[#1cc1a5] text-white shadow-sm"
+                        : "text-[#768994] hover:text-[#122027] hover:bg-white"
+                    }`}
+                  >
+                    <Icon className="w-3 h-3 shrink-0" strokeWidth={isActive ? 2.5 : 2} />
+                    {label}
+                  </button>
+                );
+              })}
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+          </div>
+        </motion.div>
       )}
-    </div>
+    </AnimatePresence>
   );
 }

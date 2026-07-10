@@ -8,6 +8,10 @@ export default {
           '"Geist Variable"', "Geist", "system-ui", "-apple-system",
           "Segoe UI", "Roboto", "Helvetica", "Arial", "sans-serif",
         ],
+        display: [
+          '"Bricolage Grotesque Variable"', '"Bricolage Grotesque"',
+          '"Geist Variable"', "sans-serif",
+        ],
       },
     },
   },

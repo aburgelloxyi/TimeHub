@@ -189,3 +189,7 @@ html.dark-theme body {
 .dark-theme .wrike-matrix-render tr:nth-child(even) { background-color: #1e293b !important; }
 .dark-theme .wrike-matrix-render tr:nth-child(odd)  { background-color: #0f172a !important; }
 .dark-theme .wrike-matrix-render tr:hover           { background-color: rgba(51,65,85,0.8) !important; }
+
+/* HOME BLOB NAV shape-morph keyframes moved to a <style> tag inside
+   Home.jsx itself — this global stylesheet wasn't hot-reloading reliably
+   during dev, while the component file consistently did. */

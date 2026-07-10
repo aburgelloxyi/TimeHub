@@ -105,11 +105,8 @@ export function useTaskActions(state) {
   // wrikeData is optional — used as a cache if already loaded, otherwise
   // we fetch only the specific task IDs that appear in today's timelogs.
   const handlePullWrikeTime = async (wrikeData) => {
-    const token = localStorage.getItem("wrike_personal_token");
-    if (!token) return triggerToast("Please enter your Wrike token in the Wrike API tab first.");
-
     const wrikeUserId = state.wrikeUser?.id;
-    if (!wrikeUserId) return triggerToast("Loading your Wrike profile — please wait a moment.");
+    if (!wrikeUserId) return triggerToast("Please connect Wrike in your Profile → Settings first.");
 
     state.setIsPullingTime(true);
 
@@ -118,14 +115,13 @@ export function useTaskActions(state) {
       const now = new Date();
       const todayStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
 
-      const headers = { Authorization: `Bearer ${token}` };
       const fieldsParam = encodeURIComponent("[customFields,description]");
 
       // Fetch timelogs (contacts-scoped = same endpoint as Legacy, more reliable)
       // and active timers in parallel
       const [timelogsRes, timersRes] = await Promise.all([
-        fetch(`https://www.wrike.com/api/v4/contacts/${wrikeUserId}/timelogs`, { headers }),
-        fetch("https://www.wrike.com/api/v4/timers", { headers }),
+        fetch(`/api/wrike/contacts/${wrikeUserId}/timelogs`),
+        fetch("/api/wrike/timers"),
       ]);
 
       const logs = (await timelogsRes.json()).data || [];
@@ -150,12 +146,9 @@ export function useTaskActions(state) {
         // handleOpenWrikeModal in Legacy (batch path-param can 403/404 silently)
         await Promise.all(neededIds.map(async (taskId) => {
           try {
-            let res = await fetch(
-              `https://www.wrike.com/api/v4/tasks/${taskId}?fields=${fieldsParam}`,
-              { headers }
-            );
+            let res = await fetch(`/api/wrike/tasks/${taskId}?fields=${fieldsParam}`);
             if (!res.ok) {
-              res = await fetch(`https://www.wrike.com/api/v4/tasks/${taskId}`, { headers });
+              res = await fetch(`/api/wrike/tasks/${taskId}`);
             }
             if (res.ok) {
               const json = await res.json();

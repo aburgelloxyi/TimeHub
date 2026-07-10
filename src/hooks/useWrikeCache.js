@@ -407,6 +407,13 @@ export function useWrikeCache() {
       // fields — title/parentIds/responsibleIds/subTaskIds — present on every page).
       const relevant = filterToMotionTeam(rawTasks, folderDictionary, contactDictionary);
 
+      // Tasks Wrike reports as changed but that no longer pass the filter
+      // (e.g. reassigned off the Motion team) must be purged from the cache —
+      // otherwise their stale pre-change copy lingers there forever, since
+      // nothing else ever revisits a task once it drops out of relevance.
+      const relevantIds = new Set(relevant.map((t) => t.id));
+      const droppedIds = rawTasks.filter((t) => !relevantIds.has(t.id)).map((t) => t.id);
+
       // Re-fetch descriptions for any relevant task missing one (pagination drops
       // the fields param on pages 2+). This restores the MATRIX table + notes.
       const missingDesc = relevant.filter((t) => !t.description).map((t) => t.id);
@@ -451,6 +458,10 @@ export function useWrikeCache() {
           await supabase.from("wrike_tasks_cache").upsert(rows.slice(i, i + BATCH));
         }
       }
+      if (droppedIds.length > 0) {
+        await supabase.from("wrike_tasks_cache").delete().in("id", droppedIds);
+        console.log(`[WrikeCache] purged ${droppedIds.length} task(s) no longer Motion-relevant`);
+      }
 
       // Collect code→filmName mappings discovered in this sync and merge with existing
       const newMappings = buildFilmCodeMappings(filtered);
@@ -482,6 +493,7 @@ export function useWrikeCache() {
       // live in-memory folderDictionary (always complete) rather than the Supabase-stored copy.
       setTasks((prev) => {
         const map = new Map(prev.map((t) => [t.id, t]));
+        droppedIds.forEach((id) => map.delete(id));
         filtered.forEach((t) => map.set(t.id, t));
         const merged = [...map.values()];
 

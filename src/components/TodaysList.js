@@ -474,6 +474,19 @@ export default function TodaysList({ wrikeData, triggerToast: _triggerToast, las
     saveBoardState(freshCampaigns, freshAssignments, targetTimeframe);
   };
 
+  // Rebuild the board from scratch whenever wrikeData gets a new reference —
+  // which happens after every periodic sync AND every webhook-triggered
+  // single-task update (useWrikeCache.js). Without this, the board only ever
+  // reflected the last localStorage snapshot (see mount effect above) and
+  // stayed stale until someone clicked a timeframe tab or "Auto-Assign".
+  // This intentionally overwrites any in-progress manual drag-and-drop —
+  // freshness wins over unsaved manual layout here.
+  useEffect(() => {
+    if (!wrikeData || wrikeData.length === 0) return;
+    handleAutoAssign(timeframe);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [wrikeData]);
+
   // Stats
   const today = new Date(); today.setHours(0, 0, 0, 0);
   const isOverdue = (d) => d && d !== "No Due Date" && new Date(d) < today;

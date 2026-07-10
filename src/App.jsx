@@ -25,6 +25,7 @@ import {
   Bell,
   Shield,
   Users,
+  Briefcase,
   CheckCircle2,
   X,
 } from "lucide-react";
@@ -42,7 +43,11 @@ import { useWrikeCache } from "./hooks/useWrikeCache";
 import Profile from "./components/Profile";
 import AdminModal from "./components/AdminModal";
 import Management from "./components/Management";
+import JobBook from "./components/JobBook";
 import Home from "./components/Home";
+import { PAGES, pageIdsFor } from "./lib/departments";
+import { useDepartment } from "./hooks/useDepartment";
+import { MANAGEMENT_IDS } from "./components/Management";
 import { setWrikeUserId } from "./lib/supabaseClient";
 import { startWrikeOAuth } from "./lib/wrikeApi";
 
@@ -66,8 +71,20 @@ const PAGE_VARIANTS = {
         },
 };
 
+// Kept in sync with every `activePage === "..."` check below — the set of
+// ids the URL hash is allowed to select on load/refresh.
+const VALID_PAGES = [
+  "home", "timesheet", "canvas", "wriketest", "legacy", "profile",
+  "management", "todayslist",
+];
+
+const pageFromHash = () => {
+  const id = window.location.hash.slice(1);
+  return VALID_PAGES.includes(id) ? id : "home";
+};
+
 export default function App() {
-  const [activePage, setActivePage] = useState("home");
+  const [activePage, setActivePage] = useState(pageFromHash);
   // Gradient classes of the home row currently washing over the screen.
   // While set, a fixed overlay hides the page swap; cleared shortly after
   // so the overlay lifts and reveals the settled destination.
@@ -84,6 +101,26 @@ export default function App() {
   const [showReminder, setShowReminder] = useState(false);
   const [showAdmin, setShowAdmin] = useState(false);
   const ADMIN_WRIKE_ID = "KUAWDLVN";
+
+  // Keep the URL hash in sync with the active page so a refresh (or a
+  // bookmark/shared link) lands back on the same page instead of Home.
+  // replaceState, not pushState — this mirrors activePage, it doesn't give
+  // browser back/forward its own page-swap semantics (those would fight the
+  // wash-transition/AnimatePresence choreography above).
+  useEffect(() => {
+    const hash = `#${activePage}`;
+    if (window.location.hash !== hash) {
+      window.history.replaceState({}, "", hash);
+    }
+  }, [activePage]);
+
+  // Manual hash edits / back-forward within the hash still land on a valid
+  // page instead of a blank state.
+  useEffect(() => {
+    const onHashChange = () => setActivePage(pageFromHash());
+    window.addEventListener("hashchange", onHashChange);
+    return () => window.removeEventListener("hashchange", onHashChange);
+  }, []);
 
   // Pick up the redirect back from /api/wrike/oauth/callback: stash the
   // member's identity locally (same place useWrikeUser/setWrikeUserId already
@@ -107,12 +144,13 @@ export default function App() {
         setShowOnboarding(false);
         notify("Connected to Wrike!", "success");
       }
-      window.history.replaceState({}, "", window.location.pathname);
+      // Keep the hash (page) — only the OAuth query params get stripped.
+      window.history.replaceState({}, "", window.location.pathname + window.location.hash);
     } else if (error) {
       // Surface the specific reason (token_exchange_failed, invalid_state,
       // profile_fetch_failed, …) so a misconfigured secret/redirect is obvious.
       notify(`Couldn't connect to Wrike (${error}). Please try again.`, "error");
-      window.history.replaceState({}, "", window.location.pathname);
+      window.history.replaceState({}, "", window.location.pathname + window.location.hash);
     }
   }, []);
   // Hold the wash long enough for the destination to mount and settle
@@ -143,6 +181,10 @@ export default function App() {
   useEffect(() => {
     if (activePage === "todayslist") sync();
   }, [activePage, sync]);
+
+  // Which pages this member's department can reach (drives the command
+  // palette's nav entries; Home and the Rail read the same registry).
+  const department = useDepartment();
 
   // Global toast — available to all pages (top-right pill via ToastHost)
   const triggerToast = useCallback(
@@ -265,11 +307,25 @@ export default function App() {
     },
     {
       id: "nav-legacy",
-      title: "Legacy",
-      desc: "Old timesheet database view",
+      title: PAGES.legacy.label,
+      desc: PAGES.legacy.desc,
       type: "Navigation",
       icon: Database,
       hint: "5",
+    },
+    {
+      id: "nav-management",
+      title: PAGES.management.label,
+      desc: PAGES.management.desc,
+      type: "Navigation",
+      icon: Shield,
+    },
+    {
+      id: "nav-jobbook",
+      title: PAGES.jobbook.label,
+      desc: PAGES.jobbook.desc,
+      type: "Navigation",
+      icon: Briefcase,
     },
     {
       id: "action-copy-ts",
@@ -316,15 +372,24 @@ export default function App() {
   ];
 
   const paletteResults = useMemo(() => {
+    // Nav entries respect the department's page set (same registry Home and
+    // the Rail use); Administration additionally honours the admin allowlist.
+    const allowed = new Set([...pageIdsFor(department), "home", "wriketest"]);
+    if (MANAGEMENT_IDS.length === 0 || MANAGEMENT_IDS.includes(wrikeUserId)) {
+      allowed.add("management");
+    }
+    const available = PALETTE_ACTIONS.filter(
+      (a) => !a.id.startsWith("nav-") || allowed.has(a.id.slice(4))
+    );
     const query = paletteSearch.toLowerCase();
-    if (!query) return PALETTE_ACTIONS;
-    return PALETTE_ACTIONS.filter(
+    if (!query) return available;
+    return available.filter(
       (a) =>
         a.title.toLowerCase().includes(query) ||
         a.desc.toLowerCase().includes(query) ||
         a.type.toLowerCase().includes(query)
     );
-  }, [paletteSearch]);
+  }, [paletteSearch, department, wrikeUserId]);
 
   const handlePaletteKeyDown = (e) => {
     if (e.key === "ArrowDown") {
@@ -794,8 +859,9 @@ export default function App() {
               />
             )}
             {activePage === "management" && (
-              <Management wrikeUserId={wrikeUserId} />
+              <Management wrikeUserId={wrikeUserId} department={department} />
             )}
+            {activePage === "jobbook" && <JobBook />}
           </motion.div>
         )}
       </AnimatePresence>

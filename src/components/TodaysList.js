@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from "react";
+import { motion } from "framer-motion";
 import {
   LayoutList,
   Film,
@@ -10,7 +11,7 @@ import { useGSAP } from "@gsap/react";
 import { TERRITORY_FLAGS, MOTION_TEAM_NAME_MAP } from "../constants";
 import { supabase } from "../lib/supabaseClient";
 import { useMotionBoardTasks } from "../hooks/useMotionBoardTasks";
-import PageHeader, { pageHeaderActionClass } from "./shared/PageHeader";
+import PageHeader from "./shared/PageHeader";
 import TaskDetailModal, { FilePreviewLightbox } from "./TaskDetailModal";
 
 gsap.registerPlugin(useGSAP);
@@ -26,7 +27,7 @@ const MEMBER_LANES = {
   Antonio: { gradient: "from-blue-500 to-indigo-600",   ink: "light", dot: "bg-blue-500" },
   Aaron:   { gradient: "from-emerald-600 to-teal-600",  ink: "light", dot: "bg-emerald-600" },
   Jacqui:  { gradient: "from-pink-600 to-rose-600",     ink: "light", dot: "bg-pink-600" },
-  Maria:   { gradient: "from-amber-400 to-yellow-500",  ink: "dark",  dot: "bg-amber-400" },
+  Maria:   { gradient: "from-amber-300 to-yellow-400",  ink: "dark",  dot: "bg-amber-400" },
   Nicholas:{ gradient: "from-purple-500 to-violet-600", ink: "light", dot: "bg-purple-500" },
   Luke:    { gradient: "from-orange-600 to-red-600",    ink: "light", dot: "bg-orange-600" },
   Turk:    { gradient: "from-cyan-600 to-sky-600",      ink: "light", dot: "bg-cyan-600" },
@@ -104,6 +105,26 @@ const getBorderColorClass = (tag) => {
   if (t.includes("on hold"))           return "border-l-red-400";
   if (t.includes("pm"))                return "border-l-fuchsia-400";
   return "border-l-transparent";
+};
+
+// Same hue as getBorderColorClass, as text — lets the status word in the
+// card's meta line carry the accent instead of a full chip.
+const getTagTextColorClass = (tag) => {
+  if (!tag) return "text-slate-400";
+  const t = String(tag).toLowerCase();
+  if (t.includes("to amend"))          return "text-rose-500";
+  if (t.includes("render review"))     return "text-indigo-500";
+  if (t.includes("revised"))           return "text-teal-600";
+  if (t.includes("creative approved")) return "text-blue-500";
+  if (t.includes("content approved"))  return "text-purple-500";
+  if (t.includes("client review") || t.includes("content review")) return "text-yellow-600";
+  if (t.includes("motion"))            return "text-emerald-600";
+  if (t.includes("digital"))           return "text-cyan-600";
+  if (t.includes("prep for delivery")) return "text-orange-500";
+  if (t === "delivering" || t === "delivery") return "text-yellow-700";
+  if (t.includes("on hold"))           return "text-red-500";
+  if (t.includes("pm"))                return "text-fuchsia-500";
+  return "text-slate-500";
 };
 
 // Status as a small dot — used on the dark slate where the light chip
@@ -244,6 +265,7 @@ export default function TodaysList({ wrikeData, triggerToast: _triggerToast, isA
   const triggerToast = _triggerToast ?? ((msg) => console.warn("Toast:", msg));
   const { boardTasks } = useMotionBoardTasks();
   const boardRef = useRef(null);
+  const wasActiveRef = useRef(false);
 
   const [campaigns, setCampaigns] = useState(INITIAL_CAMPAIGNS);
   const [assignments, setAssignments] = useState(
@@ -251,7 +273,6 @@ export default function TodaysList({ wrikeData, triggerToast: _triggerToast, isA
   );
   const [timeframe, setTimeframe] = useState("Today");
   const [focusedPerson, setFocusedPerson] = useState(null);
-  const [lastSaved, setLastSaved] = useState(null);
   const saveTimeout = useRef(null);
 
   const [taskAttachments, setTaskAttachments] = useState({});
@@ -275,37 +296,78 @@ export default function TodaysList({ wrikeData, triggerToast: _triggerToast, isA
   // becomes active rather than on mount. Same vocabulary as Home: lane-cap
   // names masked-rise inside their overflow-hidden caps (no opacity on type),
   // cards drift up with a light fade. Full ceremony once per session, the
-  // shortened rise on every visit after.
+  // shortened rise on every visit after. Also replays (lane + card layer
+  // only, not the outer page fade) whenever the timeframe filter changes,
+  // since that swaps out the board's contents same as a fresh activation
+  // would.
   useGSAP(
     () => {
-      if (!isActive || prefersReducedMotion()) return;
+      if (!isActive || prefersReducedMotion()) {
+        wasActiveRef.current = isActive;
+        return;
+      }
       const q = gsap.utils.selector(boardRef);
       const rises = q("[data-lane-rise]");
       const cards = q("[data-card-rise]");
-      if (!rises.length) return;
+      if (!rises.length) { wasActiveRef.current = isActive; return; }
+
+      const justActivated = !wasActiveRef.current;
+      wasActiveRef.current = true;
 
       const first = !boardEntrancePlayed;
       boardEntrancePlayed = true;
 
-      gsap.set(rises, { yPercent: first ? 120 : 45 });
-      gsap.set(cards, { y: 14, opacity: 0 });
-      gsap
-        .timeline()
+      const tl = gsap.timeline();
+
+      // The board stays mounted across nav (see App.jsx) instead of going
+      // through the other pages' AnimatePresence/PAGE_VARIANTS swap, so it
+      // never got their y:12->0 fade-up on the outer container — it just
+      // popped in via the display:none/block toggle. Replicate that same
+      // page-swap motion here, only on a real tab activation (not on a
+      // timeframe switch, where the page is already sitting in view).
+      if (justActivated) {
+        gsap.set(boardRef.current, { y: 12, opacity: 0 });
+        tl.to(boardRef.current, { y: 0, opacity: 1, duration: 0.25, ease: "power2.out" }, 0);
+      }
+
+      // Cards scatter in — random landing offset + rotation per card — rather
+      // than a uniform y-drift in DOM order, so the kanban chips and lane
+      // cards read as settling into place instead of marching in one by one.
+      gsap.set(cards, {
+        x: () => gsap.utils.random(-16, 16),
+        y: () => gsap.utils.random(-10, 24),
+        rotation: () => gsap.utils.random(-4, 4),
+        opacity: 0,
+      });
+      tl
+        .set(rises, { yPercent: first ? 120 : 45 }, 0)
         .to(rises, {
           yPercent: 0,
           duration: first ? 0.7 : 0.35,
           ease: "expo.out",
           stagger: first ? 0.05 : 0.02,
         }, 0.05)
+        // Position and opacity run on separate eases so the card doesn't
+        // read fully-visible-but-still-sliding: power3.out front-loads the
+        // landing motion, while opacity ramps in on power1.in — slow at
+        // first, catching up to finish alongside the settle instead of
+        // racing ahead of it.
         .to(cards, {
+          x: 0,
           y: 0,
-          opacity: 1,
+          rotation: 0,
           duration: 0.45,
           ease: "power3.out",
           stagger: 0.015,
-        }, first ? 0.25 : 0.1);
+        }, 0.05)
+        .to(cards, {
+          opacity: 1,
+          duration: 0.45,
+          ease: "power1.in",
+          stagger: 0.015,
+        }, 0.05);
     },
-    { dependencies: [isActive], scope: boardRef }
+    { dependencies: [isActive, timeframe], scope: boardRef }
   );
 
   // ── Board persistence ─────────────────────────────────────────────────────
@@ -380,7 +442,6 @@ export default function TodaysList({ wrikeData, triggerToast: _triggerToast, isA
   const saveBoardState = (newCampaigns, newAssignments, newTimeframe) => {
     const state = { campaigns: newCampaigns, assignments: newAssignments, timeframe: newTimeframe, savedAt: new Date().toISOString() };
     localStorage.setItem("motion_board_state_v1", JSON.stringify(state));
-    setLastSaved(new Date());
     // Clear pending save
     if (saveTimeout.current) clearTimeout(saveTimeout.current);
   };
@@ -468,65 +529,53 @@ export default function TodaysList({ wrikeData, triggerToast: _triggerToast, isA
   const today = new Date(); today.setHours(0, 0, 0, 0);
   const isOverdue = (d) => d && d !== "No Due Date" && new Date(d) < today;
   const allAssigned = Object.values(assignments).flat();
-  const overdueCount = allAssigned.filter((t) => isOverdue(t.dueDate)).length;
-  const statusCounts = allAssigned.reduce((acc, t) => {
-    const k = t.tag || "Unknown"; acc[k] = (acc[k] || 0) + 1; return acc;
-  }, {});
-  const topStatuses = Object.entries(statusCounts).sort((a, b) => b[1] - a[1]).slice(0, 4);
+  const backlogCount = campaigns.reduce((s, c) => s + c.subtasks.length, 0);
+  const motionCount = allAssigned.filter((t) => (t.tag || "").toLowerCase().includes("motion")).length;
 
   return (
     <div ref={boardRef} className="min-h-screen bg-slate-100 text-[#122027] font-sans selection:bg-[#12a0e1]/30 selection:text-[#122027]">
       <PageHeader pageId="todayslist" icon={LayoutList} title={`${timeframe}'s List`} subtitle="Motioners Tasks Allocation">
         {/* The day's summary lives in the header, like a call sheet's totals —
             white figures on the page gradient instead of a floating card row */}
-        <div className="flex items-center gap-5 mr-1">
+        <div className="flex items-center gap-6 mr-2">
           <div className="text-right">
             <div className="font-display text-2xl font-bold text-white leading-none">{allAssigned.length}</div>
             <div className="text-[9px] font-black uppercase tracking-widest text-white/70">on the board</div>
           </div>
-          {overdueCount > 0 && (
-            <div className="text-right">
-              <div className="font-display text-2xl font-bold text-amber-200 leading-none">{overdueCount}</div>
-              <div className="text-[9px] font-black uppercase tracking-widest text-amber-200/80">overdue</div>
-            </div>
-          )}
-          {topStatuses[0] && (
-            <div className="text-right hidden lg:block">
-              <div className="font-display text-2xl font-bold text-white leading-none">{topStatuses[0][1]}</div>
-              <div className="text-[9px] font-black uppercase tracking-widest text-white/70 max-w-[110px] truncate">{topStatuses[0][0]}</div>
-            </div>
-          )}
+          <div className="text-right">
+            <div className="font-display text-2xl font-bold text-white leading-none">{backlogCount}</div>
+            <div className="text-[9px] font-black uppercase tracking-widest text-white/70">backlog</div>
+          </div>
+          <div className="text-right">
+            <div className="font-display text-2xl font-bold text-white leading-none">{motionCount}</div>
+            <div className="text-[9px] font-black uppercase tracking-widest text-white/70">motion</div>
+          </div>
         </div>
+        <div className="hidden sm:block w-px h-8 bg-white/20 mr-1" />
         <div className="flex bg-white/15 border border-white/20 backdrop-blur-sm p-1.5 rounded-xl">
           {TIMEFRAMES.map((tf) => (
             <button
               key={tf}
               onClick={() => { setTimeframe(tf); handleAutoAssign(tf); }}
-              className={`px-4 py-2 text-xs font-black uppercase tracking-wider rounded-lg transition-all ${
+              className={`relative isolate px-4 py-2 text-xs font-black uppercase tracking-wider rounded-lg transition-colors ${
                 timeframe === tf
-                  ? "bg-white text-[#122027] shadow-sm"
+                  ? "text-[#122027]"
                   : "text-white/80 hover:text-white hover:bg-white/10"
               }`}
             >
-              {tf}
+              {/* Shared layoutId — the pill slides between buttons instead
+                  of popping on the newly-active one. */}
+              {timeframe === tf && (
+                <motion.span
+                  layoutId="timeframe-pill"
+                  className="absolute inset-0 bg-white rounded-lg shadow-sm"
+                  transition={{ type: "spring", stiffness: 500, damping: 32 }}
+                />
+              )}
+              <span className="relative z-10">{tf}</span>
             </button>
           ))}
         </div>
-        {/* Last saved indicator */}
-        {lastSaved && (() => {
-          const mins = Math.floor((Date.now() - new Date(lastSaved).getTime()) / 60000);
-          const label = mins < 1 ? "just now" : mins < 60 ? `${mins}m ago` : `${Math.floor(mins/60)}h ago`;
-          return (
-            <span className="text-[10px] font-bold text-white/80 flex items-center gap-1">
-              <span className={`w-1.5 h-1.5 rounded-full ${mins < 5 ? "bg-[#1cc1a5]" : mins < 30 ? "bg-amber-300" : "bg-white/40"}`} />
-              Saved {label}
-            </span>
-          );
-        })()}
-        <button onClick={() => handleAutoAssign(timeframe)} className={pageHeaderActionClass}>
-          <LayoutList className="w-4 h-4" />
-          Auto-Assign {timeframe}
-        </button>
       </PageHeader>
 
       <div className="max-w-[1800px] mx-auto px-4 sm:px-6 py-6 flex flex-col gap-4">
@@ -549,7 +598,7 @@ export default function TodaysList({ wrikeData, triggerToast: _triggerToast, isA
           </div>
           <div className="flex gap-6 px-5 pb-4 overflow-x-auto">
             {campaigns.length === 0 ? (
-              <p className="text-xs text-white/40 italic pb-1">Nothing on the slate — Auto-Assign pulls in {timeframe.toLowerCase()}'s tasks.</p>
+              <p className="text-xs text-white/40 italic pb-1">Nothing on the slate for {timeframe.toLowerCase()}.</p>
             ) : campaigns.map((campaign) => (
               <div key={campaign.id} data-card-rise className="shrink-0 max-w-[340px]">
                 <div className="flex items-center gap-1.5 mb-2">
@@ -713,34 +762,52 @@ export default function TodaysList({ wrikeData, triggerToast: _triggerToast, isA
                       const terr = getTerritoryData(task.title);
                       const overdue = isOverdue(task.dueDate);
                       return (
+                        // A clip, not a dashboard widget: the left bar is the
+                        // single colour statement (status), the title is the
+                        // single loud element, and everything else — campaign,
+                        // status word, files — recedes to muted plain text.
+                        // No chips inside cards inside lanes.
                         <div
                           key={task.id}
                           data-card-rise
                           onClick={() => setSelectedTask(task)}
-                          className={`group/card shrink-0 cursor-pointer rounded-xl border border-slate-200/80 border-l-4 ${getBorderColorClass(task.tag)} ${
-                            overdue ? "bg-rose-50/50" : "bg-slate-50/70 hover:bg-white"
+                          className={`shrink-0 cursor-pointer rounded-lg border-l-[3px] ${getBorderColorClass(task.tag)} border-y border-r border-slate-200/70 ${
+                            overdue ? "bg-rose-50/40" : "bg-white"
                           } hover:shadow-md hover:-translate-y-0.5 transition-all ${
-                            isFocused ? "w-72 p-3.5" : "w-60 p-2.5"
-                          } flex flex-col justify-between min-h-0 overflow-hidden`}
+                            isFocused ? "w-72 p-3.5" : "w-60 px-3 py-2.5"
+                          } flex flex-col min-h-0 overflow-hidden`}
                         >
-                          <div className="min-w-0">
-                            <p className="text-[9px] font-black uppercase text-[#12a0e1] tracking-widest truncate">
+                          <div className="flex items-center justify-between gap-2 min-w-0">
+                            <p className="text-[9px] font-bold uppercase text-[#768994] tracking-widest truncate">
                               {task.campaignName}
                             </p>
-                            <div className="flex items-start gap-1.5 mt-1">
-                              <span className="text-sm leading-none shrink-0 mt-0.5" title={terr.name}>{terr.flag}</span>
-                              <p className={`text-xs font-bold text-[#122027] leading-snug ${isFocused ? "break-words" : "truncate"}`}>
-                                {task.title}
-                              </p>
-                            </div>
+                            <span className="text-xs leading-none shrink-0" title={terr.name}>{terr.flag}</span>
                           </div>
-                          <div className="flex items-center gap-1.5 flex-wrap mt-1.5">
-                            <span className={getTagStyle(task.tag)}>{task.tag}</span>
+                          <p className={`text-xs font-bold text-[#122027] leading-snug mt-1 ${isFocused ? "line-clamp-3" : "line-clamp-2"}`}>
+                            {task.title}
+                          </p>
+                          <div className="mt-auto pt-1.5 flex items-center gap-1 text-[10px] font-medium text-[#768994] min-w-0">
+                            {task.tag && (
+                              <span className={`truncate font-bold ${getTagTextColorClass(task.tag)}`}>
+                                {task.tag.toLowerCase()}
+                              </span>
+                            )}
                             {overdue && (
-                              <span className="text-[9px] font-black bg-rose-500 text-white px-1.5 py-0.5 rounded-full">OVERDUE</span>
+                              <>
+                                <span className="shrink-0">·</span>
+                                <span className="text-rose-500 font-bold shrink-0">overdue</span>
+                              </>
+                            )}
+                            {isFocused && !overdue && task.dueDate && (
+                              <>
+                                <span className="shrink-0">·</span>
+                                <span className="shrink-0">
+                                  due {new Date(task.dueDate).toLocaleDateString("en-GB", { day: "numeric", month: "short" })}
+                                </span>
+                              </>
                             )}
                             {taskAttachments[task.id] && (
-                              <span className="text-[9px] font-black text-slate-400 flex items-center gap-0.5">
+                              <span className="flex items-center gap-0.5 shrink-0 ml-auto">
                                 <Paperclip className="w-2.5 h-2.5" />
                                 {taskAttachments[task.id].attachments.length}
                               </span>

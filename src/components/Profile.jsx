@@ -1233,7 +1233,7 @@ export default function Profile({ wrikeData, onTokenChange, activeSection: activ
           </div>
         </div>
       )}
-      <PageHeader pageId="profile" icon={User} title={displayName} subtitle={profile?.email}>
+      <PageHeader pageId="profile" icon={User} title={displayName} subtitle={profile?.email} maxWidthClass="max-w-[1400px]">
         {wrikeUser?.id && (
           <span className="text-[10px] font-black text-white/90 bg-white/15 border border-white/20 px-2.5 py-1 rounded-full uppercase tracking-wider">
             Wrike · {wrikeUser.id.slice(0, 8)}…

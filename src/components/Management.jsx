@@ -1490,7 +1490,8 @@ function JobsSetupSection({ setActiveTab }) {
 }
 
 // ── Job Book Section ───────────────────────────────────────────────────────────
-function JobBookSection({ setActiveTab }) {
+// Exported: also rendered standalone as the PMs' "Job Book" page (JobBook.jsx).
+export function JobBookSection({ setActiveTab }) {
   const [jobs, setJobs]         = useState([]);
   const [loading, setLoading]   = useState(true);
   const [search, setSearch]     = useState("");
@@ -2370,10 +2371,16 @@ function PeopleSection() {
 }
 
 // ── Main Management Page ───────────────────────────────────────────────────────
-export default function Management({ wrikeUserId }) {
+export default function Management({ wrikeUserId, department }) {
   const [activeTab, setActiveTab] = useState("overview");
 
-  if (MANAGEMENT_IDS.length > 0 && !MANAGEMENT_IDS.includes(wrikeUserId)) {
+  // Administration is a first-class page for PMs; the hardcoded allowlist
+  // remains as an admin override for everyone else.
+  const hasAccess =
+    department === "PM" ||
+    MANAGEMENT_IDS.length === 0 ||
+    MANAGEMENT_IDS.includes(wrikeUserId);
+  if (!hasAccess) {
     return (
       <div className="min-h-screen bg-slate-100 flex items-center justify-center">
         <div className="bg-white border border-[#dce4ec] rounded-3xl p-10 text-center max-w-sm shadow-xl">

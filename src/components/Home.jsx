@@ -1,55 +1,18 @@
-import React, { useRef, useMemo, useState, useEffect, useCallback } from "react";
-import { Clock, LayoutList, Layout, Database, User, ChevronRight, Key } from "lucide-react";
+import React, { useRef, useMemo, useState, useEffect } from "react";
+import { ChevronRight, Key } from "lucide-react";
 import gsap from "gsap";
 import { useGSAP } from "@gsap/react";
 import { supabase } from "../lib/supabaseClient";
-import { PAGE_GRADIENTS } from "../lib/pageGradients";
+import { pagesFor } from "../lib/departments";
+import { useDepartment } from "../hooks/useDepartment";
 import "@fontsource-variable/bricolage-grotesque";
 
 gsap.registerPlugin(useGSAP);
 
-// Gradients are deliberately one step darker than the app's chip palette so
-// white ink stays legible on the hover sweep and full-screen wash (≥3:1 at
-// display sizes) in both themes.
-const SECTIONS = [
-  {
-    id: "timesheet",
-    label: "Timesheeter",
-    desc: "Track today's time",
-    icon: Clock,
-    // Brand blue→teal at full brightness (owner's call: brand pop over the
-    // ~3:1 large-text contrast the darkened variant hit).
-    gradient: PAGE_GRADIENTS.timesheet,
-  },
-  {
-    id: "todayslist",
-    label: "Motion Board",
-    desc: "Team task allocation",
-    icon: LayoutList,
-    gradient: PAGE_GRADIENTS.todayslist,
-  },
-  {
-    id: "canvas",
-    label: "Digi Canvas",
-    desc: "MATRIX visualiser",
-    icon: Layout,
-    gradient: PAGE_GRADIENTS.canvas,
-  },
-  {
-    id: "legacy",
-    label: "Legacy",
-    desc: "Old timesheet database",
-    icon: Database,
-    gradient: PAGE_GRADIENTS.legacy,
-  },
-  {
-    id: "profile",
-    label: "Profile hub",
-    desc: "Your jobs & settings",
-    icon: User,
-    gradient: PAGE_GRADIENTS.profile,
-  },
-];
+// The menu rows come from the pages registry (src/lib/departments.js),
+// filtered by the member's department — Motion sees its five tools, PMs see
+// Administration/Job Book/Timesheets/Profile Hub, and departments without a
+// defined set fall back to the historic five.
 
 // Play the full entrance ceremony once per app session; returning to the
 // menu afterwards gets a shortened rise so daily navigation never drags.
@@ -84,26 +47,25 @@ function useFirstName() {
 
 export default function Home({ onNavigate, hasToken = true }) {
   const firstName = useFirstName();
+  const department = useDepartment();
+  const sections = useMemo(() => pagesFor(department), [department]);
   const containerRef = useRef(null);
   const headerRef = useRef(null);
-  const rowRefs = useRef([]);
-  const fillRefs = useRef([]);
-  const contentRefs = useRef([]);
-  const metaRefs = useRef([]);
-  const addRowRef = useCallback((el) => {
-    if (el && !rowRefs.current.includes(el)) rowRefs.current.push(el);
-  }, []);
-  const addFillRef = useCallback((el) => {
-    if (el && !fillRefs.current.includes(el)) fillRefs.current.push(el);
-  }, []);
-  const addContentRef = useCallback((el) => {
-    if (el && !contentRefs.current.includes(el)) contentRefs.current.push(el);
-  }, []);
-  const addMetaRef = useCallback((el) => {
-    if (el && !metaRefs.current.includes(el)) metaRefs.current.push(el);
-  }, []);
+  // Refs are keyed by section id (not index) because the row set can change
+  // after mount — the department resolves asynchronously on a cold cache.
+  // Lookups below always go through the current `sections`, so entries for
+  // rows that no longer exist are simply never referenced.
+  const rowRefs = useRef(new Map());
+  const fillRefs = useRef(new Map());
+  const contentRefs = useRef(new Map());
+  const metaRefs = useRef(new Map());
+  const bindRef = (mapRef, id) => (el) => {
+    if (el) mapRef.current.set(id, el);
+  };
 
-  const idOrder = useMemo(() => SECTIONS.map((s) => s.id), []);
+  // Live nodes in row order for the entrance/exit choreography
+  const liveNodes = (mapRef) =>
+    sections.map((s) => mapRef.current.get(s.id)).filter(Boolean);
 
   useGSAP(
     () => {
@@ -112,11 +74,12 @@ export default function Home({ onNavigate, hasToken = true }) {
       const firstVisit = !entrancePlayed;
       entrancePlayed = true;
 
+      const contents = liveNodes(contentRefs);
       gsap.set(headerRef.current, { opacity: 0, y: -12 });
       // Classic masked reveal: each row's icon+label sits inside an
       // overflow-hidden box (see Row below) and slides up from fully
       // below it — no opacity fade, just a clean wipe into place.
-      gsap.set(contentRefs.current, { yPercent: firstVisit ? 110 : 40 });
+      gsap.set(contents, { yPercent: firstVisit ? 110 : 40 });
 
       gsap
         .timeline()
@@ -127,7 +90,7 @@ export default function Home({ onNavigate, hasToken = true }) {
           ease: "power3.out",
         })
         .to(
-          contentRefs.current,
+          contents,
           {
             yPercent: 0,
             duration: firstVisit ? 0.8 : 0.4,
@@ -137,15 +100,17 @@ export default function Home({ onNavigate, hasToken = true }) {
           "-=0.2"
         );
     },
-    { scope: containerRef }
+    // Re-runs (as the shortened rise) if the row set changes when the
+    // department resolves after first paint on a cold cache.
+    { scope: containerRef, dependencies: [sections] }
   );
 
-  const handleHoverIn = (i) => {
-    gsap.to(fillRefs.current[i], { scaleX: 1, duration: 0.4, ease: "power3.out", overwrite: "auto" });
+  const handleHoverIn = (id) => {
+    gsap.to(fillRefs.current.get(id), { scaleX: 1, duration: 0.4, ease: "power3.out", overwrite: "auto" });
   };
 
-  const handleHoverOut = (i) => {
-    gsap.to(fillRefs.current[i], { scaleX: 0, duration: 0.3, ease: "power2.in", overwrite: "auto" });
+  const handleHoverOut = (id) => {
+    gsap.to(fillRefs.current.get(id), { scaleX: 0, duration: 0.3, ease: "power2.in", overwrite: "auto" });
   };
 
   const handlePick = (sectionId) => {
@@ -154,17 +119,24 @@ export default function Home({ onNavigate, hasToken = true }) {
       return;
     }
 
-    const index = idOrder.indexOf(sectionId);
-    const clickedRow = rowRefs.current[index];
-    const clickedFill = fillRefs.current[index];
-    const clickedContent = contentRefs.current[index];
-    const otherContents = contentRefs.current.filter((_, i) => i !== index);
+    const section = sections.find((s) => s.id === sectionId);
+    const clickedRow = rowRefs.current.get(sectionId);
+    const clickedFill = fillRefs.current.get(sectionId);
+    const clickedContent = contentRefs.current.get(sectionId);
+    const otherContents = sections
+      .filter((s) => s.id !== sectionId)
+      .map((s) => contentRefs.current.get(s.id))
+      .filter(Boolean);
+    if (!section || !clickedRow || !clickedFill || !clickedContent) {
+      onNavigate(sectionId);
+      return;
+    }
 
     gsap.killTweensOf([
-      ...rowRefs.current,
-      ...fillRefs.current,
-      ...contentRefs.current,
-      ...metaRefs.current,
+      ...liveNodes(rowRefs),
+      ...liveNodes(fillRefs),
+      ...liveNodes(contentRefs),
+      ...liveNodes(metaRefs),
     ]);
 
     // Full-screen colour wash: the row's own fill (already a flat, full-width
@@ -196,11 +168,11 @@ export default function Home({ onNavigate, hasToken = true }) {
     // overlay the frame this component unmounts (see wash overlay in App).
     gsap
       .timeline({
-        onComplete: () => onNavigate(sectionId, SECTIONS[index].gradient),
+        onComplete: () => onNavigate(sectionId, section.gradient),
       })
       .to(otherContents, { yPercent: 110, duration: 0.2, ease: "power2.in", stagger: 0.018 }, 0)
       .to(headerRef.current, { opacity: 0, duration: 0.16, ease: "power2.inOut" }, 0)
-      .to(metaRefs.current, { opacity: 0, duration: 0.1, ease: "power2.out" }, 0)
+      .to(liveNodes(metaRefs), { opacity: 0, duration: 0.1, ease: "power2.out" }, 0)
       .to(clickedFill, { scaleX: 1, scaleY: scaleYNeeded, duration: 0.26, ease: "power2.inOut" }, 0)
       .to(clickedContent, { yPercent: -110, duration: 0.2, ease: "power2.in" }, 0.03);
   };
@@ -239,18 +211,17 @@ export default function Home({ onNavigate, hasToken = true }) {
       </div>
 
       <div className="flex-1 flex flex-col">
-        {SECTIONS.map((section, i) => (
+        {sections.map((section) => (
           <Row
             key={section.id}
             section={section}
-            index={i}
-            addRowRef={addRowRef}
-            addFillRef={addFillRef}
-            addContentRef={addContentRef}
-            addMetaRef={addMetaRef}
+            addRowRef={bindRef(rowRefs, section.id)}
+            addFillRef={bindRef(fillRefs, section.id)}
+            addContentRef={bindRef(contentRefs, section.id)}
+            addMetaRef={bindRef(metaRefs, section.id)}
             onClick={() => handlePick(section.id)}
-            onHoverIn={() => handleHoverIn(i)}
-            onHoverOut={() => handleHoverOut(i)}
+            onHoverIn={() => handleHoverIn(section.id)}
+            onHoverOut={() => handleHoverOut(section.id)}
           />
         ))}
       </div>

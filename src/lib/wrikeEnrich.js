@@ -278,7 +278,7 @@ export function buildFilmCodeMappings(enrichedTasks) {
 // ---------------------------------------------------------------------------
 // Fetch missing parent folder IDs from Wrike API (archives, etc.)
 // ---------------------------------------------------------------------------
-export async function hydrateMissingFolders(tasks, folderDictionary, token) {
+export async function hydrateMissingFolders(tasks, folderDictionary) {
   let missing = new Set();
   tasks.forEach((t) => t.parentIds?.forEach((pid) => {
     if (!folderDictionary[pid]) missing.add(pid);
@@ -292,9 +292,7 @@ export async function hydrateMissingFolders(tasks, folderDictionary, token) {
     for (let i = 0; i < ids.length; i += 50) {
       const chunk = ids.slice(i, i + 50);
       try {
-        const res = await fetch(`https://www.wrike.com/api/v4/folders/${chunk.join(",")}`, {
-          headers: { Authorization: `Bearer ${token}` },
-        });
+        const res = await fetch(`/api/wrike/folders/${chunk.join(",")}`);
         if (res.ok) {
           (await res.json()).data?.forEach((f) => {
             folderDictionary[f.id] = f;

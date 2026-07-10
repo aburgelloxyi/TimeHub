@@ -5,7 +5,9 @@ import React, {
   useMemo,
   useCallback,
 } from "react";
+import { motion, AnimatePresence, MotionConfig } from "framer-motion";
 import {
+  Home as HomeIcon,
   Clock,
   LayoutList,
   Layout,
@@ -40,21 +42,87 @@ import { useWrikeCache } from "./hooks/useWrikeCache";
 import Profile from "./components/Profile";
 import AdminModal from "./components/AdminModal";
 import Management from "./components/Management";
+import Home from "./components/Home";
+import { setWrikeUserId } from "./lib/supabaseClient";
+import { startWrikeOAuth } from "./lib/wrikeApi";
+
+// Page swap animation. When the swap arrives via the home wash (custom =
+// true) both sides are no-ops: the wash overlay hides the handoff, so any
+// fade/y-shift here would just fight it. Pill-nav swaps keep the fade.
+const PAGE_VARIANTS = {
+  initial: (viaWash) => (viaWash ? { opacity: 1, y: 0 } : { opacity: 0, y: 12 }),
+  animate: {
+    opacity: 1,
+    y: 0,
+    transition: { duration: 0.25, ease: [0.25, 0.1, 0.25, 1] },
+  },
+  exit: (viaWash) =>
+    viaWash
+      ? { opacity: 1, transition: { duration: 0 } }
+      : {
+          opacity: 0,
+          y: -12,
+          transition: { duration: 0.25, ease: [0.25, 0.1, 0.25, 1] },
+        },
+};
 
 export default function App() {
-  const [activePage, setActivePage] = useState("timesheet");
+  const [activePage, setActivePage] = useState("home");
+  // Gradient classes of the home row currently washing over the screen.
+  // While set, a fixed overlay hides the page swap; cleared shortly after
+  // so the overlay lifts and reveals the settled destination.
+  const [washGradient, setWashGradient] = useState(null);
   const [profileSection, setProfileSection] = useState(null);
   const [hasToken, setHasToken] = useState(
-    () => !!localStorage.getItem("wrike_personal_token")
+    () => !!localStorage.getItem("wrike_user_id")
   );
   const [showOnboarding, setShowOnboarding] = useState(
     () =>
       !localStorage.getItem("xyi_onboarded") &&
-      !localStorage.getItem("wrike_personal_token")
+      !localStorage.getItem("wrike_user_id")
   );
   const [showReminder, setShowReminder] = useState(false);
   const [showAdmin, setShowAdmin] = useState(false);
   const ADMIN_WRIKE_ID = "KUAWDLVN";
+
+  // Pick up the redirect back from /api/wrike/oauth/callback: stash the
+  // member's identity locally (same place useWrikeUser/setWrikeUserId already
+  // write to) and strip the params so a refresh doesn't re-process them.
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const connected = params.get("wrike_connected");
+    const error = params.get("wrike_error");
+
+    if (connected) {
+      const id = params.get("wrike_user_id");
+      if (id) {
+        setWrikeUserId(id, {
+          firstName: params.get("first_name"),
+          lastName: params.get("last_name"),
+          email: params.get("email"),
+          avatarUrl: params.get("avatar_url"),
+        });
+        setHasToken(true);
+        localStorage.setItem("xyi_onboarded", "1");
+        setShowOnboarding(false);
+        notify("Connected to Wrike!", "success");
+      }
+      window.history.replaceState({}, "", window.location.pathname);
+    } else if (error) {
+      // Surface the specific reason (token_exchange_failed, invalid_state,
+      // profile_fetch_failed, …) so a misconfigured secret/redirect is obvious.
+      notify(`Couldn't connect to Wrike (${error}). Please try again.`, "error");
+      window.history.replaceState({}, "", window.location.pathname);
+    }
+  }, []);
+  // Hold the wash long enough for the destination to mount and settle
+  // (fonts, layout, data-driven shifts happen under it), then lift it.
+  useEffect(() => {
+    if (!washGradient) return;
+    const t = setTimeout(() => setWashGradient(null), 260);
+    return () => clearTimeout(t);
+  }, [washGradient]);
+
   const {
     tasks: globalWrikeData,
     folderCampaigns,
@@ -63,9 +131,19 @@ export default function App() {
     isScanning,
     lastSynced,
     syncError,
+    sync,
     syncNow,
     scanFilmMappings,
   } = useWrikeCache();
+
+  // Motion Board stays permanently mounted (see the display:none wrapper
+  // below), so its own mount-effect only ever fires once per page load —
+  // it never sees you switch back to this tab. Nudge a background refresh
+  // (soft — no-ops if data is <15min old) every time the tab is actually
+  // opened, so it's not left showing whatever was true at initial page load.
+  useEffect(() => {
+    if (activePage === "todayslist") sync();
+  }, [activePage, sync]);
 
   // Global toast — available to all pages (top-right pill via ToastHost)
   const triggerToast = useCallback(
@@ -148,6 +226,13 @@ export default function App() {
 
   const PALETTE_ACTIONS = [
     {
+      id: "nav-home",
+      title: "Home",
+      desc: "Back to the landing page",
+      type: "Navigation",
+      icon: HomeIcon,
+    },
+    {
       id: "nav-timesheet",
       title: "Timesheeter",
       desc: "Open the time tracker",
@@ -165,7 +250,7 @@ export default function App() {
     },
     {
       id: "nav-canvas",
-      title: "Campaign Canvas",
+      title: "Digi Canvas",
       desc: "MATRIX task visualiser",
       type: "Navigation",
       icon: Layout,
@@ -348,6 +433,7 @@ export default function App() {
   };
 
   return (
+    <MotionConfig reducedMotion="user">
     <div className="min-h-screen bg-slate-100 transition-colors duration-300">
       <PillNav
         activePage={activePage}
@@ -369,18 +455,16 @@ export default function App() {
                 Welcome to Timesheeter
               </h2>
               <p className="text-sm text-[#768994] mt-2 leading-relaxed">
-                To get started, you'll need your{" "}
-                <span className="font-bold text-[#122027]">
-                  Wrike Personal Token
-                </span>
+                To get started, connect your{" "}
+                <span className="font-bold text-[#122027]">Wrike account</span>
                 . This lets the app fetch your tasks, timelogs, and timers
-                automatically.
+                automatically — no token to copy or paste.
               </p>
               <div className="mt-5 space-y-3">
                 {[
-                  "Go to Wrike → your avatar → Apps & Integrations",
-                  "Click API → Create new token",
-                  "Paste it in your Profile → Settings",
+                  "Click Connect to Wrike below",
+                  "Approve access on Wrike's own site",
+                  "You're back here, fully set up",
                 ].map((step, i) => (
                   <div key={i} className="flex items-start gap-3">
                     <span className="w-5 h-5 rounded-full bg-[#12a0e1]/10 text-[#12a0e1] text-[10px] font-black flex items-center justify-center shrink-0 mt-0.5">
@@ -393,13 +477,12 @@ export default function App() {
               <div className="mt-6 flex gap-3">
                 <button
                   onClick={() => {
-                    setActivePage("profile");
-                    setShowOnboarding(false);
                     localStorage.setItem("xyi_onboarded", "1");
+                    startWrikeOAuth();
                   }}
                   className="flex-1 bg-[#12a0e1] hover:bg-[#0d8bc4] text-white text-sm font-black py-3 rounded-xl transition-all shadow-sm"
                 >
-                  Set up now →
+                  Connect to Wrike →
                 </button>
                 <button
                   onClick={() => {
@@ -477,13 +560,15 @@ export default function App() {
         <AdminModal onClose={() => setShowAdmin(false)} />
       )}
 
-      {/* Global no-token banner — shown on any page except profile/settings */}
-      {!hasToken && activePage !== "profile" && (
-        <div className="mx-auto max-w-[1400px] px-4 sm:px-6 mt-3">
+      {/* Global no-token banner — home renders its own compact chip instead,
+          and pt-3 (not mt-3) so the margin can't collapse through the app
+          root and expose the document canvas as a dark strip */}
+      {!hasToken && activePage !== "profile" && activePage !== "home" && (
+        <div className="mx-auto max-w-[1400px] px-4 sm:px-6 pt-3">
           <div className="bg-amber-50 border border-amber-200 rounded-2xl px-4 py-3 flex items-center gap-3">
             <Key className="w-4 h-4 text-amber-600 shrink-0" />
             <p className="text-xs font-bold text-amber-800 flex-1">
-              Wrike token not set — some features won't work until you add it.
+              Wrike not connected — some features won't work until you connect it.
             </p>
             <button
               onClick={() => setActivePage("profile")}
@@ -617,63 +702,108 @@ export default function App() {
 
       <ToastHost />
 
-      {activePage === "timesheet" && (
-        <Tracker
-          wrikeData={globalWrikeData}
-          onNavigateToHub={(section) => {
-            setProfileSection(section);
-            setActivePage("profile");
-          }}
-        />
-      )}
+      {/* Motion Board stays mounted (display:none when inactive) so its board
+          state/DnD survives switching away — kept outside the transition
+          below so it's never unmounted/remounted by AnimatePresence. */}
       <div className={activePage === "todayslist" ? "block" : "hidden"}>
         <TodaysList
           wrikeData={globalWrikeData}
           triggerToast={triggerToast}
           lastSynced={lastSynced}
           isSyncing={isSyncing}
+          syncNow={syncNow}
         />
       </div>
-      {activePage === "canvas" && (
-        <CampaignCanvas
-          wrikeData={filteredData}
-          folderCampaigns={folderCampaigns}
-          triggerToast={triggerToast}
-          isLoading={
-            !!localStorage.getItem("wrike_personal_token") &&
-            globalWrikeData.length === 0
-          }
-          syncNow={syncNow}
-          isSyncing={isSyncing}
-          isAdmin={isAdmin}
-          scanFilmMappings={scanFilmMappings}
-          isScanning={isScanning}
-          filmCodeMappings={filmCodeMappings}
-        />
-      )}
-      {activePage === "wriketest" && (
-        <WrikeTest
-          wrikeData={globalWrikeData}
-          syncNow={syncNow}
-          isSyncing={isSyncing}
-          lastSynced={lastSynced}
-          syncError={syncError}
-        />
-      )}
-      {activePage === "legacy" && (
-        <LegacyTimesheet wrikeData={globalWrikeData} isAdmin={isAdmin} />
-      )}
-      {activePage === "profile" && (
-        <Profile
-          wrikeData={globalWrikeData}
-          onTokenChange={(val) => setHasToken(val)}
-          activeSection={profileSection}
-          setActiveSection={setProfileSection}
-        />
-      )}
-      {activePage === "management" && (
-        <Management wrikeUserId={wrikeUserId} />
-      )}
+
+      {/* Wash overlay: takes over from Home's expanded row fill the frame
+          the page swaps (identical gradient, identical coverage), then lifts
+          like a curtain to reveal the destination already in place. */}
+      <AnimatePresence>
+        {washGradient && (
+          <motion.div
+            key="wash-overlay"
+            className={`fixed inset-0 z-[95] pointer-events-none bg-gradient-to-r ${washGradient}`}
+            initial={false}
+            animate={{ y: 0 }}
+            exit={{ y: "-100%" }}
+            transition={{ duration: 0.4, ease: [0.76, 0, 0.24, 1] }}
+          />
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence mode="wait" custom={!!washGradient}>
+        {activePage !== "todayslist" && (
+          <motion.div
+            key={activePage}
+            custom={!!washGradient}
+            variants={PAGE_VARIANTS}
+            initial="initial"
+            animate="animate"
+            exit="exit"
+          >
+            {activePage === "home" && (
+              <Home
+                onNavigate={(id, gradient) => {
+                  if (gradient) setWashGradient(gradient);
+                  setActivePage(id);
+                }}
+                hasToken={hasToken}
+              />
+            )}
+
+            {activePage === "timesheet" && (
+              <Tracker
+                wrikeData={globalWrikeData}
+                onNavigateToHub={(section) => {
+                  setProfileSection(section);
+                  setActivePage("profile");
+                }}
+              />
+            )}
+            {activePage === "canvas" && (
+              <CampaignCanvas
+                wrikeData={filteredData}
+                folderCampaigns={folderCampaigns}
+                triggerToast={triggerToast}
+                isLoading={
+                  !!localStorage.getItem("wrike_user_id") &&
+                  globalWrikeData.length === 0
+                }
+                syncNow={syncNow}
+                isSyncing={isSyncing}
+                isAdmin={isAdmin}
+                scanFilmMappings={scanFilmMappings}
+                isScanning={isScanning}
+                filmCodeMappings={filmCodeMappings}
+              />
+            )}
+            {activePage === "wriketest" && (
+              <WrikeTest
+                wrikeData={globalWrikeData}
+                syncNow={syncNow}
+                isSyncing={isSyncing}
+                lastSynced={lastSynced}
+                syncError={syncError}
+              />
+            )}
+            {activePage === "legacy" && (
+              <LegacyTimesheet wrikeData={globalWrikeData} isAdmin={isAdmin} />
+            )}
+            {activePage === "profile" && (
+              <Profile
+                wrikeData={globalWrikeData}
+                onTokenChange={(val) => setHasToken(val)}
+                activeSection={profileSection}
+                setActiveSection={setProfileSection}
+              />
+            )}
+            {activePage === "management" && (
+              <Management wrikeUserId={wrikeUserId} />
+            )}
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
+    </MotionConfig>
   );
 }

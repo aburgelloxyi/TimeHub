@@ -10,6 +10,7 @@ import { useTrackerState } from "../../hooks/useTrackerState";
 import { useTaskActions } from "../../hooks/useTaskActions";
 import { useWrikeUser } from "../../hooks/useWrikeUser";
 import { useTasks } from "../../hooks/useTasks";
+import { useJobLookup } from "../../hooks/useJobLookup";
 import { getCurrentWeekStart } from "../../hooks/useLegacyRows";
 import { formatDurationText } from "../../utils/timeHelpers";
 import SearchableSelect from "../shared/SearchableSelect";
@@ -52,7 +53,11 @@ export default function Tracker({ wrikeData, onNavigateToHub }) {
   // Tasks are Supabase-backed via useTasks — scoped to this Wrike user + current week
   const { tasks, setTasks, loading: tasksLoading, addTask, addTasks, updateTask, updateTasks, deleteTasks, importTasks } = useTasks(triggerToast, null, wrikeUser?.id, getCurrentWeekStart());
 
-  const stateWithPull = { ...state, tasks, setTasks, addTask, addTasks, updateTask, updateTasks, deleteTasks, importTasks, isPullingTime, setIsPullingTime, wrikeUser };
+  // Job Book lookup — lets guessed job/film/client be overridden by admin-curated
+  // data, and self-populates Job Book from real usage the first time a job is seen.
+  const jobLookup = useJobLookup();
+
+  const stateWithPull = { ...state, tasks, setTasks, addTask, addTasks, updateTask, updateTasks, deleteTasks, importTasks, isPullingTime, setIsPullingTime, wrikeUser, jobLookup };
   const actions = useTaskActions(stateWithPull);
 
   // Lottie script loader

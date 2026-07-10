@@ -18,13 +18,14 @@ import {
   ChevronLeft,
   Key,
   Settings,
-  Eye,
-  EyeOff,
   Check,
+  LogOut,
+  ExternalLink,
 } from "lucide-react";
 import { supabase } from "../lib/supabaseClient";
 import { useTasks } from "../hooks/useTasks";
 import { useWrikeUser } from "../hooks/useWrikeUser";
+import { startWrikeOAuth, disconnectWrike, fetchWrikeOAuthStatus } from "../lib/wrikeApi";
 import TaskDetailModal from "./TaskDetailModal";
 import { formatDurationText } from "../utils/timeHelpers";
 import { getTagStyle, getBorderColorClass } from "../utils/tagStyles";
@@ -93,7 +94,7 @@ const SECTIONS = [
     id: "settings",
     label: "Settings",
     icon: Settings,
-    desc: "Wrike token & preferences",
+    desc: "Wrike connection & preferences",
     gradient: "from-slate-400 to-slate-600",
   },
 ];
@@ -221,24 +222,19 @@ function JobsSection({ wrikeUser, filter, wrikeData, onLogTime, triggerToast, jo
 
   const fetchTasks = useCallback(async () => {
     if (!wrikeUser?.id) return;
-    const token = localStorage.getItem("wrike_personal_token");
-    if (!token) return;
 
     setLoading(true);
-    const headers = { Authorization: `Bearer ${token}` };
     const fields = encodeURIComponent("[description,superTaskIds]");
 
     try {
       const [aRes, cRes, wRes] = await Promise.all([
         fetch(
-          `https://www.wrike.com/api/v4/tasks?responsibles=[${wrikeUser.id}]&status=Active&fields=${fields}&pageSize=500`,
-          { headers }
+          `/api/wrike/tasks?responsibles=[${wrikeUser.id}]&status=Active&fields=${fields}&pageSize=500`
         ),
         fetch(
-          `https://www.wrike.com/api/v4/tasks?responsibles=[${wrikeUser.id}]&fields=${fields}&pageSize=1000`,
-          { headers }
+          `/api/wrike/tasks?responsibles=[${wrikeUser.id}]&fields=${fields}&pageSize=1000`
         ),
-        fetch("https://www.wrike.com/api/v4/workflows", { headers }),
+        fetch("/api/wrike/workflows"),
       ]);
       const [aJson, cJson, wJson] = await Promise.all([
         aRes.json(),
@@ -449,19 +445,14 @@ function OverviewSection({
   const [activityLoading, setActivityLoading] = useState(false);
 
   useEffect(() => {
-    const token = localStorage.getItem("wrike_personal_token");
     const uid = wrikeUser?.id;
-    if (!token || !uid) return;
+    if (!uid) return;
 
     setActivityLoading(true);
-    const headers = { Authorization: `Bearer ${token}` };
 
     Promise.all([
-      fetch(
-        `https://www.wrike.com/api/v4/contacts/${uid}/timelogs?plainText=true`,
-        { headers }
-      ),
-      fetch("https://www.wrike.com/api/v4/timers", { headers }),
+      fetch(`/api/wrike/contacts/${uid}/timelogs?plainText=true`),
+      fetch("/api/wrike/timers"),
     ])
       .then(([lRes, tRes]) => Promise.all([lRes.json(), tRes.json()]))
       .then(async ([lJson, tJson]) => {
@@ -491,10 +482,7 @@ function OverviewSection({
         for (let i = 0; i < taskIds.length; i += BATCH) {
           const batch = taskIds.slice(i, i + BATCH);
           try {
-            const res = await fetch(
-              `https://www.wrike.com/api/v4/tasks/${batch.join(",")}`,
-              { headers }
-            );
+            const res = await fetch(`/api/wrike/tasks/${batch.join(",")}`);
             if (res.ok) {
               const json = await res.json();
               (json.data || []).forEach((t) => {
@@ -1091,38 +1079,36 @@ function AnalyticsSection({ tasks }) {
 // ── Settings / token section ──────────────────────────────────────────────────
 
 function SettingsSection({ onSave }) {
-  const [token, setToken] = useState(
-    () => localStorage.getItem("wrike_personal_token") || ""
-  );
-  const [show, setShow] = useState(false);
-  const [saved, setSaved] = useState(false);
+  const [status, setStatus] = useState({ checked: false, connected: false });
+  const [disconnecting, setDisconnecting] = useState(false);
 
-  const handleSave = () => {
-    const trimmed = token.trim();
-    localStorage.setItem("wrike_personal_token", trimmed);
-    setSaved(true);
-    setTimeout(() => setSaved(false), 2500);
-    if (onSave) onSave(true);
-  };
+  useEffect(() => {
+    fetchWrikeOAuthStatus().then((s) =>
+      setStatus({ checked: true, connected: s.connected })
+    );
+  }, []);
 
-  const handleClear = () => {
-    setToken("");
-    localStorage.removeItem("wrike_personal_token");
+  const hasToken = status.connected;
+
+  const handleDisconnect = async () => {
+    setDisconnecting(true);
+    await disconnectWrike();
+    localStorage.removeItem("wrike_user_id");
+    setStatus({ checked: true, connected: false });
+    setDisconnecting(false);
     if (onSave) onSave(false);
   };
-
-  const hasToken = !!localStorage.getItem("wrike_personal_token");
 
   return (
     <div className="space-y-6">
       <SectionTitle icon={Settings} title="Settings" />
 
-      {/* Wrike token card */}
+      {/* Wrike connection card */}
       <div className="border border-[#dce4ec] rounded-2xl overflow-hidden">
         <div className="bg-slate-50 border-b border-[#dce4ec] px-5 py-3 flex items-center gap-2">
           <Key className="w-4 h-4 text-[#12a0e1]" />
           <span className="text-sm font-black text-[#122027]">
-            Wrike Personal Token
+            Wrike Connection
           </span>
           {hasToken && (
             <span className="ml-auto text-[10px] font-black text-[#1cc1a5] bg-[#1cc1a5]/10 px-2 py-0.5 rounded-full uppercase tracking-wider flex items-center gap-1">
@@ -1130,75 +1116,42 @@ function SettingsSection({ onSave }) {
               Connected
             </span>
           )}
-          {!hasToken && (
+          {status.checked && !hasToken && (
             <span className="ml-auto text-[10px] font-black text-amber-600 bg-amber-50 px-2 py-0.5 rounded-full uppercase tracking-wider border border-amber-200">
-              Not set
+              Not connected
             </span>
           )}
         </div>
         <div className="p-5 space-y-4">
           <p className="text-xs text-[#768994] leading-relaxed">
-            Your Wrike permanent token is used to fetch tasks, timelogs, and
-            timers. It's stored locally in your browser and never sent to our
-            servers. You can generate one from{" "}
-            <span className="font-bold text-[#12a0e1]">
-              Wrike → Profile → Apps & Integrations → API
-            </span>
-            .
+            Connect your Wrike account to fetch tasks, timelogs, and timers.
+            You'll approve access on Wrike's own site — no token to copy or
+            paste, and it can be revoked here any time.
           </p>
-          <div className="flex gap-2">
-            <div className="relative flex-1">
-              <input
-                type={show ? "text" : "password"}
-                value={token}
-                onChange={(e) => setToken(e.target.value)}
-                placeholder="Paste your Wrike permanent token…"
-                className="w-full text-sm font-medium bg-white border border-[#dce4ec] rounded-xl px-4 py-2.5 pr-10 text-[#122027] placeholder-[#c4cdd4] focus:outline-none focus:ring-2 focus:ring-[#12a0e1]/30 focus:border-[#12a0e1] transition-all"
-              />
-              <button
-                onClick={() => setShow((s) => !s)}
-                className="absolute right-3 top-1/2 -translate-y-1/2 text-[#768994] hover:text-[#122027] transition-colors"
-              >
-                {show ? (
-                  <EyeOff className="w-4 h-4" />
-                ) : (
-                  <Eye className="w-4 h-4" />
-                )}
-              </button>
-            </div>
+          {hasToken ? (
             <button
-              onClick={handleSave}
-              disabled={!token.trim()}
-              className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-bold transition-all disabled:opacity-40 shrink-0 ${
-                saved
-                  ? "bg-[#1cc1a5] text-white"
-                  : "bg-[#12a0e1] hover:bg-[#0d8bc4] text-white shadow-sm"
-              }`}
+              onClick={handleDisconnect}
+              disabled={disconnecting}
+              className="flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-bold text-red-500 hover:bg-red-50 border border-red-200 transition-all disabled:opacity-40"
             >
-              {saved ? (
-                <>
-                  <Check className="w-4 h-4" /> Saved
-                </>
-              ) : (
-                "Save"
-              )}
+              <LogOut className="w-4 h-4" />
+              {disconnecting ? "Disconnecting…" : "Disconnect Wrike"}
             </button>
-            {hasToken && (
-              <button
-                onClick={handleClear}
-                className="px-4 py-2.5 rounded-xl text-sm font-bold text-red-500 hover:bg-red-50 border border-red-200 transition-all shrink-0"
-              >
-                Clear
-              </button>
-            )}
-          </div>
+          ) : (
+            <button
+              onClick={startWrikeOAuth}
+              className="flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-bold bg-[#12a0e1] hover:bg-[#0d8bc4] text-white shadow-sm transition-all"
+            >
+              <ExternalLink className="w-4 h-4" /> Connect to Wrike
+            </button>
+          )}
         </div>
       </div>
 
       {/* Info card */}
       <div className="bg-slate-50 border border-[#dce4ec] rounded-2xl p-5">
         <p className="text-xs font-black text-[#768994] uppercase tracking-widest mb-3">
-          What the token unlocks
+          What connecting unlocks
         </p>
         <div className="space-y-2">
           {[
@@ -1230,7 +1183,7 @@ export default function Profile({ wrikeData, onTokenChange, activeSection: activ
   const activeMeta = SECTIONS.find((s) => s.id === activeSection);
   const [profile, setProfile] = useState(null);
   const [hasToken, setHasToken] = useState(
-    () => !!localStorage.getItem("wrike_personal_token")
+    () => !!localStorage.getItem("wrike_user_id")
   );
   const [toast, setToast] = useState(null);
   const triggerToast = useCallback((msg, type = "info") => {
@@ -1356,18 +1309,18 @@ export default function Profile({ wrikeData, onTokenChange, activeSection: activ
             </div>
             <div className="flex-1 min-w-0">
               <p className="text-sm font-black text-amber-800">
-                Wrike token not set
+                Wrike not connected
               </p>
               <p className="text-xs text-amber-600 mt-0.5">
-                Add your personal token to unlock timelogs, live timers, and job
-                syncing.
+                Connect your Wrike account to unlock timelogs, live timers, and
+                job syncing.
               </p>
             </div>
             <button
               onClick={() => setActiveSection("settings")}
               className="flex items-center gap-2 bg-amber-500 hover:bg-amber-600 text-white text-xs font-bold px-4 py-2 rounded-xl transition-all shrink-0 shadow-sm"
             >
-              <Key className="w-3.5 h-3.5" /> Add token
+              <Key className="w-3.5 h-3.5" /> Connect
             </button>
           </div>
         )}

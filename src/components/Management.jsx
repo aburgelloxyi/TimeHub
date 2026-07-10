@@ -4,6 +4,7 @@ import {
   Plus, Pencil, Trash2, X, Check, Search,
   RefreshCw, Shield, AlertTriangle, ChevronLeft, ChevronRight,
   ArrowUpAZ, ArrowDownAZ, LayoutDashboard, TrendingUp, CheckCircle2, UserCog, Activity,
+  FolderPlus, Folder, FolderOpen, Sparkles, Loader2,
 } from "lucide-react";
 import { supabase } from "../lib/supabaseClient";
 import { SEED_CLIENTS, SEED_PROJECT_DESCRIPTIONS } from "../data/seedData";
@@ -27,6 +28,7 @@ const PRINT_DIGITAL = ["Digital", "Print", "Both"];
 
 const TABS = [
   { id: "overview",  label: "Overview",            icon: LayoutDashboard },
+  { id: "jobsSetup", label: "Jobs Setup",          icon: FolderPlus },
   { id: "jobs",      label: "Job Book",            icon: Briefcase },
   { id: "feed",      label: "Jobs Feed",           icon: Activity  },
   { id: "people",    label: "People",              icon: Users     },
@@ -39,7 +41,7 @@ const TABS = [
 
 const TAB_GROUPS = [
   { ids: ["overview"] },
-  { ids: ["jobs", "feed"],      label: "Jobs"      },
+  { ids: ["jobsSetup", "jobs", "feed"],      label: "Jobs"      },
   { ids: ["people", "positions"], label: "Team"    },
   { ids: ["films", "clients", "categories", "descs"], label: "Reference" },
 ];
@@ -690,6 +692,60 @@ function ComboField({ label, value, onChange, options, placeholder, required, fi
   );
 }
 
+// Searchable, selection-only dropdown — same visual language as ComboField's
+// popup, but you can't commit free text, only pick an existing option. Use
+// for pickers whose values must reference an existing row (e.g. Film Setup's
+// film picker), as opposed to ComboField which lets you introduce new values.
+function StrictSelect({ value, onChange, options, placeholder, loading, className = "" }) {
+  const [q, setQ] = useState("");
+  const [open, setOpen] = useState(false);
+
+  const hits = useMemo(() => {
+    if (!q) return options.slice(0, 60);
+    return options.filter(o => o.toLowerCase().includes(q.toLowerCase())).slice(0, 60);
+  }, [options, q]);
+
+  return (
+    <div className={`relative ${className}`}>
+      <button type="button" disabled={loading}
+        onClick={() => setOpen(o => !o)}
+        className="w-full flex items-center justify-between gap-2 border border-[#dce4ec] rounded-xl px-3 py-2.5 text-sm font-bold text-[#122027] outline-none focus:border-[#12a0e1] bg-white disabled:opacity-50 transition-colors hover:border-[#12a0e1]">
+        <span className={value ? "" : "text-[#b0bec5] font-medium"}>
+          {loading ? "Loading…" : (value || placeholder || "Select…")}
+        </span>
+        <ChevronRight className={`w-3.5 h-3.5 text-[#768994] shrink-0 transition-transform ${open ? "rotate-90" : ""}`} />
+      </button>
+      {open && (
+        <>
+          <div className="fixed inset-0 z-[99]" onClick={() => setOpen(false)} />
+          <div className="absolute z-[100] left-0 right-0 mt-1.5 bg-white border border-[#dce4ec] rounded-2xl shadow-2xl overflow-hidden">
+            <div className="p-2 border-b border-[#dce4ec]/60">
+              <div className="relative">
+                <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-[#b0bec5]" />
+                <input autoFocus value={q} onChange={e => setQ(e.target.value)}
+                  placeholder="Search…"
+                  className="w-full pl-8 pr-2 py-1.5 text-sm text-[#122027] outline-none bg-slate-50 rounded-xl" />
+              </div>
+            </div>
+            <div className="max-h-52 overflow-y-auto">
+              {hits.length === 0 && <p className="px-4 py-3 text-sm text-[#b0bec5]">No matches</p>}
+              {hits.map(o => (
+                <button key={o} type="button"
+                  onClick={() => { onChange(o); setQ(""); setOpen(false); }}
+                  className={`w-full text-left px-4 py-2.5 text-sm border-b border-[#dce4ec]/60 last:border-0 transition-colors ${
+                    o === value ? "bg-[#12a0e1]/10 text-[#12a0e1] font-bold" : "text-[#122027] hover:bg-slate-50"
+                  }`}>
+                  {o}
+                </button>
+              ))}
+            </div>
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
 function PillField({ label, value, onChange, options, colorMap }) {
   return (
     <div>
@@ -736,12 +792,20 @@ const CAT_FILTERS = [
   { label: "XYi",    gradient: "from-violet-500 to-violet-700",  match: s => s.startsWith("XYi")    },
 ];
 const PD_COLOR_MAP = { Digital: "bg-cyan-600 border-cyan-600", Print: "bg-orange-500 border-orange-500", Both: "bg-violet-600 border-violet-600" };
+const JOB_STATUSES = ["Inactive", "Active", "Closed"];
+const STATUS_COLOR_MAP = { Inactive: "bg-slate-400 border-slate-400", Active: "bg-[#12a0e1] border-[#12a0e1]", Closed: "bg-[#1cc1a5] border-[#1cc1a5]" };
+const STATUS_BADGE = { Inactive: "bg-slate-100 text-slate-500", Active: "bg-[#12a0e1]/10 text-[#12a0e1]", Closed: "bg-[#1cc1a5]/10 text-[#1cc1a5]" };
 
-// ── Job Form Modal ─────────────────────────────────────────────────────────────
-function JobModal({ job, clients, films, categories, descs, onSave, onClose, saving }) {
+// ── Job Form ───────────────────────────────────────────────────────────────────
+// Fields + footer for creating/editing a Job Book row. Shared by JobModal (edit,
+// from Job Book) and the Custom Job tab in Jobs Setup (create) — same form,
+// different chrome around it (layout="modal" adds the fixed-footer/scroll
+// behaviour a popup needs; layout="inline" just flows in the page).
+function JobForm({ job, clients, films, categories, descs, onSave, onCancel, saving, submitLabel, layout = "modal" }) {
   const isEdit = !!job?.id;
   const [orderedByOpts, setOrderedByOpts] = useState([]);
   const [billedToOpts, setBilledToOpts]   = useState([]);
+  const [nextCode, setNextCode] = useState(null); // e.g. "XY025999" — allocated once when creating a new job
 
   useEffect(() => {
     supabase.from("jobs")
@@ -755,7 +819,25 @@ function JobModal({ job, clients, films, categories, descs, onSave, onClose, sav
       });
   }, []);
 
+  // New jobs get the next sequential XY code auto-allocated, same source of truth
+  // (max across jobs + tasks) as the Bulk Campaign flow — never manually typed.
+  useEffect(() => {
+    if (isEdit) return;
+    Promise.all([
+      supabase.from("jobs").select("job_number"),
+      supabase.from("tasks").select("job_number"),
+    ]).then(([{ data: jobRows }, { data: taskRows }]) => {
+      let maxNum = 0;
+      [...(jobRows || []), ...(taskRows || [])].forEach(r => {
+        const m = (r.job_number || "").match(/XY(\d+)/);
+        if (m) maxNum = Math.max(maxNum, parseInt(m[1], 10));
+      });
+      setNextCode(`XY${String(maxNum + 1).padStart(6, "0")}`);
+    });
+  }, [isEdit]);
+
   const [form, setForm] = useState({
+    job_number: job?.job_number || "",
     start_date: job?.start_date ? job.start_date.slice(0, 10) : new Date().toISOString().slice(0, 10),
     client: job?.client || "",
     film_title: job?.film_title || "",
@@ -770,11 +852,159 @@ function JobModal({ job, clients, films, categories, descs, onSave, onClose, sav
     estimated_cost: job?.estimated_cost ?? "",
     completed_date: job?.completed_date ? job.completed_date.slice(0, 10) : "",
     job_done: job?.job_done || false,
+    status: job?.status || "Inactive",
     notes: job?.notes || "",
   });
 
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
+  const bodyClass = layout === "modal" ? "overflow-y-auto flex-1 px-6 py-5 space-y-6" : "space-y-6";
+  const footerClass = layout === "modal"
+    ? "px-6 py-4 border-t border-[#dce4ec] flex justify-end gap-2 shrink-0"
+    : "pt-5 border-t border-[#dce4ec] flex justify-end gap-2";
 
+  // Live preview: "Film Title : XY025999, Project Description" — updates as you type
+  const livePreview = useMemo(() => {
+    if (!nextCode) return "";
+    const film = form.film_title.trim();
+    const desc = form.project_description.trim();
+    let s = film ? `${film} : ${nextCode}` : nextCode;
+    if (desc) s += `, ${desc}`;
+    return s;
+  }, [nextCode, form.film_title, form.project_description]);
+
+  const canSave = isEdit
+    ? form.job_number.trim() && form.client && form.start_date
+    : nextCode && form.client && form.start_date;
+
+  const handleSave = () => onSave(isEdit ? form : { ...form, job_number: livePreview });
+
+  return (
+    <>
+      <div className={bodyClass}>
+        <div>
+          <FieldLabel text="Job Number" required />
+          {isEdit ? (
+            <input value={form.job_number} onChange={e => set("job_number", e.target.value)}
+              placeholder="e.g. The Odyssey : XY025999, Finishing"
+              className={`${MODAL_INPUT} font-mono`} />
+          ) : (
+            <>
+              <div className={`${MODAL_INPUT} font-mono bg-slate-50 flex items-center min-h-[42px]`}>
+                {nextCode ? livePreview : "Allocating next job number…"}
+              </div>
+              <p className="text-[10px] text-[#768994] mt-1.5">
+                Auto-allocated — updates live as you fill in the film and project description below.
+              </p>
+            </>
+          )}
+        </div>
+
+        <div className="grid grid-cols-2 gap-5">
+          <div>
+            <FieldLabel text="Start Date" required />
+            <input type="date" value={form.start_date} onChange={e => set("start_date", e.target.value)}
+              className={MODAL_INPUT} />
+          </div>
+          <PillField label="Office" value={form.office} onChange={v => set("office", v)} options={OFFICES} />
+        </div>
+
+        <div className="grid grid-cols-2 gap-5">
+          <ComboField label="Client" required value={form.client} onChange={v => set("client", v)}
+            options={clients} placeholder="Search clients…" filters={CLIENT_FILTERS} />
+          <PillField label="Print / Digital" value={form.print_digital} onChange={v => set("print_digital", v)}
+            options={PRINT_DIGITAL} colorMap={PD_COLOR_MAP} />
+        </div>
+
+        <ComboField label="Film Title" value={form.film_title} onChange={v => set("film_title", v)}
+          options={films} placeholder="Search films, or type something else (e.g. Studio Management)…" />
+
+        <ComboField label="Project Description" value={form.project_description}
+          onChange={v => set("project_description", v)}
+          options={descs} placeholder="Search descriptions or type a new one…"
+          filters={DESC_FILTERS} />
+
+        <ComboField label="Item Category" value={form.job_work_category}
+          onChange={v => set("job_work_category", v)}
+          options={categories} placeholder="Search categories…"
+          filters={CAT_FILTERS} />
+
+        <div className="grid grid-cols-2 gap-5">
+          <ComboField label="Ordered By" value={form.ordered_by} onChange={v => set("ordered_by", v)}
+            options={orderedByOpts} placeholder="Name or type new…" />
+          <ComboField label="Billed To" value={form.billed_to} onChange={v => set("billed_to", v)}
+            options={billedToOpts} placeholder="Company or name…" />
+        </div>
+
+        <div>
+          <p className="text-[10px] font-black uppercase tracking-widest text-[#768994] mb-3">Costs</p>
+          <div className="grid grid-cols-3 gap-4">
+            {[["Fixed", "fixed_cost"], ["3rd Party", "third_party_cost"], ["Estimated", "estimated_cost"]].map(([lbl, field]) => (
+              <div key={field}>
+                <FieldLabel text={lbl} />
+                <div className="relative">
+                  <span className="absolute left-3.5 top-1/2 -translate-y-1/2 text-[#768994] text-sm font-bold select-none">£</span>
+                  <input type="number" step="0.01" min="0" value={form[field]}
+                    onChange={e => set(field, e.target.value)} placeholder="0.00"
+                    className={`${MODAL_INPUT} pl-8`} />
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        <PillField label="Status" value={form.status} onChange={v => set("status", v)}
+          options={JOB_STATUSES} colorMap={STATUS_COLOR_MAP} />
+
+        <div className="grid grid-cols-2 gap-5">
+          <div>
+            <FieldLabel text="Completed Date" />
+            <input type="date" value={form.completed_date} onChange={e => set("completed_date", e.target.value)}
+              className={MODAL_INPUT} />
+          </div>
+          <div className="flex items-end">
+            <button type="button" onClick={() => set("job_done", !form.job_done)}
+              className={`flex items-center gap-2.5 w-full px-4 py-2.5 rounded-2xl border font-bold text-sm transition-all ${
+                form.job_done
+                  ? "bg-[#1cc1a5]/10 border-[#1cc1a5] text-[#1cc1a5]"
+                  : "bg-white border-[#dce4ec] text-[#768994] hover:border-[#1cc1a5]/50"
+              }`}>
+              <div className={`w-5 h-5 rounded-lg border-2 flex items-center justify-center shrink-0 transition-colors ${
+                form.job_done ? "bg-[#1cc1a5] border-[#1cc1a5]" : "border-[#dce4ec]"
+              }`}>
+                {form.job_done && <Check className="w-3 h-3 text-white" />}
+              </div>
+              Job Done
+            </button>
+          </div>
+        </div>
+
+        <div>
+          <FieldLabel text="Notes" />
+          <textarea value={form.notes} onChange={e => set("notes", e.target.value)}
+            rows={3} placeholder="Any additional notes…"
+            className={`${MODAL_INPUT} resize-none`} />
+        </div>
+      </div>
+
+      <div className={footerClass}>
+        {onCancel && (
+          <button onClick={onCancel}
+            className="px-5 py-2.5 text-sm font-bold text-[#768994] hover:text-[#122027] bg-white border border-[#dce4ec] rounded-2xl transition-all">
+            Cancel
+          </button>
+        )}
+        <button onClick={handleSave} disabled={saving || !canSave}
+          className="flex items-center gap-2 px-6 py-2.5 bg-[#12a0e1] hover:bg-[#0d8bc4] text-white text-sm font-bold rounded-2xl transition-all disabled:opacity-50 shadow-sm">
+          {saving ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Check className="w-3.5 h-3.5" />}
+          {submitLabel || (isEdit ? "Save Changes" : "Create Job")}
+        </button>
+      </div>
+    </>
+  );
+}
+
+// ── Job Form Modal (edit only — creation now lives in Jobs Setup > Custom Job) ─
+function JobModal({ job, clients, films, categories, descs, onSave, onClose, saving }) {
   return (
     // onMouseDown instead of onClick: fires before blur, so the close is instant
     // and never races with a combobox dropdown's state updates.
@@ -783,125 +1013,484 @@ function JobModal({ job, clients, films, categories, descs, onSave, onClose, sav
       <div className="bg-white rounded-3xl shadow-2xl w-full max-w-2xl max-h-[92vh] flex flex-col overflow-hidden border border-[#dce4ec]"
         onMouseDown={e => e.stopPropagation()}>
 
-        {/* Header */}
         <div className="px-6 pt-5 pb-4 border-b border-[#dce4ec] flex items-center justify-between shrink-0">
           <div>
             <p className="text-[9px] font-black uppercase tracking-widest text-[#12a0e1] mb-0.5">Job Book</p>
-            <h2 className="text-xl font-black text-[#122027]">
-              {isEdit ? `Edit ${job.job_number}` : "New Job"}
-            </h2>
+            <h2 className="text-xl font-black text-[#122027]">Edit {job?.job_number}</h2>
           </div>
           <button onClick={onClose} className="p-2 hover:bg-slate-100 rounded-xl text-slate-400 hover:text-slate-600 transition-colors">
             <X className="w-4 h-4" />
           </button>
         </div>
 
-        {/* Body */}
-        <div className="overflow-y-auto flex-1 px-6 py-5 space-y-6">
-
-          <div className="grid grid-cols-2 gap-5">
-            <div>
-              <FieldLabel text="Start Date" required />
-              <input type="date" value={form.start_date} onChange={e => set("start_date", e.target.value)}
-                className={MODAL_INPUT} />
-            </div>
-            <PillField label="Office" value={form.office} onChange={v => set("office", v)} options={OFFICES} />
-          </div>
-
-          <div className="grid grid-cols-2 gap-5">
-            <ComboField label="Client" required value={form.client} onChange={v => set("client", v)}
-              options={clients} placeholder="Search clients…" filters={CLIENT_FILTERS} />
-            <PillField label="Print / Digital" value={form.print_digital} onChange={v => set("print_digital", v)}
-              options={PRINT_DIGITAL} colorMap={PD_COLOR_MAP} />
-          </div>
-
-          <ComboField label="Film Title" value={form.film_title} onChange={v => set("film_title", v)}
-            options={films} placeholder="Search films…" />
-
-          <ComboField label="Project Description" value={form.project_description}
-            onChange={v => set("project_description", v)}
-            options={descs} placeholder="Search descriptions or type a new one…"
-            filters={DESC_FILTERS} />
-
-          <ComboField label="Item Category" value={form.job_work_category}
-            onChange={v => set("job_work_category", v)}
-            options={categories} placeholder="Search categories…"
-            filters={CAT_FILTERS} />
-
-          <div className="grid grid-cols-2 gap-5">
-            <ComboField label="Ordered By" value={form.ordered_by} onChange={v => set("ordered_by", v)}
-              options={orderedByOpts} placeholder="Name or type new…" />
-            <ComboField label="Billed To" value={form.billed_to} onChange={v => set("billed_to", v)}
-              options={billedToOpts} placeholder="Company or name…" />
-          </div>
-
-          <div>
-            <p className="text-[10px] font-black uppercase tracking-widest text-[#768994] mb-3">Costs</p>
-            <div className="grid grid-cols-3 gap-4">
-              {[["Fixed", "fixed_cost"], ["3rd Party", "third_party_cost"], ["Estimated", "estimated_cost"]].map(([lbl, field]) => (
-                <div key={field}>
-                  <FieldLabel text={lbl} />
-                  <div className="relative">
-                    <span className="absolute left-3.5 top-1/2 -translate-y-1/2 text-[#768994] text-sm font-bold select-none">£</span>
-                    <input type="number" step="0.01" min="0" value={form[field]}
-                      onChange={e => set(field, e.target.value)} placeholder="0.00"
-                      className={`${MODAL_INPUT} pl-8`} />
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-
-          <div className="grid grid-cols-2 gap-5">
-            <div>
-              <FieldLabel text="Completed Date" />
-              <input type="date" value={form.completed_date} onChange={e => set("completed_date", e.target.value)}
-                className={MODAL_INPUT} />
-            </div>
-            <div className="flex items-end">
-              <button type="button" onClick={() => set("job_done", !form.job_done)}
-                className={`flex items-center gap-2.5 w-full px-4 py-2.5 rounded-2xl border font-bold text-sm transition-all ${
-                  form.job_done
-                    ? "bg-[#1cc1a5]/10 border-[#1cc1a5] text-[#1cc1a5]"
-                    : "bg-white border-[#dce4ec] text-[#768994] hover:border-[#1cc1a5]/50"
-                }`}>
-                <div className={`w-5 h-5 rounded-lg border-2 flex items-center justify-center shrink-0 transition-colors ${
-                  form.job_done ? "bg-[#1cc1a5] border-[#1cc1a5]" : "border-[#dce4ec]"
-                }`}>
-                  {form.job_done && <Check className="w-3 h-3 text-white" />}
-                </div>
-                Job Done
-              </button>
-            </div>
-          </div>
-
-          <div>
-            <FieldLabel text="Notes" />
-            <textarea value={form.notes} onChange={e => set("notes", e.target.value)}
-              rows={3} placeholder="Any additional notes…"
-              className={`${MODAL_INPUT} resize-none`} />
-          </div>
-        </div>
-
-        {/* Footer */}
-        <div className="px-6 py-4 border-t border-[#dce4ec] flex justify-end gap-2 shrink-0">
-          <button onClick={onClose}
-            className="px-5 py-2.5 text-sm font-bold text-[#768994] hover:text-[#122027] bg-white border border-[#dce4ec] rounded-2xl transition-all">
-            Cancel
-          </button>
-          <button onClick={() => onSave(form)} disabled={saving || !form.client || !form.start_date}
-            className="flex items-center gap-2 px-6 py-2.5 bg-[#12a0e1] hover:bg-[#0d8bc4] text-white text-sm font-bold rounded-2xl transition-all disabled:opacity-50 shadow-sm">
-            {saving ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Check className="w-3.5 h-3.5" />}
-            {isEdit ? "Save Changes" : "Create Job"}
-          </button>
-        </div>
+        <JobForm job={job} clients={clients} films={films} categories={categories} descs={descs}
+          onSave={onSave} onCancel={onClose} saving={saving} layout="modal" />
       </div>
     </div>
   );
 }
 
+// ── Film Setup: Wrike master-template folder trees ────────────────────────────
+// Mirrors each studio's "_STUDIO_MASTER_TEMPLATES" folder in Wrike. Every node
+// tagged jobNumber:true gets its own auto-generated job number when a film is
+// created — mirrors how the real template's "JOBNUMBER_..." folders are
+// currently hand-replaced per new job.
+const FOLDER_TEMPLATES = {
+  Paramount: {
+    label: "_Paramount_MASTER_TEMPLATES",
+    children: [
+      { label: "_House_Keeping" },
+      { label: "Digital" },
+      { label: "Launch", children: [
+        { label: "Artwork_Launch" },
+        { label: "Character_Poster_Launch" },
+        { label: "PLF_Launch" },
+        { label: "Reporting" },
+      ]},
+      { label: "Print", children: [
+        { label: "DOM" },
+        { label: "INT_Creative", children: [
+          { label: "JOBNUMBER_Finishing", jobNumber: true },
+          { label: "JOBNUMBER_Print_Quad_Creation_OV", jobNumber: true },
+          { label: "INTL", children: [
+            { label: "JOBNUMBER_CMYK_Conversions", jobNumber: true },
+            { label: "JOBNUMBER_INTL_Asset_Chart", jobNumber: true },
+            { label: "JOBNUMBER_INTL_Outdoor_Campaign_Bespoke", jobNumber: true },
+            { label: "JOBNUMBER_INTL_Outdoor_Campaign_Masters", jobNumber: true },
+            { label: "JOBNUMBER_INTL_PRINT_Outdoor_Campaign_Markets", jobNumber: true },
+            { label: "JOBNUMBER_Print_OV_Mechs", jobNumber: true },
+            { label: "JOBNUMBER_Standee", jobNumber: true },
+            { label: "JOBNUMBER_TYPE_Title_Adjustment", jobNumber: true },
+            { label: "JOBNUMBER_TYPE_Titles", jobNumber: true },
+          ]},
+        ]},
+      ]},
+    ],
+  },
+};
+
+const STUDIO_OPTIONS = ["Paramount", "Sony", "Universal"];
+// Studios we can currently fetch/test live from Wrike (have a master-template folder).
+// Paramount also ships a hardcoded fallback tree above; Universal is fetch-only.
+const TESTABLE_STUDIOS = new Set(["Paramount", "Universal"]);
+
+const JOBS_SETUP_TABS = [
+  { id: "campaign", label: "Bulk Campaign", desc: "Generate a whole campaign's job numbers at once from a studio's Wrike folder template.", icon: FolderPlus, color: "from-blue-500 to-[#12a0e1]" },
+  { id: "custom",   label: "Custom Job",    desc: "Add a single one-off job manually, with its own job number and details.", icon: Plus, color: "from-emerald-500 to-teal-600" },
+];
+
+function JobsSetupSection({ setActiveTab }) {
+  const [innerTab, setInnerTab] = useState("campaign");
+  const [studio, setStudio] = useState("Paramount");
+  const [filmTitle, setFilmTitle] = useState("");
+  const [fetchedTemplate, setFetchedTemplate] = useState(null); // real subtree pulled live from Wrike
+  const [fetchingTemplate, setFetchingTemplate] = useState(false);
+  const [fetchInfo, setFetchInfo] = useState(null); // { rootLabel, jobCount } | { error }
+  const [films, setFilms] = useState([]);
+  const [filmsLoading, setFilmsLoading] = useState(true);
+  const [clients, setClients] = useState([]);
+  const [categories, setCategories] = useState([]);
+  const [descs, setDescs] = useState([]);
+  const [customSaving, setCustomSaving] = useState(false);
+  const [customCreated, setCustomCreated] = useState(null); // job_number of the row just created
+
+  // Slots already activated for the selected film — { [templateSlotLabel]: jobRow }.
+  // Nothing gets created until a slot is clicked, so a film never ends up with a
+  // pile of job numbers nobody asked for — you activate exactly what's needed,
+  // as and when the work comes in, and can come back to activate more later.
+  const [slotJobs, setSlotJobs] = useState({});
+  const [loadingSlots, setLoadingSlots] = useState(false);
+  const [activatingSlot, setActivatingSlot] = useState(null); // slot label currently being created
+  const [activateError, setActivateError] = useState(null);
+
+  // Films are added in the Films tab first — this section only picks from that
+  // list, it never creates new films, so the two stay in sync by construction.
+  useEffect(() => {
+    supabase.from("films").select("title").order("title").then(({ data }) => {
+      setFilms((data || []).map(f => f.title));
+      setFilmsLoading(false);
+    });
+    supabase.from("clients").select("name").order("name").then(({ data }) => setClients((data || []).map(c => c.name)));
+    supabase.from("job_categories").select("name").order("name").then(({ data }) => setCategories((data || []).map(c => c.name)));
+    supabase.from("project_descriptions").select("description").order("description").then(({ data }) => setDescs((data || []).map(d => d.description)));
+  }, []);
+
+  const handleCreateCustomJob = async (form) => {
+    setCustomSaving(true);
+    const payload = {
+      ...form,
+      start_date: form.start_date || null,
+      completed_date: form.completed_date || null,
+      fixed_cost: form.fixed_cost === "" ? null : parseFloat(form.fixed_cost),
+      third_party_cost: form.third_party_cost === "" ? null : parseFloat(form.third_party_cost),
+      estimated_cost: form.estimated_cost === "" ? null : parseFloat(form.estimated_cost),
+    };
+    const { error } = await supabase.from("jobs").insert(payload);
+    setCustomSaving(false);
+    if (!error) setCustomCreated(form.job_number);
+    else alert(
+      error.code === "23505"
+        ? `Job number "${form.job_number}" already exists in Job Book.`
+        : "Failed to create job: " + error.message
+    );
+  };
+
+  // Walk the template, collecting every jobNumber:true leaf with a human-readable description
+  const collectJobLeaves = (node) => {
+    let leaves = node.jobNumber
+      ? [{ label: node.label, description: node.label.replace(/^JOBNUMBER_?/i, "").replace(/_/g, " ").trim() || "General" }]
+      : [];
+    (node.children || []).forEach(c => { leaves = leaves.concat(collectJobLeaves(c)); });
+    return leaves;
+  };
+
+  // Pull the real master-template folder subtree from Wrike via the OAuth
+  // proxy. Builds the same { label, children, jobNumber } shape as the
+  // hardcoded FOLDER_TEMPLATES, tagging every "JOBNUMBER_..." folder so it
+  // gets a generated code.
+  const fetchTemplateFromWrike = async () => {
+    if (!localStorage.getItem("wrike_user_id")) { setFetchInfo({ error: "Wrike not connected — connect it in Profile → Settings first." }); return; }
+    setFetchingTemplate(true);
+    setFetchInfo(null);
+    try {
+      const FF = encodeURIComponent("[childIds]");
+      const fd = {};
+      let url = `/api/wrike/folders?fields=${FF}`;
+      while (url) {
+        const res = await fetch(url);
+        if (!res.ok) throw new Error(`Wrike folders fetch failed (${res.status})`);
+        const json = await res.json();
+        (json.data || []).forEach(f => { fd[f.id] = { id: f.id, title: f.title, childIds: f.childIds || [] }; });
+        url = json.nextPageToken
+          ? `/api/wrike/folders?fields=${FF}&nextPageToken=${json.nextPageToken}`
+          : null;
+      }
+      // Find candidate master-template roots by fuzzy title match. There can be
+      // several ("_Paramount_MASTER_TEMPLATES", a "... copy", archived dupes), so
+      // build each subtree and pick the one with the most JOBNUMBER folders,
+      // penalising obvious duplicates — that's the real, populated template.
+      const wanted = studio.toUpperCase();
+      const candidates = Object.values(fd).filter(f => {
+        const norm = (f.title || "").toUpperCase().replace(/[_\s]+/g, " ");
+        return norm.includes(wanted) && norm.includes("MASTER TEMPLATE");
+      });
+      if (!candidates.length) throw new Error(`No "${studio}" master-template folder found in Wrike.`);
+
+      const buildFrom = (rootId) => {
+        const visited = new Set();
+        const build = (id) => {
+          if (visited.has(id)) return null;
+          visited.add(id);
+          const node = fd[id];
+          if (!node) return null;
+          const children = (node.childIds || []).map(build).filter(Boolean);
+          const out = { label: node.title };
+          if (children.length) out.children = children;
+          if (/JOBNUMBER/i.test(node.title || "")) out.jobNumber = true;
+          return out;
+        };
+        return build(rootId);
+      };
+
+      let best = null;
+      for (const cand of candidates) {
+        const tree = buildFrom(cand.id);
+        const jobCount = collectJobLeaves(tree).length;
+        const isDupe = /\b(COPY|ARCHIVE|ARCHIVED|OLD|BACKUP|BAK)\b/i.test(cand.title || "");
+        const score = jobCount - (isDupe ? 1e6 : 0) - (cand.title || "").length * 0.001;
+        if (!best || score > best.score) best = { tree, jobCount, title: cand.title, score };
+      }
+      setFetchedTemplate(best.tree);
+      setFetchInfo({ rootLabel: best.title, jobCount: best.jobCount });
+    } catch (e) {
+      setFetchInfo({ error: e.message });
+      setFetchedTemplate(null);
+    } finally {
+      setFetchingTemplate(false);
+    }
+  };
+
+  // Load which slots are already activated for the selected film — keyed by
+  // template_slot, so we know per JOBNUMBER_ folder whether it already has a
+  // real job number or is still a pending, un-clicked placeholder.
+  const loadSlotJobs = useCallback(async (film) => {
+    if (!film) { setSlotJobs({}); return; }
+    setLoadingSlots(true);
+    const { data } = await supabase.from("jobs").select("*").eq("film_title", film).not("template_slot", "is", null);
+    const map = {};
+    (data || []).forEach(j => { map[j.template_slot] = j; });
+    setSlotJobs(map);
+    setLoadingSlots(false);
+  }, []);
+
+  useEffect(() => { loadSlotJobs(filmTitle); }, [filmTitle, loadSlotJobs]);
+
+  // Activate exactly one slot: allocate the next sequential XY code fresh
+  // (reflects anything created anywhere since we last looked), create one job
+  // for it, and mark it activated locally. Nothing else in the template is
+  // touched — the rest stay pending until someone clicks them too.
+  const activateSlot = async (leaf) => {
+    if (!filmTitle.trim() || activatingSlot || slotJobs[leaf.label]) return;
+    setActivatingSlot(leaf.label);
+    setActivateError(null);
+    try {
+      const [{ data: jobRows }, { data: taskRows }] = await Promise.all([
+        supabase.from("jobs").select("job_number"),
+        supabase.from("tasks").select("job_number"),
+      ]);
+      let maxNum = 0;
+      [...(jobRows || []), ...(taskRows || [])].forEach(r => {
+        const m = (r.job_number || "").match(/XY(\d+)/);
+        if (m) maxNum = Math.max(maxNum, parseInt(m[1], 10));
+      });
+      const code = `XY${String(maxNum + 1).padStart(6, "0")}`;
+      const row = {
+        job_number: `${filmTitle.trim()} : ${code}, ${leaf.description}`,
+        film_title: filmTitle.trim(),
+        template_slot: leaf.label,
+        status: "Inactive",
+        start_date: new Date().toISOString().slice(0, 10),
+      };
+      const { data, error } = await supabase.from("jobs").insert(row).select().single();
+      if (error) throw error;
+      setSlotJobs(prev => ({ ...prev, [leaf.label]: data }));
+    } catch (e) {
+      setActivateError(e.code === "23505" ? "That job number was just taken by another activation — try again." : e.message);
+    } finally {
+      setActivatingSlot(null);
+    }
+  };
+
+  // Recursive tree renderer — activated JOBNUMBER_ leaves show their real code;
+  // pending ones stay clickable placeholders you can activate right in the tree.
+  // Uses a path-based key since live Wrike data can have repeated folder names
+  // across branches. The root folder in Wrike is always renamed to the film
+  // itself (e.g. "Passenger") rather than keeping the "_STUDIO_MASTER_TEMPLATES"
+  // name — mirror that here once a film is picked.
+  const renderTree = (node, depth = 0, path = "0") => {
+    const isSlot = !!node.jobNumber;
+    const activated = isSlot ? slotJobs[node.label] : null;
+    const isActivating = activatingSlot === node.label;
+    const leafDesc = isSlot ? node.label.replace(/^JOBNUMBER_?/i, "").replace(/_/g, " ").trim() || "General" : null;
+
+    let displayLabel = node.label;
+    if (depth === 0 && filmTitle.trim()) displayLabel = filmTitle.trim().replace(/\s+/g, "_");
+    else if (activated) displayLabel = node.label.replace(/^JOBNUMBER/i, activated.job_number.match(/XY\d+/)?.[0] || "XY??????");
+
+    return (
+      <div key={path}>
+        <div
+          onClick={isSlot && !activated && !isActivating && filmTitle.trim() ? () => activateSlot({ label: node.label, description: leafDesc }) : undefined}
+          className={`flex items-center gap-1.5 py-1 ${isSlot && !activated && filmTitle.trim() ? "cursor-pointer hover:bg-[#12a0e1]/5 rounded-lg -mx-1 px-1" : ""}`}
+          style={{ paddingLeft: depth * 18 }}>
+          {node.children?.length
+            ? <FolderOpen className="w-3.5 h-3.5 text-[#f4b740] shrink-0" />
+            : <Folder className={`w-3.5 h-3.5 shrink-0 ${isSlot && !activated ? "text-[#12a0e1]" : "text-[#b0bec5]"}`} />}
+          <span className={`text-[12px] ${activated ? "font-mono font-bold text-[#12a0e1]" : isSlot ? "text-[#122027] font-bold" : "text-[#122027]"}`}>
+            {displayLabel}
+          </span>
+          {isSlot && !activated && !isActivating && filmTitle.trim() && (
+            <span className="text-[9px] font-black uppercase tracking-wider text-[#12a0e1] bg-[#12a0e1]/10 px-1.5 py-0.5 rounded ml-1">Click to activate</span>
+          )}
+          {isActivating && <Loader2 className="w-3 h-3 animate-spin text-[#12a0e1] ml-1" />}
+        </div>
+        {node.children?.map((c, i) => renderTree(c, depth + 1, `${path}-${i}`))}
+      </div>
+    );
+  };
+
+  const hasTemplate = !!(fetchedTemplate || FOLDER_TEMPLATES[studio]);
+  const templateToShow = fetchedTemplate || (hasTemplate ? FOLDER_TEMPLATES[studio] : null);
+  const allLeaves = templateToShow ? collectJobLeaves(templateToShow) : [];
+  const activatedCount = allLeaves.filter(l => slotJobs[l.label]).length;
+
+  return (
+    <div className="flex flex-col gap-5">
+      <div className="grid grid-cols-2 gap-4">
+        {JOBS_SETUP_TABS.map(t => {
+          const Icon = t.icon;
+          const active = innerTab === t.id;
+          return (
+            <button key={t.id} onClick={() => setInnerTab(t.id)}
+              className={`text-left rounded-2xl p-5 border-2 transition-all ${
+                active
+                  ? "border-[#12a0e1] bg-[#12a0e1]/5 shadow-md"
+                  : "border-[#dce4ec] bg-white hover:border-slate-300 hover:shadow-sm"
+              }`}>
+              <div className="flex items-start justify-between mb-3">
+                <div className={`w-10 h-10 rounded-xl bg-gradient-to-br ${t.color} flex items-center justify-center shadow-sm`}>
+                  <Icon className="w-5 h-5 text-white" />
+                </div>
+                {active && (
+                  <div className="w-5 h-5 rounded-full bg-[#12a0e1] flex items-center justify-center shrink-0">
+                    <Check className="w-3 h-3 text-white" />
+                  </div>
+                )}
+              </div>
+              <p className="text-sm font-black text-[#122027] mb-1">{t.label}</p>
+              <p className="text-xs text-[#768994] leading-relaxed">{t.desc}</p>
+            </button>
+          );
+        })}
+      </div>
+
+      {innerTab === "campaign" && (
+    <div className="flex flex-col gap-5">
+      <div className="bg-[#f8fafc] border border-[#dce4ec] rounded-2xl p-4">
+        <p className="text-xs text-[#768994] leading-relaxed">
+          Pick a film and fetch its studio template to see every possible job slot. Nothing is created just
+          from looking — <span className="font-bold text-[#122027]">click a slot</span> to allocate a real job
+          number for it right then and add it to Job Book. Come back to this same page any time to activate
+          more slots as work actually comes in, so you never end up with numbers nobody used.
+        </p>
+      </div>
+
+      <div>
+        <label className="block text-[10px] font-black uppercase tracking-widest text-[#768994] mb-1.5">Studio Template</label>
+        <div className="flex gap-2">
+          {STUDIO_OPTIONS.map(s => {
+            const available = TESTABLE_STUDIOS.has(s);
+            return (
+              <button key={s} disabled={!available}
+                onClick={() => { setStudio(s); setFetchedTemplate(null); setFetchInfo(null); }}
+                className={`px-3 py-2 rounded-xl text-xs font-bold border transition-all ${
+                  studio === s
+                    ? "bg-[#122027] text-white border-[#122027]"
+                    : available
+                      ? "bg-white text-[#122027] border-[#dce4ec] hover:border-[#12a0e1]"
+                      : "bg-slate-50 text-slate-300 border-slate-100 cursor-not-allowed"
+                }`}>
+                {s}{!available && " (soon)"}
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
+      <div className="flex items-center gap-3 flex-wrap">
+        <button onClick={fetchTemplateFromWrike} disabled={fetchingTemplate || !TESTABLE_STUDIOS.has(studio)}
+          className="flex items-center gap-2 px-4 py-2 bg-white border border-[#12a0e1] text-[#12a0e1] hover:bg-[#12a0e1] hover:text-white text-xs font-bold rounded-xl transition-all disabled:opacity-40">
+          {fetchingTemplate ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5" />}
+          {fetchingTemplate ? "Fetching from Wrike…" : `Fetch ${studio} template from Wrike`}
+        </button>
+        {fetchInfo?.error && <span className="text-xs font-bold text-red-500">{fetchInfo.error}</span>}
+        {fetchInfo && !fetchInfo.error && (
+          <span className="text-xs font-bold text-[#1cc1a5]">
+            Loaded “{fetchInfo.rootLabel}” — {fetchInfo.jobCount} job folder{fetchInfo.jobCount === 1 ? "" : "s"}
+          </span>
+        )}
+        {fetchedTemplate && (
+          <span className="text-[10px] font-black uppercase tracking-wider text-[#12a0e1] bg-[#12a0e1]/10 px-2 py-1 rounded-lg">Live Wrike Data</span>
+        )}
+      </div>
+
+      <div>
+        <label className="block text-[10px] font-black uppercase tracking-widest text-[#768994] mb-1.5">Film</label>
+        <StrictSelect value={filmTitle} onChange={v => setFilmTitle(v)}
+          options={films} placeholder="Select a film…" loading={filmsLoading} />
+        {!filmsLoading && films.length === 0 && (
+          <p className="text-xs text-[#768994] mt-1.5">
+            No films yet — add one in the{" "}
+            <button onClick={() => setActiveTab?.("films")} className="text-[#12a0e1] font-bold hover:underline">Films</button> tab first.
+          </p>
+        )}
+      </div>
+
+      {templateToShow && (
+        <>
+          <div className="flex items-center gap-3 flex-wrap">
+            <span className="text-xs font-bold text-[#768994]">
+              {filmTitle.trim()
+                ? `${activatedCount} / ${allLeaves.length} job number${allLeaves.length === 1 ? "" : "s"} activated for “${filmTitle}”`
+                : `${allLeaves.length} job slot${allLeaves.length === 1 ? "" : "s"} in this template — select a film above to activate any of them`}
+            </span>
+            {loadingSlots && <Loader2 className="w-3.5 h-3.5 animate-spin text-[#768994]" />}
+            {activateError && <span className="text-xs font-bold text-red-500">{activateError}</span>}
+          </div>
+
+          <div className="grid grid-cols-2 gap-4">
+            <div className="border border-[#dce4ec] rounded-2xl p-4 max-h-[420px] overflow-y-auto">
+              <p className="text-[10px] font-black uppercase tracking-widest text-[#768994] mb-2">
+                Folder Preview{fetchedTemplate ? " · live from Wrike" : ""}
+              </p>
+              {renderTree(templateToShow)}
+            </div>
+            <div className="border border-[#dce4ec] rounded-2xl p-4 max-h-[420px] overflow-y-auto">
+              <p className="text-[10px] font-black uppercase tracking-widest text-[#768994] mb-2">Job Slots</p>
+              <div className="flex flex-col gap-1.5">
+                {allLeaves.map(l => {
+                  const activated = slotJobs[l.label];
+                  const isActivating = activatingSlot === l.label;
+                  const code = activated?.job_number.match(/XY\d+/)?.[0];
+                  const canActivate = filmTitle.trim() && !activated && !isActivating;
+                  return (
+                    <button key={l.label} disabled={!canActivate}
+                      onClick={() => activateSlot(l)}
+                      title={!filmTitle.trim() && !activated ? "Select a film above first" : ""}
+                      className={`flex items-center justify-between text-[11px] border-b border-[#f0f4f8] pb-1.5 pt-0.5 text-left transition-colors ${
+                        canActivate ? "hover:bg-[#12a0e1]/5 rounded-lg -mx-1 px-1" : "cursor-default"
+                      }`}>
+                      <span className={activated ? "text-[#768994]" : "text-[#122027] font-bold"}>{l.description}</span>
+                      {activated ? (
+                        <span className="font-mono font-bold text-[#12a0e1]">{code}</span>
+                      ) : isActivating ? (
+                        <Loader2 className="w-3.5 h-3.5 animate-spin text-[#12a0e1]" />
+                      ) : (
+                        <span className={`text-[9px] font-black uppercase tracking-wider px-2 py-0.5 rounded-full ${
+                          filmTitle.trim() ? "text-[#12a0e1] bg-[#12a0e1]/10" : "text-[#b0bec5] bg-slate-100"
+                        }`}>Activate</span>
+                      )}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-3">
+            <button onClick={() => setActiveTab?.("jobs")}
+              className="px-4 py-2.5 bg-[#122027] hover:bg-[#1a2e38] text-white text-sm font-bold rounded-2xl transition-all">
+              View in Job Book
+            </button>
+            <button disabled
+              title="Coming soon — will use the Wrike API to create the folder automatically when a slot is activated"
+              className="flex items-center gap-2 px-5 py-2.5 bg-slate-100 text-slate-400 text-sm font-bold rounded-2xl cursor-not-allowed">
+              <FolderPlus className="w-3.5 h-3.5" /> Push Folders to Wrike (Soon)
+            </button>
+          </div>
+        </>
+      )}
+    </div>
+      )}
+
+      {innerTab === "custom" && (
+        <div>
+          {customCreated == null ? (
+            <JobForm clients={clients} films={films} categories={categories} descs={descs}
+              onSave={handleCreateCustomJob} saving={customSaving} submitLabel="Create Job" layout="inline" />
+          ) : (
+            <div className="flex items-center gap-3 py-4">
+              <span className="flex items-center gap-2 px-4 py-2.5 bg-[#1cc1a5]/10 text-[#1cc1a5] text-sm font-bold rounded-2xl">
+                <CheckCircle2 className="w-3.5 h-3.5" /> Created {customCreated} in Job Book
+              </span>
+              <button onClick={() => setActiveTab?.("jobs")}
+                className="px-4 py-2.5 bg-[#122027] hover:bg-[#1a2e38] text-white text-sm font-bold rounded-2xl transition-all">
+                View in Job Book
+              </button>
+              <button onClick={() => setCustomCreated(null)}
+                className="px-4 py-2.5 bg-white border border-[#dce4ec] hover:border-[#12a0e1] text-[#122027] text-sm font-bold rounded-2xl transition-all">
+                Add Another Job
+              </button>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ── Job Book Section ───────────────────────────────────────────────────────────
-function JobBookSection() {
+function JobBookSection({ setActiveTab }) {
   const [jobs, setJobs]         = useState([]);
   const [loading, setLoading]   = useState(true);
   const [search, setSearch]     = useState("");
@@ -984,6 +1573,14 @@ function JobBookSection() {
     setJobs(prev => prev.map(j => j.id === job.id ? { ...j, job_done: !j.job_done } : j));
   };
 
+  // Click cycles Inactive -> Active -> Closed -> Inactive, matching the workflow:
+  // new jobs start Inactive, go Active once billing info is filled in, Closed when done.
+  const cycleStatus = async (job) => {
+    const next = JOB_STATUSES[(JOB_STATUSES.indexOf(job.status || "Inactive") + 1) % JOB_STATUSES.length];
+    await supabase.from("jobs").update({ status: next }).eq("id", job.id);
+    setJobs(prev => prev.map(j => j.id === job.id ? { ...j, status: next } : j));
+  };
+
   const deleteJob = async (id) => {
     if (!confirm("Delete this job?")) return;
     await supabase.from("jobs").delete().eq("id", id);
@@ -1017,9 +1614,9 @@ function JobBookSection() {
             className="w-full pl-9 pr-4 py-2 text-sm border border-[#dce4ec] rounded-xl outline-none focus:border-[#12a0e1] bg-white"
           />
         </div>
-        <button onClick={() => { setEditJob(null); setShowModal(true); }}
+        <button onClick={() => setActiveTab?.("jobsSetup")}
           className="flex items-center gap-1.5 px-4 py-2 bg-[#12a0e1] hover:bg-[#0d8bc4] text-white text-sm font-bold rounded-xl transition-all shrink-0">
-          <Plus className="w-4 h-4" /> New Job
+          <Plus className="w-4 h-4" /> Add Jobs
         </button>
       </div>
 
@@ -1051,7 +1648,7 @@ function JobBookSection() {
           <table className="w-full text-xs">
             <thead>
               <tr className="bg-slate-50 border-b border-[#dce4ec]">
-                {["Job #","Date","Client","Office","P/D","Film Title","Project Description","Costs","Ordered By","Billed To","Done",""].map(h => (
+                {["Job #","Date","Client","Office","P/D","Film Title","Project Description","Costs","Ordered By","Billed To","Status","Done",""].map(h => (
                   <th key={h} className="px-3 py-2.5 text-left text-[9px] font-black uppercase tracking-widest text-[#768994] whitespace-nowrap">
                     {h}
                   </th>
@@ -1060,7 +1657,7 @@ function JobBookSection() {
             </thead>
             <tbody>
               {paginated.length === 0 ? (
-                <tr><td colSpan={12} className="text-center py-12 text-[#768994] italic">No jobs found</td></tr>
+                <tr><td colSpan={13} className="text-center py-12 text-[#768994] italic">No jobs found</td></tr>
               ) : paginated.map(j => (
                 <tr key={j.id} className={`border-b border-[#dce4ec] last:border-0 hover:bg-slate-50/50 transition-colors ${j.job_done ? "opacity-50" : ""}`}>
                   <td className="px-3 py-2.5">
@@ -1083,6 +1680,12 @@ function JobBookSection() {
                   <td className="px-3 py-2.5 whitespace-nowrap font-bold text-[#122027]">{formatCost(j)}</td>
                   <td className="px-3 py-2.5 text-[#768994]">{j.ordered_by || "—"}</td>
                   <td className="px-3 py-2.5 text-[#768994]">{j.billed_to || "—"}</td>
+                  <td className="px-3 py-2.5">
+                    <button onClick={() => cycleStatus(j)} title="Click to change status"
+                      className={`text-[9px] font-black px-2 py-1 rounded-full transition-colors ${STATUS_BADGE[j.status || "Inactive"]}`}>
+                      {j.status || "Inactive"}
+                    </button>
+                  </td>
                   <td className="px-3 py-2.5">
                     <button onClick={() => toggleDone(j)} title="Toggle done">
                       <div className={`w-4 h-4 rounded border-2 flex items-center justify-center transition-colors ${j.job_done ? "bg-[#1cc1a5] border-[#1cc1a5]" : "border-[#dce4ec] hover:border-[#1cc1a5]"}`}>
@@ -1149,7 +1752,18 @@ function JobsFeedSection() {
 
     const tasks = monthFilter
       ? (allTasks || []).filter(t => (toIso(t.date) || "").startsWith(monthFilter))
-      : allTasks;
+      : (allTasks || []);
+
+    // Sort by the job's actual date (not by row id / sync time) — id only
+    // reflects when a row was pulled into the app, which can be well after
+    // the work date it's tagged with. Rows without a parseable date fall
+    // to the bottom; ties break by most-recently-synced first.
+    tasks.sort((a, b) => {
+      const da = toIso(a.date) || "";
+      const db = toIso(b.date) || "";
+      if (da !== db) return db.localeCompare(da);
+      return (b.id || 0) - (a.id || 0);
+    });
 
     if (!tasks?.length) { setEntries([]); setLoading(false); return; }
 
@@ -1599,16 +2213,14 @@ function PeopleSection() {
   };
 
   const syncFromWrike = async () => {
-    const token = localStorage.getItem("wrike_personal_token");
-    if (!token) { setSyncMsg("No Wrike token found — log in with your personal token first."); return; }
+    if (!localStorage.getItem("wrike_user_id")) { setSyncMsg("Wrike not connected — connect it in Profile → Settings first."); return; }
     setSyncing(true);
     setSyncMsg("");
     try {
       // Fetch contacts and groups in parallel
-      const headers = { Authorization: `Bearer ${token}` };
       const [contactsRes, groupsRes] = await Promise.all([
-        fetch("https://www.wrike.com/api/v4/contacts", { headers }),
-        fetch("https://www.wrike.com/api/v4/groups", { headers }),
+        fetch("/api/wrike/contacts"),
+        fetch("/api/wrike/groups"),
       ]);
       if (!contactsRes.ok) throw new Error(`Wrike contacts error ${contactsRes.status}`);
 
@@ -1850,7 +2462,8 @@ export default function Management({ wrikeUserId }) {
           </div>
 
           {activeTab === "overview"   && <OverviewSection setActiveTab={setActiveTab} />}
-          {activeTab === "jobs"       && <JobBookSection />}
+          {activeTab === "jobsSetup"  && <JobsSetupSection setActiveTab={setActiveTab} />}
+          {activeTab === "jobs"       && <JobBookSection setActiveTab={setActiveTab} />}
           {activeTab === "feed"       && <JobsFeedSection />}
           {activeTab === "people"     && <PeopleSection />}
           {activeTab === "films"      && <SimpleListSection table="films" labelField="title" label="Films" placeholder="Film title…" />}

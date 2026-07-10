@@ -164,17 +164,15 @@ function AttachmentThumb({ attachment, large = false, onPreview }) {
 
   // The /tasks/{id}/attachments objects don't carry a usable `url`; build the
   // documented download endpoint from the attachment id instead.
-  const downloadUrl = `https://www.wrike.com/api/v4/attachments/${attachment.id}/download`;
+  const downloadUrl = `/api/wrike/attachments/${attachment.id}/download`;
 
   const handleOpen = async (e) => {
     e.preventDefault();
     e.stopPropagation();
     if (loading) return;
-    const token = localStorage.getItem("wrike_personal_token");
-    if (!token) return;
     setLoading(true);
     try {
-      const res = await fetch(downloadUrl, { headers: { Authorization: `Bearer ${token}` } });
+      const res = await fetch(downloadUrl);
       if (!res.ok) throw new Error("HTTP " + res.status);
       const raw = await res.blob();
       // Re-type the blob so the browser knows how to render it
@@ -208,7 +206,7 @@ function AttachmentThumb({ attachment, large = false, onPreview }) {
   );
 }
 
-export default function TodaysList({ wrikeData, triggerToast: _triggerToast, lastSynced, isSyncing: isGlobalSyncing }) {
+export default function TodaysList({ wrikeData, triggerToast: _triggerToast, lastSynced, isSyncing: isGlobalSyncing, syncNow }) {
   const triggerToast = _triggerToast ?? ((msg) => console.warn("Toast:", msg));
 
   const [campaigns, setCampaigns] = useState(INITIAL_CAMPAIGNS);
@@ -274,8 +272,7 @@ export default function TodaysList({ wrikeData, triggerToast: _triggerToast, las
   // Scoped to assigned tasks (~30) so we can fire one request per task without
   // worrying about rate limits — no reliance on unreliable hasAttachments field.
   useEffect(() => {
-    const token = localStorage.getItem("wrike_personal_token");
-    if (!token) return;
+    if (!localStorage.getItem("wrike_user_id")) return;
 
     const boardTasks = Object.values(assignments).flat();
     const seen = new Set();
@@ -291,12 +288,11 @@ export default function TodaysList({ wrikeData, triggerToast: _triggerToast, las
     Promise.all(
       unique.map(boardTask => {
         const fullTask = wrikeData?.find(t => t.id === boardTask.id) || boardTask;
-        return fetch(
-          `https://www.wrike.com/api/v4/tasks/${boardTask.id}/attachments`,
-          { headers: { Authorization: `Bearer ${token}` } }
-        )
+        return fetch(`/api/wrike/tasks/${boardTask.id}/attachments`)
           .then(r => r.json())
-          .then(data => ({ task: fullTask, attachments: data.data || [] }))
+          // Only PDFs matter here (delivery specs) — images/docs/etc. are
+          // dropped before they ever reach state or render a thumbnail.
+          .then(data => ({ task: fullTask, attachments: (data.data || []).filter(a => attachmentKind(a) === "pdf") }))
           .catch(() => ({ task: fullTask, attachments: [] }));
       })
     ).then(results => {
@@ -351,8 +347,7 @@ export default function TodaysList({ wrikeData, triggerToast: _triggerToast, las
   };
 
   const handleLiteSync = async () => {
-    const token = localStorage.getItem("wrike_personal_token");
-    if (!token) { triggerToast("No Wrike token found."); return; }
+    if (!localStorage.getItem("wrike_user_id")) { triggerToast("Wrike not connected."); return; }
     let taskIds = [];
     campaigns.forEach((camp) => camp.subtasks.forEach((t) => {
       if (t.id && !String(t.id).startsWith("task-")) taskIds.push(t.id);
@@ -367,9 +362,7 @@ export default function TodaysList({ wrikeData, triggerToast: _triggerToast, las
       for (let i = 0; i < taskIds.length; i += 100) chunks.push(taskIds.slice(i, i + 100));
       let fresh = [];
       for (const chunk of chunks) {
-        const res = await fetch(`https://www.wrike.com/api/v4/tasks/${chunk.join(",")}`, {
-          headers: { Authorization: `Bearer ${token}` },
-        });
+        const res = await fetch(`/api/wrike/tasks/${chunk.join(",")}`);
         const json = await res.json();
         if (json.data) fresh = [...fresh, ...json.data];
       }
@@ -398,6 +391,13 @@ export default function TodaysList({ wrikeData, triggerToast: _triggerToast, las
         return next;
       });
       triggerToast("Board synced with live Wrike statuses!", "success");
+      // This patch only updates this board's local state — the shared Wrike
+      // cache (wrikeData) still has the old statuses until its own sync
+      // runs. Without this, switching timeframe tabs calls handleAutoAssign,
+      // which rebuilds straight from that stale cache and silently reverts
+      // everything back to pre-sync statuses. Kick a real (forced) refresh
+      // in the background so the cache — and any later rebuild — catches up.
+      syncNow?.();
     } catch (err) {
       triggerToast("Lite Sync failed: " + err.message);
     } finally {
@@ -421,8 +421,15 @@ export default function TodaysList({ wrikeData, triggerToast: _triggerToast, las
       minDate = new Date(now); minDate.setDate(now.getDate() + 1);
       maxDate = new Date(minDate); maxDate.setHours(23, 59, 59, 999);
     } else {
-      minDate = new Date(now); minDate.setDate(now.getDate() + 2);
-      maxDate = new Date(now); maxDate.setDate(now.getDate() + 8); maxDate.setHours(23, 59, 59, 999);
+      // Snap to the actual next Mon–Fri work week (matching the Timesheeter
+      // tab's own Mon–Fri convention), not a rolling 7-day window — a fixed
+      // +2..+8 offset drifts off the real calendar week depending on which
+      // weekday "today" is, sometimes grabbing days still in *this* week
+      // and cutting off days that are genuinely part of next week.
+      const dayOfWeek = now.getDay(); // 0 = Sunday .. 6 = Saturday
+      const daysUntilNextMonday = ((8 - dayOfWeek) % 7) || 7;
+      minDate = new Date(now); minDate.setDate(now.getDate() + daysUntilNextMonday);
+      maxDate = new Date(minDate); maxDate.setDate(minDate.getDate() + 4); maxDate.setHours(23, 59, 59, 999);
     }
     wrikeData.forEach((task) => {
       if (task.status !== "Active") return;

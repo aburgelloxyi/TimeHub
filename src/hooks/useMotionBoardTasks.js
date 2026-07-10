@@ -140,8 +140,14 @@ export function useMotionBoardTasks() {
         if (cancelled) return;
         setBoardTasks(enriched);
 
-        if (enriched.length > 0) {
-          const rows = enriched.map((t) => ({ id: t.id, task_data: t, updated_date: t.updatedDate ?? null }));
+        const wrikeUserId = localStorage.getItem("wrike_user_id");
+        if (enriched.length > 0 && wrikeUserId) {
+          const rows = enriched.map((t) => ({
+            id: t.id,
+            wrike_user_id: wrikeUserId,
+            task_data: t,
+            updated_date: t.updatedDate ?? null,
+          }));
           supabase.from("wrike_tasks_cache").upsert(rows).then(({ error: upsertError }) => {
             if (upsertError) console.warn("[MotionBoard] shared cache upsert failed", upsertError);
           });

@@ -29,7 +29,7 @@ import {
   X,
 } from "lucide-react";
 import "./Timesheeter.css";
-import PillNav from "./components/NavPill";
+import Rail from "./components/shared/Rail";
 import ThemeToggle from "./components/shared/ThemeToggle";
 import ToastHost from "./components/shared/ToastHost";
 import { notify } from "./lib/toast";
@@ -435,12 +435,7 @@ export default function App() {
   return (
     <MotionConfig reducedMotion="user">
     <div className="min-h-screen bg-slate-100 transition-colors duration-300">
-      <PillNav
-        activePage={activePage}
-        setActivePage={setActivePage}
-        hubSection={profileSection}
-        setHubSection={setProfileSection}
-      />
+      <Rail activePage={activePage} setActivePage={setActivePage} />
 
       {/* ── Onboarding modal ─────────────────────────────────────────────── */}
       {showOnboarding && (
@@ -564,7 +559,7 @@ export default function App() {
           and pt-3 (not mt-3) so the margin can't collapse through the app
           root and expose the document canvas as a dark strip */}
       {!hasToken && activePage !== "profile" && activePage !== "home" && (
-        <div className="mx-auto max-w-[1400px] px-4 sm:px-6 pt-3">
+        <div className="pl-16 mx-auto max-w-[1400px] px-4 sm:px-6 pt-3">
           <div className="bg-amber-50 border border-amber-200 rounded-2xl px-4 py-3 flex items-center gap-3">
             <Key className="w-4 h-4 text-amber-600 shrink-0" />
             <p className="text-xs font-bold text-amber-800 flex-1">
@@ -708,7 +703,7 @@ export default function App() {
           its own data independently (useMotionBoardTasks) rather than from
           globalWrikeData below; wrikeData is only passed through for the
           task detail modal's lookups. */}
-      <div className={activePage === "todayslist" ? "block" : "hidden"}>
+      <div className={`pl-16 ${activePage === "todayslist" ? "block" : "hidden"}`}>
         <TodaysList
           wrikeData={globalWrikeData}
           triggerToast={triggerToast}
@@ -740,6 +735,7 @@ export default function App() {
             initial="initial"
             animate="animate"
             exit="exit"
+            className={activePage === "home" ? "" : "pl-16"}
           >
             {activePage === "home" && (
               <Home

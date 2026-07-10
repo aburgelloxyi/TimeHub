@@ -23,7 +23,7 @@ import {
   ExternalLink,
 } from "lucide-react";
 import { supabase } from "../lib/supabaseClient";
-import { PAGE_GRADIENTS } from "../lib/pageGradients";
+import PageHeader from "./shared/PageHeader";
 import { useTasks } from "../hooks/useTasks";
 import { useWrikeUser } from "../hooks/useWrikeUser";
 import { startWrikeOAuth, disconnectWrike, fetchWrikeOAuthStatus } from "../lib/wrikeApi";
@@ -1212,12 +1212,6 @@ export default function Profile({ wrikeData, onTokenChange, activeSection: activ
       });
   }, [wrikeUser?.id]);
 
-  const initials = useMemo(() => {
-    const f = profile?.first_name || wrikeUser?.firstName || "";
-    const l = profile?.last_name || "";
-    return `${f[0] || ""}${l[0] || ""}`.toUpperCase() || "?";
-  }, [profile, wrikeUser]);
-
   const displayName = profile
     ? `${profile.first_name || ""} ${profile.last_name || ""}`.trim()
     : wrikeUser?.firstName || "Your profile";
@@ -1239,70 +1233,34 @@ export default function Profile({ wrikeData, onTokenChange, activeSection: activ
           </div>
         </div>
       )}
-      <div className="max-w-[1400px] mx-auto px-4 sm:px-6 pt-8 space-y-6">
-        {/* Hero header — gradient-filled to match the Home screen's "Profile
-            hub" row/wash color (PAGE_GRADIENTS.profile), so the exit-wash
-            transition from Home resolves directly into this header instead
-            of cutting to an unrelated white card. */}
-        <div className={`bg-gradient-to-br ${PAGE_GRADIENTS.profile} rounded-[2rem] overflow-hidden shadow-sm shadow-blue-600/20`}>
-          <div className="p-6 sm:p-8 flex flex-col sm:flex-row items-start sm:items-center gap-6">
-            {/* Avatar */}
-            <div className="relative shrink-0">
-              <div className="w-20 h-20 rounded-2xl bg-white/15 border border-white/20 flex items-center justify-center text-white text-2xl font-black backdrop-blur-sm">
-                {initials}
-              </div>
-              {/* Active dot */}
-              <div className="absolute -bottom-1 -right-1 w-4 h-4 rounded-full bg-[#1cc1a5] border-2 border-white" />
-            </div>
-
-            {/* Identity */}
-            <div className="flex-1 min-w-0">
-              <h1 className="text-3xl font-black tracking-tight text-white">
-                {displayName}
-              </h1>
-              <div className="flex flex-wrap items-center gap-2.5 mt-2">
-                {profile?.email && (
-                  <span className="text-xs text-white/80 font-medium">
-                    {profile.email}
-                  </span>
-                )}
-                {wrikeUser?.id && (
-                  <span className="text-[10px] font-black text-white/90 bg-white/15 px-2.5 py-1 rounded-full uppercase tracking-wider">
-                    Wrike · {wrikeUser.id.slice(0, 8)}…
-                  </span>
-                )}
-                {profile?.updated_at && (
-                  <span className="text-[10px] font-black text-white bg-white/15 px-2.5 py-1 rounded-full uppercase tracking-wider flex items-center gap-1">
-                    <div className="w-1.5 h-1.5 rounded-full bg-[#1cc1a5]" />{" "}
-                    Active
-                  </span>
-                )}
+      <PageHeader pageId="profile" icon={User} title={displayName} subtitle={profile?.email}>
+        {wrikeUser?.id && (
+          <span className="text-[10px] font-black text-white/90 bg-white/15 border border-white/20 px-2.5 py-1 rounded-full uppercase tracking-wider">
+            Wrike · {wrikeUser.id.slice(0, 8)}…
+          </span>
+        )}
+        {profile?.updated_at && (
+          <span className="text-[10px] font-black text-white bg-white/15 border border-white/20 px-2.5 py-1 rounded-full uppercase tracking-wider flex items-center gap-1">
+            <span className="w-1.5 h-1.5 rounded-full bg-[#1cc1a5]" /> Active
+          </span>
+        )}
+        <div className="flex gap-4">
+          {[
+            { label: "Tasks", value: tasks.length },
+            { label: "Time", value: formatDurationText(totalSeconds) },
+            { label: "All-time", value: userStats.fetched ? userStats.allTime : "—" },
+          ].map(({ label, value }) => (
+            <div key={label} className="text-center">
+              <div className="text-xl font-black text-white">{value}</div>
+              <div className="text-[10px] font-black text-white/70 uppercase tracking-wider mt-0.5">
+                {label}
               </div>
             </div>
-
-            {/* Quick stats */}
-            <div className="flex gap-4 shrink-0">
-              {[
-                { label: "Tasks", value: tasks.length },
-                { label: "Time", value: formatDurationText(totalSeconds) },
-                {
-                  label: "All-time",
-                  value: userStats.fetched ? userStats.allTime : "—",
-                },
-              ].map(({ label, value }) => (
-                <div key={label} className="text-center">
-                  <div className="text-xl font-black text-white">
-                    {value}
-                  </div>
-                  <div className="text-[10px] font-black text-white/70 uppercase tracking-wider mt-0.5">
-                    {label}
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
+          ))}
         </div>
+      </PageHeader>
 
+      <div className="max-w-[1400px] mx-auto px-4 sm:px-6 pt-8 space-y-6">
         {/* No-token banner */}
         {!hasToken && (
           <div className="bg-amber-50 border border-amber-200 rounded-2xl p-4 flex items-center gap-4">

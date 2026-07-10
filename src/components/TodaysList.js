@@ -10,6 +10,7 @@ import {
 import { TERRITORY_FLAGS, MOTION_TEAM_NAME_MAP } from "../constants";
 import { supabase } from "../lib/supabaseClient";
 import { useMotionBoardTasks } from "../hooks/useMotionBoardTasks";
+import PageHeader, { pageHeaderActionClass } from "./shared/PageHeader";
 import TaskDetailModal, { FilePreviewLightbox } from "./TaskDetailModal";
 
 const TEAM_MEMBERS = ["Antonio", "Aaron", "Jacqui", "Maria", "Nicholas", "Luke", "Turk"];
@@ -401,59 +402,40 @@ export default function TodaysList({ wrikeData, triggerToast: _triggerToast }) {
 
   return (
     <div className="min-h-screen bg-slate-100 text-[#122027] font-sans selection:bg-[#12a0e1]/30 selection:text-[#122027]">
+      <PageHeader pageId="todayslist" icon={LayoutList} title={`${timeframe}'s List`} subtitle="Motioners Tasks Allocation">
+        <div className="flex bg-white/15 border border-white/20 backdrop-blur-sm p-1.5 rounded-xl">
+          {TIMEFRAMES.map((tf) => (
+            <button
+              key={tf}
+              onClick={() => { setTimeframe(tf); handleAutoAssign(tf); }}
+              className={`px-4 py-2 text-xs font-black uppercase tracking-wider rounded-lg transition-all ${
+                timeframe === tf
+                  ? "bg-white text-[#122027] shadow-sm"
+                  : "text-white/80 hover:text-white hover:bg-white/10"
+              }`}
+            >
+              {tf}
+            </button>
+          ))}
+        </div>
+        {/* Last saved indicator */}
+        {lastSaved && (() => {
+          const mins = Math.floor((Date.now() - new Date(lastSaved).getTime()) / 60000);
+          const label = mins < 1 ? "just now" : mins < 60 ? `${mins}m ago` : `${Math.floor(mins/60)}h ago`;
+          return (
+            <span className="text-[10px] font-bold text-white/80 flex items-center gap-1">
+              <span className={`w-1.5 h-1.5 rounded-full ${mins < 5 ? "bg-[#1cc1a5]" : mins < 30 ? "bg-amber-300" : "bg-white/40"}`} />
+              Saved {label}
+            </span>
+          );
+        })()}
+        <button onClick={() => handleAutoAssign(timeframe)} className={pageHeaderActionClass}>
+          <LayoutList className="w-4 h-4" />
+          Auto-Assign {timeframe}
+        </button>
+      </PageHeader>
+
       <div className="max-w-[1800px] mx-auto px-4 sm:px-6 pt-8">
-
-        {/* Header */}
-        <header className="bg-white shadow-sm border border-[#dce4ec] rounded-[2rem] p-6 sm:px-8 flex flex-col xl:flex-row items-start xl:items-center justify-between gap-5 relative overflow-hidden">
-          <div className="flex items-center gap-4">
-            <div className="bg-gradient-to-br from-[#12a0e1] to-[#1cc1a5] p-3.5 rounded-2xl text-white shadow-lg shadow-[#12a0e1]/20">
-              <CalendarDays className="w-8 h-8" />
-            </div>
-            <div>
-              <h1 className="text-3xl font-black text-[#122027] tracking-tight">{timeframe}'s List</h1>
-              <p className="text-[#768994] text-sm font-medium mt-0.5">Motioners Tasks Allocation</p>
-            </div>
-          </div>
-          <div className="flex flex-col lg:flex-row gap-4 lg:items-center w-full xl:w-auto">
-            <div className="flex bg-slate-100/50 p-1.5 rounded-xl border border-[#dce4ec]">
-              {TIMEFRAMES.map((tf) => (
-                <button
-                  key={tf}
-                  onClick={() => { setTimeframe(tf); handleAutoAssign(tf); }}
-                  className={`px-4 py-2 text-xs font-black uppercase tracking-wider rounded-lg transition-all ${
-                    timeframe === tf
-                      ? "bg-white text-[#12a0e1] shadow-sm ring-1 ring-black/5"
-                      : "text-[#768994] hover:text-[#122027] hover:bg-white/40"
-                  }`}
-                >
-                  {tf}
-                </button>
-              ))}
-            </div>
-            <div className="h-6 w-px bg-[#dce4ec] hidden lg:block" />
-            <div className="flex flex-col sm:flex-row gap-3">
-              {/* Last saved indicator */}
-              {lastSaved && (() => {
-                const mins = Math.floor((Date.now() - new Date(lastSaved).getTime()) / 60000);
-                const label = mins < 1 ? "just now" : mins < 60 ? `${mins}m ago` : `${Math.floor(mins/60)}h ago`;
-                return (
-                  <span className="text-[10px] font-bold text-[#768994] flex items-center gap-1">
-                    <span className={`w-1.5 h-1.5 rounded-full ${mins < 5 ? "bg-[#1cc1a5]" : mins < 30 ? "bg-amber-400" : "bg-slate-300"}`} />
-                    Saved {label}
-                  </span>
-                );
-              })()}
-              <button
-                onClick={() => handleAutoAssign(timeframe)}
-                className="flex items-center justify-center gap-2 bg-[#122027] hover:bg-slate-800 text-white px-6 py-3 rounded-xl font-bold transition-all shadow-sm active:scale-95"
-              >
-                <LayoutList className="w-4 h-4" />
-                Auto-Assign {timeframe}
-              </button>
-            </div>
-          </div>
-        </header>
-
         {/* Stats bar */}
         <div className="mt-4 flex gap-3 flex-wrap">
           <div className="bg-white border border-[#dce4ec] rounded-2xl px-4 py-3 flex items-center gap-3 shadow-sm min-w-[110px]">

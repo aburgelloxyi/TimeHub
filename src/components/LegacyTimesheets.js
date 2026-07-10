@@ -25,6 +25,7 @@ import {
   Plus,
   Layers,
   Calendar,
+  Database,
 } from "lucide-react";
 import {
   DEFAULT_JOBS,
@@ -35,6 +36,7 @@ import {
   FILM_MAPPINGS,
 } from "../constants.js";
 import { COLUMNS, DAYS, TIME_OPTIONS, getDarkTagStyle } from "./legacy/legacyConstants";
+import PageHeader, { pageHeaderActionClass } from "./shared/PageHeader";
 import TableSearchableSelect from "./legacy/TableSearchableSelect";
 
 export default function LegacyTimesheet({ wrikeData, isAdmin = false }) {
@@ -1823,51 +1825,26 @@ export default function LegacyTimesheet({ wrikeData, isAdmin = false }) {
         </div>
       )}
 
-      {/* --- STANDARD UI --- */}
-      <div className="max-w-[1600px] mx-auto bg-white shadow-2xl rounded-2xl relative min-h-[calc(100vh-10rem)] flex flex-col border border-slate-200">
-        {/* --- MODERN HEADER --- */}
-        <div className="bg-slate-900 text-white p-6 flex justify-between items-center border-b border-slate-800 rounded-t-2xl">
-          <div>
-            <div className="flex items-center gap-4 mb-1">
-              <h1 className="text-2xl font-black tracking-tight text-white">
-                Weekly Timesheet
-              </h1>
-              <span className="text-[13px] font-bold text-slate-400 bg-slate-800 px-3 py-1 rounded-full">
-                {weekDateRange}
-              </span>
-            </div>
-            <div className="text-[13px] text-slate-300 font-medium flex items-center gap-4 mt-2">
-              <div className="flex items-center gap-2">
-                <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
-                Welcome Back, {wrikeFullName ? wrikeFullName : "Loading..."}
-              </div>
-
-              {wrikeUserId && (
-                <button
-                  onClick={() => handleSyncMyJobs()}
-                  disabled={isSyncingJobs}
-                  className="flex items-center gap-1.5 bg-slate-800 hover:bg-slate-700 text-emerald-400 px-3 py-1 rounded-lg text-[11px] font-bold transition-all border border-slate-700 active:scale-95 disabled:opacity-50"
-                >
-                  <RefreshCw
-                    className={`w-3.5 h-3.5 ${
-                      isSyncingJobs ? "animate-spin text-emerald-500" : ""
-                    }`}
-                  />
-                  {isSyncingJobs ? "Syncing..." : "Sync My Jobs"}
-                </button>
-              )}
-            </div>
-          </div>
-
-          <div className="text-right">
-            <img
-              src="https://timesheet.xyi.com/img/xyi_logo_banner.png"
-              alt="XYi Design"
-              className="h-10 object-contain drop-shadow-md"
-            />
-          </div>
+      {/* --- HEADER --- */}
+      <PageHeader pageId="legacy" icon={Database} title="Weekly Timesheet" subtitle={weekDateRange}>
+        <div className="flex items-center gap-2 text-[13px] text-white/85 font-medium">
+          <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse shrink-0" />
+          Welcome Back, {wrikeFullName ? wrikeFullName : "Loading..."}
         </div>
+        {wrikeUserId && (
+          <button
+            onClick={() => handleSyncMyJobs()}
+            disabled={isSyncingJobs}
+            className={pageHeaderActionClass}
+          >
+            <RefreshCw className={`w-3.5 h-3.5 ${isSyncingJobs ? "animate-spin" : ""}`} />
+            {isSyncingJobs ? "Syncing..." : "Sync My Jobs"}
+          </button>
+        )}
+      </PageHeader>
 
+      {/* --- STANDARD UI --- */}
+      <div className="max-w-[1600px] mx-auto bg-white shadow-2xl rounded-2xl relative min-h-[calc(100vh-10rem)] flex flex-col border border-slate-200 mt-4">
         {/* --- MODERN TABS --- */}
         <div className="flex px-4 pt-4 bg-slate-50 border-b border-slate-200 gap-2">
           {DAYS.map((day) => {

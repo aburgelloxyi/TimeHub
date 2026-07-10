@@ -1829,10 +1829,10 @@ export default function LegacyTimesheet({ wrikeData, isAdmin = false }) {
       {/* Everything below the full-bleed header gets the page's horizontal
           gutter + top/bottom spacing — the header itself must stay outside
           any padded container to remain edge-to-edge. */}
-      <div className="px-4 pt-8 pb-4">
+      <div className="px-4 sm:px-6 pt-3 pb-4">
         {/* New week banner */}
         {newWeekBanner && (
-          <div className="max-w-[1600px] mx-auto mb-3 flex items-center gap-3 px-4 py-3 bg-emerald-50 border border-emerald-200 rounded-2xl shadow-sm">
+          <div className="max-w-[1800px] mx-auto mb-3 flex items-center gap-3 px-4 py-3 bg-emerald-50 border border-emerald-200 rounded-2xl shadow-sm">
             <span className="text-lg">🗓️</span>
             <div className="flex-1">
               <span className="font-black text-emerald-900 text-sm">New week!</span>
@@ -1848,7 +1848,7 @@ export default function LegacyTimesheet({ wrikeData, isAdmin = false }) {
         )}
 
       {/* --- STANDARD UI --- */}
-      <div className="max-w-[1600px] mx-auto bg-white shadow-2xl rounded-2xl relative min-h-[calc(100vh-10rem)] flex flex-col border border-slate-200">
+      <div className="max-w-[1800px] mx-auto bg-white shadow-2xl rounded-2xl relative min-h-[calc(100vh-10rem)] flex flex-col border border-slate-200">
         {/* --- MODERN TABS --- */}
         <div className="flex px-4 pt-4 bg-slate-50 border-b border-slate-200 gap-2">
           {DAYS.map((day) => {

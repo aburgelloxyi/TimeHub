@@ -80,13 +80,16 @@ async function fetchFolderDictionary() {
 
 async function fetchBoardTasks(teamIds, dueDateEnd) {
   const dueDateFilter = encodeURIComponent(JSON.stringify({ end: toWrikeDate(dueDateEnd) }));
-  const responsibleParams = teamIds.map((id) => `responsibles=${encodeURIComponent(id)}`).join("&");
+  // Wrike wants a JSON array here, not repeated query params — same style as
+  // its other list/object filters (fields=[...], dueDate={...}). Confirmed via
+  // a 400 "Parameter 'responsibles' value is invalid" on the repeated form.
+  const responsiblesFilter = encodeURIComponent(JSON.stringify(teamIds));
   let rawTasks = [];
   let nextPageToken = null;
   while (true) {
     const url = nextPageToken
       ? `/api/wrike/tasks?nextPageToken=${nextPageToken}`
-      : `/api/wrike/tasks?status=Active&dueDate=${dueDateFilter}&${responsibleParams}&fields=${FIELDS}&pageSize=1000`;
+      : `/api/wrike/tasks?status=Active&dueDate=${dueDateFilter}&responsibles=${responsiblesFilter}&fields=${FIELDS}&pageSize=1000`;
     const res = await fetch(url);
     if (!res.ok) {
       console.warn("[MotionBoard] tasks fetch failed", res.status, await res.text().catch(() => ""));

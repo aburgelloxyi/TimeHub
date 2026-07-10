@@ -1333,7 +1333,7 @@ export default function LegacyTimesheet({ wrikeData, isAdmin = false }) {
   }`;
 
   return (
-    <div className="min-h-screen bg-slate-100 px-4 pt-8 pb-4 font-sans selection:bg-[#12a0e1]/30">
+    <div className="min-h-screen bg-slate-100 font-sans selection:bg-[#12a0e1]/30">
       {/* Toast */}
       {toast.show && (
         <div
@@ -1808,23 +1808,6 @@ export default function LegacyTimesheet({ wrikeData, isAdmin = false }) {
         </div>
       )}
 
-      {/* New week banner */}
-      {newWeekBanner && (
-        <div className="max-w-[1600px] mx-auto mb-3 flex items-center gap-3 px-4 py-3 bg-emerald-50 border border-emerald-200 rounded-2xl shadow-sm">
-          <span className="text-lg">🗓️</span>
-          <div className="flex-1">
-            <span className="font-black text-emerald-900 text-sm">New week!</span>
-            <span className="text-emerald-800 text-sm ml-1.5">Last week's entries are hidden here but still saved — they show up in the Jobs Feed.</span>
-          </div>
-          <button
-            onClick={dismissNewWeekBanner}
-            className="px-3 py-1.5 text-emerald-700 hover:text-emerald-900 text-sm font-bold rounded-xl transition-colors"
-          >
-            Got it
-          </button>
-        </div>
-      )}
-
       {/* --- HEADER --- */}
       <PageHeader pageId="legacy" icon={Database} title="Weekly Timesheet" subtitle={weekDateRange}>
         <div className="flex items-center gap-2 text-[13px] text-white/85 font-medium">
@@ -1843,8 +1826,29 @@ export default function LegacyTimesheet({ wrikeData, isAdmin = false }) {
         )}
       </PageHeader>
 
+      {/* Everything below the full-bleed header gets the page's horizontal
+          gutter + top/bottom spacing — the header itself must stay outside
+          any padded container to remain edge-to-edge. */}
+      <div className="px-4 pt-8 pb-4">
+        {/* New week banner */}
+        {newWeekBanner && (
+          <div className="max-w-[1600px] mx-auto mb-3 flex items-center gap-3 px-4 py-3 bg-emerald-50 border border-emerald-200 rounded-2xl shadow-sm">
+            <span className="text-lg">🗓️</span>
+            <div className="flex-1">
+              <span className="font-black text-emerald-900 text-sm">New week!</span>
+              <span className="text-emerald-800 text-sm ml-1.5">Last week's entries are hidden here but still saved — they show up in the Jobs Feed.</span>
+            </div>
+            <button
+              onClick={dismissNewWeekBanner}
+              className="px-3 py-1.5 text-emerald-700 hover:text-emerald-900 text-sm font-bold rounded-xl transition-colors"
+            >
+              Got it
+            </button>
+          </div>
+        )}
+
       {/* --- STANDARD UI --- */}
-      <div className="max-w-[1600px] mx-auto bg-white shadow-2xl rounded-2xl relative min-h-[calc(100vh-10rem)] flex flex-col border border-slate-200 mt-4">
+      <div className="max-w-[1600px] mx-auto bg-white shadow-2xl rounded-2xl relative min-h-[calc(100vh-10rem)] flex flex-col border border-slate-200">
         {/* --- MODERN TABS --- */}
         <div className="flex px-4 pt-4 bg-slate-50 border-b border-slate-200 gap-2">
           {DAYS.map((day) => {
@@ -2387,6 +2391,7 @@ export default function LegacyTimesheet({ wrikeData, isAdmin = false }) {
             </button>
           </div>
         </div>
+      </div>
       </div>
     </div>
   );

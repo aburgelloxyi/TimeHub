@@ -1,8 +1,6 @@
 import React, { useState, useEffect, useRef } from "react";
 import {
   Plus,
-  X,
-  ArrowRight,
   LayoutList,
   Film,
   RefreshCw,
@@ -213,7 +211,6 @@ export default function TodaysList({ wrikeData, triggerToast: _triggerToast, las
   const [assignments, setAssignments] = useState(
     TEAM_MEMBERS.reduce((acc, name) => ({ ...acc, [name]: [] }), {})
   );
-  const [activeTaskId, setActiveTaskId] = useState(null);
   const [timeframe, setTimeframe] = useState("Today");
   const [isSyncing, setIsSyncing] = useState(false);
   const [focusedPerson, setFocusedPerson] = useState(null);
@@ -314,37 +311,6 @@ export default function TodaysList({ wrikeData, triggerToast: _triggerToast, las
     if (saveTimeout.current) clearTimeout(saveTimeout.current);
   };
 
-  const handleAssign = (campaignId, taskId, personName) => {
-    let taskToMove;
-    const newCampaigns = campaigns.map((camp) => {
-      if (camp.id === campaignId) {
-        taskToMove = camp.subtasks.find((t) => t.id === taskId);
-        return { ...camp, subtasks: camp.subtasks.filter((t) => t.id !== taskId) };
-      }
-      return camp;
-    });
-    if (!taskToMove) return;
-    const campaignName = campaigns.find((c) => c.id === campaignId)?.name || "";
-    const newAssignments = { ...assignments, [personName]: sortTasksByStatus([...assignments[personName], { ...taskToMove, campaignId, campaignName }]) };
-    setCampaigns(newCampaigns);
-    setAssignments(newAssignments);
-    setActiveTaskId(null);
-    saveBoardState(newCampaigns, newAssignments, timeframe);
-  };
-
-  const handleUnassign = (taskId, personName, campaignId) => {
-    const taskToMove = assignments[personName].find((t) => t.id === taskId);
-    if (!taskToMove) return;
-    const newAssignments = { ...assignments, [personName]: assignments[personName].filter((t) => t.id !== taskId) };
-    const subtaskToReturn = { id: taskToMove.id, title: taskToMove.title, tag: taskToMove.tag, customStatusId: taskToMove.customStatusId, permalink: taskToMove.permalink };
-    const exists = campaigns.find((c) => c.id === campaignId);
-    const newCampaigns = exists
-      ? campaigns.map((camp) => camp.id === campaignId ? { ...camp, subtasks: [...camp.subtasks, subtaskToReturn] } : camp)
-      : [...campaigns, { id: campaignId, name: taskToMove.campaignName, subtasks: [subtaskToReturn] }];
-    setAssignments(newAssignments);
-    setCampaigns(newCampaigns);
-    saveBoardState(newCampaigns, newAssignments, timeframe);
-  };
 
   const handleLiteSync = async () => {
     if (!localStorage.getItem("wrike_user_id")) { triggerToast("Wrike not connected."); return; }
@@ -606,50 +572,15 @@ export default function TodaysList({ wrikeData, triggerToast: _triggerToast, las
                   <div className="p-1.5 space-y-1 min-h-[36px] max-h-[130px] overflow-y-auto flex-1">
                     {campaign.subtasks.map((task) => {
                       const terr = getTerritoryData(task.title);
-                      const isAssigning = activeTaskId === task.id;
                       return (
                         <div
                           key={task.id}
                           className={`rounded-lg border border-slate-100 border-l-2 ${getBorderColorClass(task.tag)} bg-white`}
                         >
-                          {isAssigning ? (
-                            <div className="p-1.5">
-                              <p className="text-[9px] font-bold text-slate-500 mb-1.5 truncate">{task.title}</p>
-                              <div className="flex flex-wrap gap-1">
-                                {TEAM_MEMBERS.map((person) => (
-                                  <div key={person} className="relative group/tip">
-                                    <button
-                                      onClick={() => handleAssign(campaign.id, task.id, person)}
-                                      className={`w-6 h-6 rounded-full text-[9px] font-black text-white flex items-center justify-center ${TEAM_COLORS[person].solid.split(" ")[0]}`}
-                                    >
-                                      {person[0]}
-                                    </button>
-                                    <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-1 px-1.5 py-0.5 bg-[#122027] text-white text-[9px] font-bold rounded whitespace-nowrap opacity-0 group-hover/tip:opacity-100 pointer-events-none transition-opacity z-10">
-                                      {person}
-                                    </div>
-                                  </div>
-                                ))}
-                                <button
-                                  onClick={() => setActiveTaskId(null)}
-                                  className="w-6 h-6 rounded-full bg-slate-100 text-slate-400 flex items-center justify-center"
-                                >
-                                  <X className="w-3 h-3" />
-                                </button>
-                              </div>
-                            </div>
-                          ) : (
-                            <div className="flex items-center gap-1.5 p-1.5 group">
-                              <span className="text-sm leading-none shrink-0">{terr.flag}</span>
-                              <span className="text-[10px] font-bold text-[#122027] truncate flex-1">{task.title}</span>
-                              <button
-                                onClick={() => setActiveTaskId(task.id)}
-                                className="shrink-0 opacity-0 group-hover:opacity-100 text-[#12a0e1] transition-opacity"
-                                title="Assign to team"
-                              >
-                                <ArrowRight className="w-3 h-3" />
-                              </button>
-                            </div>
-                          )}
+                          <div className="flex items-center gap-1.5 p-1.5">
+                            <span className="text-sm leading-none shrink-0">{terr.flag}</span>
+                            <span className="text-[10px] font-bold text-[#122027] truncate flex-1">{task.title}</span>
+                          </div>
                         </div>
                       );
                     })}
@@ -790,13 +721,6 @@ export default function TodaysList({ wrikeData, triggerToast: _triggerToast, las
                                 )}
                               </div>
                             </div>
-                            <button
-                              onClick={e => { e.stopPropagation(); handleUnassign(task.id, person, task.campaignId); }}
-                              className="absolute top-2 right-2 text-slate-300 hover:text-rose-500 hover:bg-rose-50 p-1 rounded-lg opacity-0 group-hover:opacity-100 transition-all"
-                              title="Unassign"
-                            >
-                              <X className="w-3 h-3" />
-                            </button>
                           </div>
                         );
                       })}

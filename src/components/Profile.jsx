@@ -1340,40 +1340,39 @@ export default function Profile({ wrikeData, onTokenChange, activeSection: activ
                 <button
                   key={id}
                   onClick={() => setActiveSection(id)}
-                  className={`group relative text-left bg-white border border-[#dce4ec] rounded-3xl p-5 shadow-sm hover:shadow-xl hover:-translate-y-1 transition-all duration-200 overflow-hidden ${
-                    featured ? "col-span-2 lg:col-span-3" : ""
+                  className={`group relative text-left border rounded-3xl shadow-sm hover:shadow-xl hover:-translate-y-1 transition-all duration-200 overflow-hidden ${
+                    featured
+                      ? `col-span-2 lg:col-span-3 p-7 border-transparent bg-gradient-to-br ${gradient}`
+                      : "p-5 bg-white border-[#dce4ec]"
                   }`}
                 >
-                  {/* Soft gradient wash */}
-                  <div
-                    className={`absolute inset-0 bg-gradient-to-br ${gradient} opacity-0 group-hover:opacity-[0.06] transition-opacity`}
-                  />
-                  <div className={`relative flex ${featured ? "items-center gap-5" : "flex-col gap-3"}`}>
+                  {/* Soft gradient wash (non-featured cards only — featured is already gradient-filled) */}
+                  {!featured && (
                     <div
-                      className={`shrink-0 rounded-2xl bg-gradient-to-br ${gradient} flex items-center justify-center text-white shadow-lg ${
-                        featured ? "w-16 h-16" : "w-12 h-12"
+                      className={`absolute inset-0 bg-gradient-to-br ${gradient} opacity-0 group-hover:opacity-[0.06] transition-opacity`}
+                    />
+                  )}
+                  <div className={`relative flex ${featured ? "items-center gap-6" : "flex-col gap-3"}`}>
+                    <div
+                      className={`shrink-0 rounded-2xl flex items-center justify-center shadow-lg ${
+                        featured ? "w-20 h-20 bg-white/20 text-white" : `w-12 h-12 bg-gradient-to-br ${gradient} text-white`
                       }`}
                     >
-                      <Icon className={featured ? "w-8 h-8" : "w-6 h-6"} />
+                      <Icon className={featured ? "w-10 h-10" : "w-6 h-6"} />
                     </div>
                     <div className="min-w-0 flex-1">
-                      <div className="flex items-center gap-2">
-                        <p className={`font-black text-[#122027] ${featured ? "text-xl" : "text-sm"}`}>
-                          {label}
-                        </p>
-                        {featured && (
-                          <span className="text-[9px] font-black text-[#1cc1a5] bg-[#1cc1a5]/10 px-2 py-0.5 rounded-full uppercase tracking-wider">
-                            Start here
-                          </span>
-                        )}
-                      </div>
-                      <p className={`text-[#768994] mt-0.5 ${featured ? "text-sm" : "text-[11px] leading-snug"}`}>
+                      <p className={`font-black ${featured ? "text-2xl text-white" : "text-sm text-[#122027]"}`}>
+                        {label}
+                      </p>
+                      <p className={`mt-0.5 ${featured ? "text-sm text-white/80" : "text-[11px] leading-snug text-[#768994]"}`}>
                         {desc}
                       </p>
                     </div>
                     <ChevronRight
-                      className={`shrink-0 text-slate-300 group-hover:text-[#12a0e1] group-hover:translate-x-0.5 transition-all ${
-                        featured ? "w-6 h-6" : "w-4 h-4 absolute top-0 right-0"
+                      className={`shrink-0 transition-all ${
+                        featured
+                          ? "w-7 h-7 text-white/70 group-hover:text-white group-hover:translate-x-0.5"
+                          : "w-4 h-4 absolute top-0 right-0 text-slate-300 group-hover:text-[#12a0e1] group-hover:translate-x-0.5"
                       }`}
                     />
                   </div>

@@ -29,6 +29,15 @@ const CURSOR_OVERLAP_MS = 24 * 60 * 60 * 1000;
 // Folder campaigns are tiny and only derivable when a folder dictionary is
 // in memory (now rare) — persist them locally between sessions.
 const FOLDER_CAMPAIGNS_KEY = "xyi_folder_campaigns_v1";
+// wrike_sync_meta is one shared row for the whole team: the dictionaries are
+// workspace-wide, and sharing last_synced_at means if anyone synced in the
+// last 15 minutes, nobody else hits Wrike at all.
+const SHARED_META_ID = "shared";
+// Bump to force a one-time full re-pull of the local mirror. v2: pagination
+// gained .order("id") — unordered .range() pages overlapped/skipped rows, so
+// v1 mirrors are silently missing thousands of tasks.
+const CACHE_FORMAT = "2";
+const CACHE_FORMAT_KEY = "xyi_cache_format";
 
 // Guards the mount hydration against React StrictMode's dev double-invoke —
 // without it every dev reload downloaded the Supabase cache twice.
@@ -198,8 +207,10 @@ export function useWrikeCache() {
     if (bootStarted) return;
     bootStarted = true;
     (async () => {
-      // 1) Hydrate from the local mirror
-      const local = await loadLocalTasks();
+      // 1) Hydrate from the local mirror — unless its format is stale, in
+      // which case ignore it and re-pull everything once.
+      const formatOk = localStorage.getItem(CACHE_FORMAT_KEY) === CACHE_FORMAT;
+      const local = formatOk ? await loadLocalTasks() : [];
       const map = new Map(local.map((t) => [t.id, t]));
       if (local.length) setTasks(local);
       try {
@@ -216,9 +227,13 @@ export function useWrikeCache() {
       const PAGE = 1000;
       let page = 0;
       while (true) {
+        // .order("id") is load-bearing: .range() pagination without an ORDER
+        // BY is non-deterministic in Postgres — pages overlapped and skipped,
+        // silently dropping thousands of tasks from what the app saw.
         let q = supabase
           .from("wrike_tasks_cache")
           .select("task_data")
+          .order("id")
           .range(page * PAGE, (page + 1) * PAGE - 1);
         if (sinceOverlap) q = q.gt("updated_date", sinceOverlap);
         const { data, error } = await q;
@@ -248,6 +263,7 @@ export function useWrikeCache() {
       }
       const loaded = [...map.values()];
       await advanceLocalCursor(loaded);
+      localStorage.setItem(CACHE_FORMAT_KEY, CACHE_FORMAT);
 
       // Load latest meta — light fields only. The folder/contact/status
       // dictionaries are multi-MB blobs; they're fetched further down only
@@ -255,9 +271,8 @@ export function useWrikeCache() {
       const { data: meta } = await supabase
         .from("wrike_sync_meta")
         .select("last_synced_at,film_code_mappings")
-        .order("last_synced_at", { ascending: false })
-        .limit(1)
-        .single();
+        .eq("wrike_user_id", SHARED_META_ID)
+        .maybeSingle();
       if (meta?.last_synced_at) setLastSynced(new Date(meta.last_synced_at));
       if (meta?.film_code_mappings && Object.keys(meta.film_code_mappings).length) {
         setFilmCodeMappings(meta.film_code_mappings);
@@ -283,9 +298,8 @@ export function useWrikeCache() {
         const { data: dictRow } = await supabase
           .from("wrike_sync_meta")
           .select("folder_dictionary")
-          .order("last_synced_at", { ascending: false })
-          .limit(1)
-          .single();
+          .eq("wrike_user_id", SHARED_META_ID)
+          .maybeSingle();
 
         if (broken.length > 0) {
           console.log(`[WrikeCache] repairing ${broken.length} MATRIX tasks (missing table/parentIds)`);
@@ -353,7 +367,7 @@ export function useWrikeCache() {
             fd = freshFd;
             c2p = buildChildToParent(fd);
             console.log(`[WrikeCache] fresh folder dict: ${Object.keys(fd).length} folders`);
-            supabase.from("wrike_sync_meta").upsert({ folder_dictionary: fd });
+            supabase.from("wrike_sync_meta").upsert({ wrike_user_id: SHARED_META_ID, folder_dictionary: fd });
           }
         }
         console.log(`[WrikeCache] backfill: ${Object.keys(fd).length} folders, ${Object.keys(c2p).length} parent links`);
@@ -415,8 +429,8 @@ export function useWrikeCache() {
         const { data: probe } = await supabase
           .from("wrike_sync_meta")
           .select("last_synced_at")
-          .eq("wrike_user_id", userId)
-          .single();
+          .eq("wrike_user_id", SHARED_META_ID)
+          .maybeSingle();
         const lastProbe = probe?.last_synced_at ? new Date(probe.last_synced_at).getTime() : 0;
         if (Date.now() - lastProbe < SYNC_INTERVAL_MS) {
           console.log("[WrikeCache] skipping sync — last synced", probe?.last_synced_at);
@@ -424,12 +438,12 @@ export function useWrikeCache() {
         }
       }
 
-      // Read existing meta (last sync time + cached dicts)
+      // Read existing meta (last sync time + cached dicts) — one shared row
       const { data: meta } = await supabase
         .from("wrike_sync_meta")
         .select("*")
-        .eq("wrike_user_id", userId)
-        .single();
+        .eq("wrike_user_id", SHARED_META_ID)
+        .maybeSingle();
 
       const now = Date.now();
       const lastSync = meta?.last_synced_at ? new Date(meta.last_synced_at).getTime() : 0;
@@ -509,7 +523,9 @@ export function useWrikeCache() {
         }));
         const BATCH = 500;
         for (let i = 0; i < rows.length; i += BATCH) {
-          await supabase.from("wrike_tasks_cache").upsert(rows.slice(i, i + BATCH));
+          // PK is (id) — one shared row per task; wrike_user_id records who
+          // synced it last.
+          await supabase.from("wrike_tasks_cache").upsert(rows.slice(i, i + BATCH), { onConflict: "id" });
         }
         await saveLocalTasks(filtered);
         await advanceLocalCursor(filtered);
@@ -523,9 +539,9 @@ export function useWrikeCache() {
         console.log(`[WrikeCache] film code mappings: ${Object.keys(mergedFilmMappings).length} total, ${Object.keys(newMappings).length} new this sync`);
       }
 
-      // Persist updated meta
+      // Persist updated meta to the shared row
       await supabase.from("wrike_sync_meta").upsert({
-        wrike_user_id: userId,
+        wrike_user_id: SHARED_META_ID,
         last_synced_at: new Date().toISOString(),
         folder_dictionary:  needsMetaRefresh ? folderDictionary  : (meta?.folder_dictionary  ?? {}),
         contact_dictionary: needsMetaRefresh ? contactDictionary : (meta?.contact_dictionary ?? {}),
@@ -595,17 +611,15 @@ export function useWrikeCache() {
     setIsScanning(true);
 
     try {
-      // Load existing mappings + folder dict from Supabase
+      // Load existing mappings + folder dict from the shared meta row
       const { data: meta } = await supabase
         .from("wrike_sync_meta")
-        .select("folder_dictionary, film_code_mappings, wrike_user_id")
-        .order("last_synced_at", { ascending: false })
-        .limit(1)
-        .single();
+        .select("folder_dictionary, film_code_mappings")
+        .eq("wrike_user_id", SHARED_META_ID)
+        .maybeSingle();
 
       let fd = meta?.folder_dictionary || {};
       const existingMappings = meta?.film_code_mappings || filmCodeMappings;
-      const userId = meta?.wrike_user_id || wrikeUserId;
 
       // Fetch a fresh folder dict if the cached one is too sparse to tree-climb
       if (Object.keys(fd).length < 100) {
@@ -674,12 +688,10 @@ export function useWrikeCache() {
       setFilmCodeMappings(merged);
       console.log(`[FilmScan] ${Object.keys(newMappings).length} new mappings, ${Object.keys(merged).length} total`);
 
-      if (userId) {
-        await supabase
-          .from("wrike_sync_meta")
-          .update({ film_code_mappings: merged })
-          .eq("wrike_user_id", userId);
-      }
+      await supabase
+        .from("wrike_sync_meta")
+        .update({ film_code_mappings: merged })
+        .eq("wrike_user_id", SHARED_META_ID);
     } catch (err) {
       console.error("[FilmScan] failed:", err);
     } finally {

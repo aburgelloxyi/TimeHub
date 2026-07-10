@@ -3,6 +3,7 @@ import { supabase } from "../lib/supabaseClient";
 import {
   loadLocalTasks,
   saveLocalTasks,
+  removeLocalTasks,
   getLocalCursor,
   advanceLocalCursor,
 } from "../lib/localTaskCache";
@@ -288,11 +289,11 @@ export function useWrikeCache() {
       if (meta?.film_code_mappings && Object.keys(meta.film_code_mappings).length) {
         setFilmCodeMappings(meta.film_code_mappings);
       }
+      // Only the (small) film mappings are available here — the mount select
+      // deliberately skips the multi-MB dictionaries. The webhook handler
+      // lazily fetches them on its first event if they're still empty.
       enrichCtxRef.current = {
-        folderDictionary: meta?.folder_dictionary || {},
-        contactDictionary: meta?.contact_dictionary || {},
-        statusDictionary: meta?.status_dictionary || {},
-        childToParent: buildChildToParent(meta?.folder_dictionary || {}),
+        ...enrichCtxRef.current,
         filmCodeMappings: meta?.film_code_mappings || {},
       };
 
@@ -558,6 +559,7 @@ export function useWrikeCache() {
       }
       if (droppedIds.length > 0) {
         await supabase.from("wrike_tasks_cache").delete().in("id", droppedIds);
+        await removeLocalTasks(droppedIds);
         console.log(`[WrikeCache] purged ${droppedIds.length} task(s) no longer Motion-relevant`);
       }
 
@@ -650,13 +652,13 @@ export function useWrikeCache() {
     let ctx = enrichCtxRef.current;
     if (Object.keys(ctx.folderDictionary).length === 0) {
       // No dictionaries in memory yet (e.g. tab just opened, sync() hasn't run) —
-      // fall back to the last synced copy in Supabase.
+      // fall back to the shared meta row in Supabase. Paid at most once per
+      // session, and only if a webhook event arrives before a full sync.
       const { data: meta } = await supabase
         .from("wrike_sync_meta")
         .select("folder_dictionary,contact_dictionary,status_dictionary,film_code_mappings")
-        .order("last_synced_at", { ascending: false })
-        .limit(1)
-        .single();
+        .eq("wrike_user_id", SHARED_META_ID)
+        .maybeSingle();
       ctx = {
         folderDictionary: meta?.folder_dictionary || {},
         contactDictionary: meta?.contact_dictionary || {},
@@ -693,10 +695,15 @@ export function useWrikeCache() {
         task_data: t,
         updated_date: t.updatedDate ?? null,
       }));
-      await supabase.from("wrike_tasks_cache").upsert(rows);
+      await supabase.from("wrike_tasks_cache").upsert(rows, { onConflict: "id" });
+      // Mirror pushed tasks locally so the next reload's delta doesn't need
+      // to re-download them.
+      await saveLocalTasks(enriched);
+      await advanceLocalCursor(enriched);
     }
     if (droppedIds.length > 0) {
       await supabase.from("wrike_tasks_cache").delete().in("id", droppedIds);
+      await removeLocalTasks(droppedIds);
     }
 
     setTasks((prev) => {

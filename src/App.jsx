@@ -136,11 +136,10 @@ export default function App() {
     scanFilmMappings,
   } = useWrikeCache();
 
-  // Motion Board stays permanently mounted (see the display:none wrapper
-  // below), so its own mount-effect only ever fires once per page load —
-  // it never sees you switch back to this tab. Nudge a background refresh
-  // (soft — no-ops if data is <15min old) every time the tab is actually
-  // opened, so it's not left showing whatever was true at initial page load.
+  // Motion Board now has its own webhook-fed data source, but the shared
+  // cache still feeds Canvas/Hub/Timesheeter. Opening the board is a good
+  // moment to nudge a background refresh of that shared cache (soft — a
+  // single-field probe that no-ops if data is <15min old).
   useEffect(() => {
     if (activePage === "todayslist") sync();
   }, [activePage, sync]);

@@ -57,6 +57,25 @@ export async function saveLocalTasks(tasks) {
   }
 }
 
+// Remove purged tasks from the mirror — without this, tasks deleted from the
+// shared cache (reassigned off the Motion team, webhook purges) resurrect
+// from IndexedDB on every reload.
+export async function removeLocalTasks(ids) {
+  if (!ids?.length) return;
+  try {
+    const db = await openDb();
+    await new Promise((resolve, reject) => {
+      const tx = db.transaction(TASKS, "readwrite");
+      const store = tx.objectStore(TASKS);
+      ids.forEach((id) => store.delete(id));
+      tx.oncomplete = () => { db.close(); resolve(); };
+      tx.onerror = () => { db.close(); reject(tx.error); };
+    });
+  } catch {
+    /* non-fatal */
+  }
+}
+
 export async function getLocalCursor() {
   try {
     const db = await openDb();

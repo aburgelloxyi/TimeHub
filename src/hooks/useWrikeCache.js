@@ -10,6 +10,7 @@ import {
   buildChildToParent,
   buildFilmCodeMappings,
 } from "../lib/wrikeEnrich";
+import { subscribeToWrikeTaskEvents } from "../lib/wrikeWebhookSubscription";
 
 const FIELDS_FILTER = encodeURIComponent(
   "[customFields,parentIds,responsibleIds,subTaskIds,description]"
@@ -91,7 +92,7 @@ async function fetchWrikeTasks(sinceIso) {
 // 2+, so tasks from later pages come back without their description — which is
 // where the MATRIX table + notes live. Fetching by ID guarantees we get them.
 // ---------------------------------------------------------------------------
-async function fetchTasksByIds(ids) {
+export async function fetchTasksByIds(ids) {
   const out = [];
   // Batch up to 100 IDs per request — Wrike supports comma-separated IDs
   // and returns description by default (no fields param needed).
@@ -571,8 +572,15 @@ export function useWrikeCache() {
     const raw = await fetchTasksByIds(ids);
     if (!raw.length) return;
 
+    // Same relevance check sync() applies — a webhook-changed task that no
+    // longer (or never did) pass filterToMotionTeam must not be added to the
+    // shared cache, and must be purged if it's there from before.
+    const relevant = filterToMotionTeam(raw, ctx.folderDictionary, ctx.contactDictionary);
+    const relevantIds = new Set(relevant.map((t) => t.id));
+    const droppedIds = raw.filter((t) => !relevantIds.has(t.id)).map((t) => t.id);
+
     const enriched = enrichTasks(
-      raw,
+      relevant,
       ctx.folderDictionary,
       ctx.contactDictionary,
       ctx.statusDictionary,
@@ -580,53 +588,31 @@ export function useWrikeCache() {
       ctx.filmCodeMappings
     );
 
-    const rows = enriched.map((t) => ({
-      id: t.id,
-      wrike_user_id: wrikeUserId,
-      task_data: t,
-      updated_date: t.updatedDate ?? null,
-    }));
-    await supabase.from("wrike_tasks_cache").upsert(rows);
+    if (enriched.length > 0) {
+      const rows = enriched.map((t) => ({
+        id: t.id,
+        wrike_user_id: wrikeUserId,
+        task_data: t,
+        updated_date: t.updatedDate ?? null,
+      }));
+      await supabase.from("wrike_tasks_cache").upsert(rows);
+    }
+    if (droppedIds.length > 0) {
+      await supabase.from("wrike_tasks_cache").delete().in("id", droppedIds);
+    }
 
     setTasks((prev) => {
       const map = new Map(prev.map((p) => [p.id, p]));
+      droppedIds.forEach((id) => map.delete(id));
       enriched.forEach((t) => map.set(t.id, t));
       return [...map.values()];
     });
-    console.log(`[WrikeCache] realtime: updated ${enriched.length} task(s) from webhook event(s)`);
+    console.log(`[WrikeCache] realtime: updated ${enriched.length}, purged ${droppedIds.length} task(s) from webhook event(s)`);
   }, [wrikeUserId]);
 
   useEffect(() => {
     if (!wrikeUserId) return;
-
-    let pendingIds = new Set();
-    let debounceTimer = null;
-    const flush = () => {
-      const ids = [...pendingIds];
-      pendingIds = new Set();
-      debounceTimer = null;
-      handleWebhookTaskIds(ids);
-    };
-
-    const channel = supabase
-      .channel("wrike_webhook_events_live")
-      .on(
-        "postgres_changes",
-        { event: "INSERT", schema: "public", table: "wrike_webhook_events" },
-        (payload) => {
-          const taskId = payload.new?.task_id;
-          if (!taskId) return;
-          pendingIds.add(taskId);
-          if (debounceTimer) clearTimeout(debounceTimer);
-          debounceTimer = setTimeout(flush, 2000);
-        }
-      )
-      .subscribe();
-
-    return () => {
-      if (debounceTimer) clearTimeout(debounceTimer);
-      supabase.removeChannel(channel);
-    };
+    return subscribeToWrikeTaskEvents(handleWebhookTaskIds);
   }, [wrikeUserId, handleWebhookTaskIds]);
 
   // --- Broad film-code mapping scan (all tasks, not just Motion-filtered) ---

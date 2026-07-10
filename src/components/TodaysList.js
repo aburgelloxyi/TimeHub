@@ -3,13 +3,13 @@ import {
   Plus,
   LayoutList,
   Film,
-  RefreshCw,
   CalendarDays,
   Paperclip,
   ChevronDown,
 } from "lucide-react";
 import { TERRITORY_FLAGS, MOTION_TEAM_NAME_MAP } from "../constants";
 import { supabase } from "../lib/supabaseClient";
+import { useMotionBoardTasks } from "../hooks/useMotionBoardTasks";
 import TaskDetailModal, { FilePreviewLightbox } from "./TaskDetailModal";
 
 const TEAM_MEMBERS = ["Antonio", "Aaron", "Jacqui", "Maria", "Nicholas", "Luke", "Turk"];
@@ -204,15 +204,15 @@ function AttachmentThumb({ attachment, large = false, onPreview }) {
   );
 }
 
-export default function TodaysList({ wrikeData, triggerToast: _triggerToast, lastSynced, isSyncing: isGlobalSyncing, syncNow }) {
+export default function TodaysList({ wrikeData, triggerToast: _triggerToast }) {
   const triggerToast = _triggerToast ?? ((msg) => console.warn("Toast:", msg));
+  const { boardTasks } = useMotionBoardTasks();
 
   const [campaigns, setCampaigns] = useState(INITIAL_CAMPAIGNS);
   const [assignments, setAssignments] = useState(
     TEAM_MEMBERS.reduce((acc, name) => ({ ...acc, [name]: [] }), {})
   );
   const [timeframe, setTimeframe] = useState("Today");
-  const [isSyncing, setIsSyncing] = useState(false);
   const [focusedPerson, setFocusedPerson] = useState(null);
   const [lastSaved, setLastSaved] = useState(null);
   const saveTimeout = useRef(null);
@@ -271,9 +271,9 @@ export default function TodaysList({ wrikeData, triggerToast: _triggerToast, las
   useEffect(() => {
     if (!localStorage.getItem("wrike_user_id")) return;
 
-    const boardTasks = Object.values(assignments).flat();
+    const assignedTasks = Object.values(assignments).flat();
     const seen = new Set();
-    const unique = boardTasks.filter(t => {
+    const unique = assignedTasks.filter(t => {
       if (seen.has(t.id)) return false;
       seen.add(t.id);
       return true;
@@ -284,13 +284,12 @@ export default function TodaysList({ wrikeData, triggerToast: _triggerToast, las
     setAttachmentsLoading(true);
     Promise.all(
       unique.map(boardTask => {
-        const fullTask = wrikeData?.find(t => t.id === boardTask.id) || boardTask;
         return fetch(`/api/wrike/tasks/${boardTask.id}/attachments`)
           .then(r => r.json())
           // Only PDFs matter here (delivery specs) — images/docs/etc. are
           // dropped before they ever reach state or render a thumbnail.
-          .then(data => ({ task: fullTask, attachments: (data.data || []).filter(a => attachmentKind(a) === "pdf") }))
-          .catch(() => ({ task: fullTask, attachments: [] }));
+          .then(data => ({ task: boardTask, attachments: (data.data || []).filter(a => attachmentKind(a) === "pdf") }))
+          .catch(() => ({ task: boardTask, attachments: [] }));
       })
     ).then(results => {
       const map = {};
@@ -300,7 +299,7 @@ export default function TodaysList({ wrikeData, triggerToast: _triggerToast, las
       setTaskAttachments(map);
       setAttachmentsLoading(false);
     });
-  }, [assignments, wrikeData]);
+  }, [assignments]);
 
   // Debounced save whenever board state changes
   const saveBoardState = (newCampaigns, newAssignments, newTimeframe) => {
@@ -312,68 +311,9 @@ export default function TodaysList({ wrikeData, triggerToast: _triggerToast, las
   };
 
 
-  const handleLiteSync = async () => {
-    if (!localStorage.getItem("wrike_user_id")) { triggerToast("Wrike not connected."); return; }
-    let taskIds = [];
-    campaigns.forEach((camp) => camp.subtasks.forEach((t) => {
-      if (t.id && !String(t.id).startsWith("task-")) taskIds.push(t.id);
-    }));
-    Object.values(assignments).forEach((list) => list.forEach((t) => {
-      if (t.id && !String(t.id).startsWith("task-")) taskIds.push(t.id);
-    }));
-    if (taskIds.length === 0) { triggerToast("No Wrike tasks on the board to sync."); return; }
-    setIsSyncing(true);
-    try {
-      const chunks = [];
-      for (let i = 0; i < taskIds.length; i += 100) chunks.push(taskIds.slice(i, i + 100));
-      let fresh = [];
-      for (const chunk of chunks) {
-        const res = await fetch(`/api/wrike/tasks/${chunk.join(",")}`);
-        const json = await res.json();
-        if (json.data) fresh = [...fresh, ...json.data];
-      }
-      const getStatus = (customStatusId, fallback) => {
-        if (!customStatusId) return fallback;
-        const match = wrikeData?.find((t) => t.customStatusId === customStatusId);
-        return match?.customStatusName || fallback;
-      };
-      setCampaigns((prev) =>
-        prev.map((camp) => ({
-          ...camp,
-          subtasks: camp.subtasks.map((task) => {
-            const fw = fresh.find((w) => w.id === task.id);
-            return fw ? { ...task, tag: getStatus(fw.customStatusId, fw.status), customStatusId: fw.customStatusId } : task;
-          }),
-        }))
-      );
-      setAssignments((prev) => {
-        const next = {};
-        for (const [person, tasks] of Object.entries(prev)) {
-          next[person] = tasks.map((task) => {
-            const fw = fresh.find((w) => w.id === task.id);
-            return fw ? { ...task, tag: getStatus(fw.customStatusId, fw.status), customStatusId: fw.customStatusId } : task;
-          });
-        }
-        return next;
-      });
-      triggerToast("Board synced with live Wrike statuses!", "success");
-      // This patch only updates this board's local state — the shared Wrike
-      // cache (wrikeData) still has the old statuses until its own sync
-      // runs. Without this, switching timeframe tabs calls handleAutoAssign,
-      // which rebuilds straight from that stale cache and silently reverts
-      // everything back to pre-sync statuses. Kick a real (forced) refresh
-      // in the background so the cache — and any later rebuild — catches up.
-      syncNow?.();
-    } catch (err) {
-      triggerToast("Lite Sync failed: " + err.message);
-    } finally {
-      setIsSyncing(false);
-    }
-  };
-
   const handleAutoAssign = (targetTimeframe = timeframe) => {
-    if (!wrikeData || wrikeData.length === 0) {
-      triggerToast("No Wrike data available. Fetch data first.");
+    if (!boardTasks || boardTasks.length === 0) {
+      triggerToast("No Wrike data available yet.");
       return;
     }
     const freshAssignments = TEAM_MEMBERS.reduce((acc, name) => ({ ...acc, [name]: [] }), {});
@@ -397,7 +337,7 @@ export default function TodaysList({ wrikeData, triggerToast: _triggerToast, las
       minDate = new Date(now); minDate.setDate(now.getDate() + daysUntilNextMonday);
       maxDate = new Date(minDate); maxDate.setDate(minDate.getDate() + 4); maxDate.setHours(23, 59, 59, 999);
     }
-    wrikeData.forEach((task) => {
+    boardTasks.forEach((task) => {
       if (task.status !== "Active") return;
       if (!task.dueDate || task.dueDate === "No Due Date") return;
       const taskDate = new Date(task.dueDate);
@@ -440,18 +380,14 @@ export default function TodaysList({ wrikeData, triggerToast: _triggerToast, las
     saveBoardState(freshCampaigns, freshAssignments, targetTimeframe);
   };
 
-  // Rebuild the board from scratch whenever wrikeData gets a new reference —
-  // which happens after every periodic sync AND every webhook-triggered
-  // single-task update (useWrikeCache.js). Without this, the board only ever
-  // reflected the last localStorage snapshot (see mount effect above) and
-  // stayed stale until someone clicked a timeframe tab or "Auto-Assign".
-  // This intentionally overwrites any in-progress manual drag-and-drop —
-  // freshness wins over unsaved manual layout here.
+  // Rebuild the board from scratch whenever boardTasks gets a new reference —
+  // the initial narrow fetch on mount, or a webhook-triggered update
+  // (useMotionBoardTasks.js). No periodic polling involved on either side.
   useEffect(() => {
-    if (!wrikeData || wrikeData.length === 0) return;
+    if (!boardTasks || boardTasks.length === 0) return;
     handleAutoAssign(timeframe);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [wrikeData]);
+  }, [boardTasks]);
 
   // Stats
   const today = new Date(); today.setHours(0, 0, 0, 0);
@@ -496,18 +432,9 @@ export default function TodaysList({ wrikeData, triggerToast: _triggerToast, las
             </div>
             <div className="h-6 w-px bg-[#dce4ec] hidden lg:block" />
             <div className="flex flex-col sm:flex-row gap-3">
-              <button
-                onClick={handleLiteSync}
-                disabled={isSyncing}
-                className="flex items-center gap-2 px-4 py-2 bg-white border border-[#dce4ec] text-[#768994] hover:text-[#12a0e1] hover:border-[#12a0e1]/30 rounded-xl transition-all shadow-sm font-bold text-sm disabled:opacity-50"
-              >
-                <RefreshCw className={`w-4 h-4 ${isSyncing ? "animate-spin text-[#12a0e1]" : ""}`} />
-                {isSyncing ? "Syncing..." : "Sync Statuses"}
-              </button>
-              {/* Last synced indicator */}
-              {(lastSaved || lastSynced) && (() => {
-                const t = lastSaved || lastSynced;
-                const mins = Math.floor((Date.now() - new Date(t).getTime()) / 60000);
+              {/* Last saved indicator */}
+              {lastSaved && (() => {
+                const mins = Math.floor((Date.now() - new Date(lastSaved).getTime()) / 60000);
                 const label = mins < 1 ? "just now" : mins < 60 ? `${mins}m ago` : `${Math.floor(mins/60)}h ago`;
                 return (
                   <span className="text-[10px] font-bold text-[#768994] flex items-center gap-1">

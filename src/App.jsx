@@ -703,15 +703,15 @@ export default function App() {
       <ToastHost />
 
       {/* Motion Board stays mounted (display:none when inactive) so its board
-          state/DnD survives switching away — kept outside the transition
-          below so it's never unmounted/remounted by AnimatePresence. */}
+          state survives switching away — kept outside the transition below
+          so it's never unmounted/remounted by AnimatePresence. It sources
+          its own data independently (useMotionBoardTasks) rather than from
+          globalWrikeData below; wrikeData is only passed through for the
+          task detail modal's lookups. */}
       <div className={activePage === "todayslist" ? "block" : "hidden"}>
         <TodaysList
           wrikeData={globalWrikeData}
           triggerToast={triggerToast}
-          lastSynced={lastSynced}
-          isSyncing={isSyncing}
-          syncNow={syncNow}
         />
       </div>
 

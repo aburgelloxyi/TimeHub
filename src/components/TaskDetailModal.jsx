@@ -1029,6 +1029,32 @@ export default function TaskDetailModal({
   const [fetchedFullTask, setFetchedFullTask] = useState(null);
   const [subtasks, setSubtasks] = useState([]);
   const [subtasksLoading, setSubtasksLoading] = useState(false);
+  const [checkedSubtaskIds, setCheckedSubtaskIds] = useState(new Set());
+
+  // Personal note-keeping checklist, separate from Wrike's own subtask
+  // status — persisted per parent task so it survives closing/reopening
+  // the modal, but never written back to Wrike.
+  const subtaskCheckKey = (taskId) => `subtask_checks_${taskId}`;
+
+  useEffect(() => {
+    if (!task?.id) { setCheckedSubtaskIds(new Set()); return; }
+    try {
+      const saved = JSON.parse(localStorage.getItem(subtaskCheckKey(task.id)) || "[]");
+      setCheckedSubtaskIds(new Set(saved));
+    } catch {
+      setCheckedSubtaskIds(new Set());
+    }
+  }, [task?.id]);
+
+  const toggleSubtaskCheck = (subtaskId) => {
+    setCheckedSubtaskIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(subtaskId)) next.delete(subtaskId);
+      else next.add(subtaskId);
+      if (task?.id) localStorage.setItem(subtaskCheckKey(task.id), JSON.stringify([...next]));
+      return next;
+    });
+  };
 
   // Fetch the full task fresh by ID whenever the modal opens. The `task` prop
   // is often a stripped-down board card (no description/subTaskIds), and the
@@ -1317,7 +1343,7 @@ export default function TaskDetailModal({
                     </span>
                     {subtasks.length > 0 && (
                       <span className="ml-auto text-[10px] font-bold text-slate-400">
-                        {subtasks.filter((s) => s.status === "Completed").length}/{subtasks.length} done
+                        {checkedSubtaskIds.size}/{subtasks.length} checked
                       </span>
                     )}
                   </div>
@@ -1329,29 +1355,37 @@ export default function TaskDetailModal({
                       </div>
                     ) : (
                       subtasks.map((st) => {
-                        const done = st.status === "Completed";
+                        const checked = checkedSubtaskIds.has(st.id);
                         return (
-                          <a
+                          <div
                             key={st.id}
-                            href={st.permalink}
-                            target="_blank"
-                            rel="noreferrer"
-                            className="flex items-center gap-2 px-2.5 py-1.5 rounded-lg hover:bg-white transition-colors"
+                            onClick={() => toggleSubtaskCheck(st.id)}
+                            className="flex items-center gap-2 px-2.5 py-1.5 rounded-lg hover:bg-white transition-colors cursor-pointer"
                           >
-                            {done ? (
+                            {checked ? (
                               <Check className="w-3.5 h-3.5 text-emerald-500 shrink-0" />
                             ) : (
                               <Square className="w-3.5 h-3.5 text-slate-300 shrink-0" />
                             )}
                             <span
                               className={`text-xs font-medium flex-1 truncate ${
-                                done ? "text-slate-400 line-through" : "text-slate-700"
+                                checked ? "text-slate-400 line-through" : "text-slate-700"
                               }`}
                             >
                               {st.title}
                             </span>
                             <span className={getTagStyle(st.statusName)}>{st.statusName}</span>
-                          </a>
+                            <a
+                              href={st.permalink}
+                              target="_blank"
+                              rel="noreferrer"
+                              onClick={(e) => e.stopPropagation()}
+                              title="Open in Wrike"
+                              className="shrink-0 text-slate-300 hover:text-[#12a0e1] transition-colors"
+                            >
+                              <ExternalLink className="w-3 h-3" />
+                            </a>
+                          </div>
                         );
                       })
                     )}

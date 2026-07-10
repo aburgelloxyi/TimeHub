@@ -28,7 +28,7 @@ const navItems = [
 ];
 
 const hubSections = [
-  { id: "jobs",      label: "Active Jobs", icon: Briefcase },
+  { id: "jobs",      label: "Active Jobs", icon: Briefcase, featured: true },
   { id: "history",   label: "History",     icon: Clock },
   { id: "overview",  label: "Overview",    icon: Activity },
   { id: "analytics", label: "Analytics",   icon: BarChart2 },
@@ -258,19 +258,23 @@ export default function ApplePillNav({ activePage, setActivePage, hubSection, se
             className="overflow-hidden"
           >
             <div className="flex items-center gap-1.5 p-1 bg-white/70 backdrop-blur-md rounded-full border border-black/5 shadow-sm">
-              {hubSections.map(({ id, label, icon: Icon }) => {
+              {hubSections.map(({ id, label, icon: Icon, featured }) => {
                 const isActive = hubSection === id;
                 return (
                   <button
                     key={id}
                     onClick={() => setHubSection?.(id)}
-                    className={`flex items-center gap-1.5 px-3.5 py-1.5 rounded-full text-[11px] font-bold tracking-tight transition-all duration-200 ${
+                    className={`flex items-center gap-1.5 rounded-full font-bold tracking-tight transition-all duration-200 ${
+                      featured ? "px-4 py-2 text-[13px]" : "px-3.5 py-1.5 text-[11px]"
+                    } ${
                       isActive
                         ? "bg-gradient-to-br from-[#12a0e1] to-[#1cc1a5] text-white shadow-sm"
+                        : featured
+                        ? "bg-[#12a0e1]/10 text-[#12a0e1] hover:bg-[#12a0e1]/15"
                         : "text-[#768994] hover:text-[#122027] hover:bg-white"
                     }`}
                   >
-                    <Icon className="w-3 h-3 shrink-0" strokeWidth={isActive ? 2.5 : 2} />
+                    <Icon className={featured ? "w-4 h-4 shrink-0" : "w-3 h-3 shrink-0"} strokeWidth={isActive || featured ? 2.5 : 2} />
                     {label}
                   </button>
                 );

@@ -1,17 +1,16 @@
 import React, { useState, useEffect, useRef } from "react";
 import {
   Plus,
-  X,
-  ArrowRight,
   LayoutList,
   Film,
-  RefreshCw,
   CalendarDays,
   Paperclip,
   ChevronDown,
 } from "lucide-react";
 import { TERRITORY_FLAGS, MOTION_TEAM_NAME_MAP } from "../constants";
 import { supabase } from "../lib/supabaseClient";
+import { useMotionBoardTasks } from "../hooks/useMotionBoardTasks";
+import PageHeader, { pageHeaderActionClass } from "./shared/PageHeader";
 import TaskDetailModal, { FilePreviewLightbox } from "./TaskDetailModal";
 
 const TEAM_MEMBERS = ["Antonio", "Aaron", "Jacqui", "Maria", "Nicholas", "Luke", "Turk"];
@@ -206,16 +205,15 @@ function AttachmentThumb({ attachment, large = false, onPreview }) {
   );
 }
 
-export default function TodaysList({ wrikeData, triggerToast: _triggerToast, lastSynced, isSyncing: isGlobalSyncing, syncNow }) {
+export default function TodaysList({ wrikeData, triggerToast: _triggerToast }) {
   const triggerToast = _triggerToast ?? ((msg) => console.warn("Toast:", msg));
+  const { boardTasks } = useMotionBoardTasks();
 
   const [campaigns, setCampaigns] = useState(INITIAL_CAMPAIGNS);
   const [assignments, setAssignments] = useState(
     TEAM_MEMBERS.reduce((acc, name) => ({ ...acc, [name]: [] }), {})
   );
-  const [activeTaskId, setActiveTaskId] = useState(null);
   const [timeframe, setTimeframe] = useState("Today");
-  const [isSyncing, setIsSyncing] = useState(false);
   const [focusedPerson, setFocusedPerson] = useState(null);
   const [lastSaved, setLastSaved] = useState(null);
   const saveTimeout = useRef(null);
@@ -274,9 +272,9 @@ export default function TodaysList({ wrikeData, triggerToast: _triggerToast, las
   useEffect(() => {
     if (!localStorage.getItem("wrike_user_id")) return;
 
-    const boardTasks = Object.values(assignments).flat();
+    const assignedTasks = Object.values(assignments).flat();
     const seen = new Set();
-    const unique = boardTasks.filter(t => {
+    const unique = assignedTasks.filter(t => {
       if (seen.has(t.id)) return false;
       seen.add(t.id);
       return true;
@@ -287,13 +285,12 @@ export default function TodaysList({ wrikeData, triggerToast: _triggerToast, las
     setAttachmentsLoading(true);
     Promise.all(
       unique.map(boardTask => {
-        const fullTask = wrikeData?.find(t => t.id === boardTask.id) || boardTask;
         return fetch(`/api/wrike/tasks/${boardTask.id}/attachments`)
           .then(r => r.json())
           // Only PDFs matter here (delivery specs) — images/docs/etc. are
           // dropped before they ever reach state or render a thumbnail.
-          .then(data => ({ task: fullTask, attachments: (data.data || []).filter(a => attachmentKind(a) === "pdf") }))
-          .catch(() => ({ task: fullTask, attachments: [] }));
+          .then(data => ({ task: boardTask, attachments: (data.data || []).filter(a => attachmentKind(a) === "pdf") }))
+          .catch(() => ({ task: boardTask, attachments: [] }));
       })
     ).then(results => {
       const map = {};
@@ -303,7 +300,7 @@ export default function TodaysList({ wrikeData, triggerToast: _triggerToast, las
       setTaskAttachments(map);
       setAttachmentsLoading(false);
     });
-  }, [assignments, wrikeData]);
+  }, [assignments]);
 
   // Debounced save whenever board state changes
   const saveBoardState = (newCampaigns, newAssignments, newTimeframe) => {
@@ -314,100 +311,10 @@ export default function TodaysList({ wrikeData, triggerToast: _triggerToast, las
     if (saveTimeout.current) clearTimeout(saveTimeout.current);
   };
 
-  const handleAssign = (campaignId, taskId, personName) => {
-    let taskToMove;
-    const newCampaigns = campaigns.map((camp) => {
-      if (camp.id === campaignId) {
-        taskToMove = camp.subtasks.find((t) => t.id === taskId);
-        return { ...camp, subtasks: camp.subtasks.filter((t) => t.id !== taskId) };
-      }
-      return camp;
-    });
-    if (!taskToMove) return;
-    const campaignName = campaigns.find((c) => c.id === campaignId)?.name || "";
-    const newAssignments = { ...assignments, [personName]: sortTasksByStatus([...assignments[personName], { ...taskToMove, campaignId, campaignName }]) };
-    setCampaigns(newCampaigns);
-    setAssignments(newAssignments);
-    setActiveTaskId(null);
-    saveBoardState(newCampaigns, newAssignments, timeframe);
-  };
-
-  const handleUnassign = (taskId, personName, campaignId) => {
-    const taskToMove = assignments[personName].find((t) => t.id === taskId);
-    if (!taskToMove) return;
-    const newAssignments = { ...assignments, [personName]: assignments[personName].filter((t) => t.id !== taskId) };
-    const subtaskToReturn = { id: taskToMove.id, title: taskToMove.title, tag: taskToMove.tag, customStatusId: taskToMove.customStatusId, permalink: taskToMove.permalink };
-    const exists = campaigns.find((c) => c.id === campaignId);
-    const newCampaigns = exists
-      ? campaigns.map((camp) => camp.id === campaignId ? { ...camp, subtasks: [...camp.subtasks, subtaskToReturn] } : camp)
-      : [...campaigns, { id: campaignId, name: taskToMove.campaignName, subtasks: [subtaskToReturn] }];
-    setAssignments(newAssignments);
-    setCampaigns(newCampaigns);
-    saveBoardState(newCampaigns, newAssignments, timeframe);
-  };
-
-  const handleLiteSync = async () => {
-    if (!localStorage.getItem("wrike_user_id")) { triggerToast("Wrike not connected."); return; }
-    let taskIds = [];
-    campaigns.forEach((camp) => camp.subtasks.forEach((t) => {
-      if (t.id && !String(t.id).startsWith("task-")) taskIds.push(t.id);
-    }));
-    Object.values(assignments).forEach((list) => list.forEach((t) => {
-      if (t.id && !String(t.id).startsWith("task-")) taskIds.push(t.id);
-    }));
-    if (taskIds.length === 0) { triggerToast("No Wrike tasks on the board to sync."); return; }
-    setIsSyncing(true);
-    try {
-      const chunks = [];
-      for (let i = 0; i < taskIds.length; i += 100) chunks.push(taskIds.slice(i, i + 100));
-      let fresh = [];
-      for (const chunk of chunks) {
-        const res = await fetch(`/api/wrike/tasks/${chunk.join(",")}`);
-        const json = await res.json();
-        if (json.data) fresh = [...fresh, ...json.data];
-      }
-      const getStatus = (customStatusId, fallback) => {
-        if (!customStatusId) return fallback;
-        const match = wrikeData?.find((t) => t.customStatusId === customStatusId);
-        return match?.customStatusName || fallback;
-      };
-      setCampaigns((prev) =>
-        prev.map((camp) => ({
-          ...camp,
-          subtasks: camp.subtasks.map((task) => {
-            const fw = fresh.find((w) => w.id === task.id);
-            return fw ? { ...task, tag: getStatus(fw.customStatusId, fw.status), customStatusId: fw.customStatusId } : task;
-          }),
-        }))
-      );
-      setAssignments((prev) => {
-        const next = {};
-        for (const [person, tasks] of Object.entries(prev)) {
-          next[person] = tasks.map((task) => {
-            const fw = fresh.find((w) => w.id === task.id);
-            return fw ? { ...task, tag: getStatus(fw.customStatusId, fw.status), customStatusId: fw.customStatusId } : task;
-          });
-        }
-        return next;
-      });
-      triggerToast("Board synced with live Wrike statuses!", "success");
-      // This patch only updates this board's local state — the shared Wrike
-      // cache (wrikeData) still has the old statuses until its own sync
-      // runs. Without this, switching timeframe tabs calls handleAutoAssign,
-      // which rebuilds straight from that stale cache and silently reverts
-      // everything back to pre-sync statuses. Kick a real (forced) refresh
-      // in the background so the cache — and any later rebuild — catches up.
-      syncNow?.();
-    } catch (err) {
-      triggerToast("Lite Sync failed: " + err.message);
-    } finally {
-      setIsSyncing(false);
-    }
-  };
 
   const handleAutoAssign = (targetTimeframe = timeframe) => {
-    if (!wrikeData || wrikeData.length === 0) {
-      triggerToast("No Wrike data available. Fetch data first.");
+    if (!boardTasks || boardTasks.length === 0) {
+      triggerToast("No Wrike data available yet.");
       return;
     }
     const freshAssignments = TEAM_MEMBERS.reduce((acc, name) => ({ ...acc, [name]: [] }), {});
@@ -431,7 +338,7 @@ export default function TodaysList({ wrikeData, triggerToast: _triggerToast, las
       minDate = new Date(now); minDate.setDate(now.getDate() + daysUntilNextMonday);
       maxDate = new Date(minDate); maxDate.setDate(minDate.getDate() + 4); maxDate.setHours(23, 59, 59, 999);
     }
-    wrikeData.forEach((task) => {
+    boardTasks.forEach((task) => {
       if (task.status !== "Active") return;
       if (!task.dueDate || task.dueDate === "No Due Date") return;
       const taskDate = new Date(task.dueDate);
@@ -474,6 +381,15 @@ export default function TodaysList({ wrikeData, triggerToast: _triggerToast, las
     saveBoardState(freshCampaigns, freshAssignments, targetTimeframe);
   };
 
+  // Rebuild the board from scratch whenever boardTasks gets a new reference —
+  // the initial narrow fetch on mount, or a webhook-triggered update
+  // (useMotionBoardTasks.js). No periodic polling involved on either side.
+  useEffect(() => {
+    if (!boardTasks || boardTasks.length === 0) return;
+    handleAutoAssign(timeframe);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [boardTasks]);
+
   // Stats
   const today = new Date(); today.setHours(0, 0, 0, 0);
   const isOverdue = (d) => d && d !== "No Due Date" && new Date(d) < today;
@@ -486,68 +402,40 @@ export default function TodaysList({ wrikeData, triggerToast: _triggerToast, las
 
   return (
     <div className="min-h-screen bg-slate-100 text-[#122027] font-sans selection:bg-[#12a0e1]/30 selection:text-[#122027]">
+      <PageHeader pageId="todayslist" icon={LayoutList} title={`${timeframe}'s List`} subtitle="Motioners Tasks Allocation">
+        <div className="flex bg-white/15 border border-white/20 backdrop-blur-sm p-1.5 rounded-xl">
+          {TIMEFRAMES.map((tf) => (
+            <button
+              key={tf}
+              onClick={() => { setTimeframe(tf); handleAutoAssign(tf); }}
+              className={`px-4 py-2 text-xs font-black uppercase tracking-wider rounded-lg transition-all ${
+                timeframe === tf
+                  ? "bg-white text-[#122027] shadow-sm"
+                  : "text-white/80 hover:text-white hover:bg-white/10"
+              }`}
+            >
+              {tf}
+            </button>
+          ))}
+        </div>
+        {/* Last saved indicator */}
+        {lastSaved && (() => {
+          const mins = Math.floor((Date.now() - new Date(lastSaved).getTime()) / 60000);
+          const label = mins < 1 ? "just now" : mins < 60 ? `${mins}m ago` : `${Math.floor(mins/60)}h ago`;
+          return (
+            <span className="text-[10px] font-bold text-white/80 flex items-center gap-1">
+              <span className={`w-1.5 h-1.5 rounded-full ${mins < 5 ? "bg-[#1cc1a5]" : mins < 30 ? "bg-amber-300" : "bg-white/40"}`} />
+              Saved {label}
+            </span>
+          );
+        })()}
+        <button onClick={() => handleAutoAssign(timeframe)} className={pageHeaderActionClass}>
+          <LayoutList className="w-4 h-4" />
+          Auto-Assign {timeframe}
+        </button>
+      </PageHeader>
+
       <div className="max-w-[1800px] mx-auto px-4 sm:px-6 pt-8">
-
-        {/* Header */}
-        <header className="bg-white shadow-sm border border-[#dce4ec] rounded-[2rem] p-6 sm:px-8 flex flex-col xl:flex-row items-start xl:items-center justify-between gap-5 relative overflow-hidden">
-          <div className="flex items-center gap-4">
-            <div className="bg-gradient-to-br from-[#12a0e1] to-[#1cc1a5] p-3.5 rounded-2xl text-white shadow-lg shadow-[#12a0e1]/20">
-              <CalendarDays className="w-8 h-8" />
-            </div>
-            <div>
-              <h1 className="text-3xl font-black text-[#122027] tracking-tight">{timeframe}'s List</h1>
-              <p className="text-[#768994] text-sm font-medium mt-0.5">Motioners Tasks Allocation</p>
-            </div>
-          </div>
-          <div className="flex flex-col lg:flex-row gap-4 lg:items-center w-full xl:w-auto">
-            <div className="flex bg-slate-100/50 p-1.5 rounded-xl border border-[#dce4ec]">
-              {TIMEFRAMES.map((tf) => (
-                <button
-                  key={tf}
-                  onClick={() => { setTimeframe(tf); handleAutoAssign(tf); }}
-                  className={`px-4 py-2 text-xs font-black uppercase tracking-wider rounded-lg transition-all ${
-                    timeframe === tf
-                      ? "bg-white text-[#12a0e1] shadow-sm ring-1 ring-black/5"
-                      : "text-[#768994] hover:text-[#122027] hover:bg-white/40"
-                  }`}
-                >
-                  {tf}
-                </button>
-              ))}
-            </div>
-            <div className="h-6 w-px bg-[#dce4ec] hidden lg:block" />
-            <div className="flex flex-col sm:flex-row gap-3">
-              <button
-                onClick={handleLiteSync}
-                disabled={isSyncing}
-                className="flex items-center gap-2 px-4 py-2 bg-white border border-[#dce4ec] text-[#768994] hover:text-[#12a0e1] hover:border-[#12a0e1]/30 rounded-xl transition-all shadow-sm font-bold text-sm disabled:opacity-50"
-              >
-                <RefreshCw className={`w-4 h-4 ${isSyncing ? "animate-spin text-[#12a0e1]" : ""}`} />
-                {isSyncing ? "Syncing..." : "Sync Statuses"}
-              </button>
-              {/* Last synced indicator */}
-              {(lastSaved || lastSynced) && (() => {
-                const t = lastSaved || lastSynced;
-                const mins = Math.floor((Date.now() - new Date(t).getTime()) / 60000);
-                const label = mins < 1 ? "just now" : mins < 60 ? `${mins}m ago` : `${Math.floor(mins/60)}h ago`;
-                return (
-                  <span className="text-[10px] font-bold text-[#768994] flex items-center gap-1">
-                    <span className={`w-1.5 h-1.5 rounded-full ${mins < 5 ? "bg-[#1cc1a5]" : mins < 30 ? "bg-amber-400" : "bg-slate-300"}`} />
-                    Saved {label}
-                  </span>
-                );
-              })()}
-              <button
-                onClick={() => handleAutoAssign(timeframe)}
-                className="flex items-center justify-center gap-2 bg-[#122027] hover:bg-slate-800 text-white px-6 py-3 rounded-xl font-bold transition-all shadow-sm active:scale-95"
-              >
-                <LayoutList className="w-4 h-4" />
-                Auto-Assign {timeframe}
-              </button>
-            </div>
-          </div>
-        </header>
-
         {/* Stats bar */}
         <div className="mt-4 flex gap-3 flex-wrap">
           <div className="bg-white border border-[#dce4ec] rounded-2xl px-4 py-3 flex items-center gap-3 shadow-sm min-w-[110px]">
@@ -593,50 +481,15 @@ export default function TodaysList({ wrikeData, triggerToast: _triggerToast, las
                   <div className="p-1.5 space-y-1 min-h-[36px] max-h-[130px] overflow-y-auto flex-1">
                     {campaign.subtasks.map((task) => {
                       const terr = getTerritoryData(task.title);
-                      const isAssigning = activeTaskId === task.id;
                       return (
                         <div
                           key={task.id}
                           className={`rounded-lg border border-slate-100 border-l-2 ${getBorderColorClass(task.tag)} bg-white`}
                         >
-                          {isAssigning ? (
-                            <div className="p-1.5">
-                              <p className="text-[9px] font-bold text-slate-500 mb-1.5 truncate">{task.title}</p>
-                              <div className="flex flex-wrap gap-1">
-                                {TEAM_MEMBERS.map((person) => (
-                                  <div key={person} className="relative group/tip">
-                                    <button
-                                      onClick={() => handleAssign(campaign.id, task.id, person)}
-                                      className={`w-6 h-6 rounded-full text-[9px] font-black text-white flex items-center justify-center ${TEAM_COLORS[person].solid.split(" ")[0]}`}
-                                    >
-                                      {person[0]}
-                                    </button>
-                                    <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-1 px-1.5 py-0.5 bg-[#122027] text-white text-[9px] font-bold rounded whitespace-nowrap opacity-0 group-hover/tip:opacity-100 pointer-events-none transition-opacity z-10">
-                                      {person}
-                                    </div>
-                                  </div>
-                                ))}
-                                <button
-                                  onClick={() => setActiveTaskId(null)}
-                                  className="w-6 h-6 rounded-full bg-slate-100 text-slate-400 flex items-center justify-center"
-                                >
-                                  <X className="w-3 h-3" />
-                                </button>
-                              </div>
-                            </div>
-                          ) : (
-                            <div className="flex items-center gap-1.5 p-1.5 group">
-                              <span className="text-sm leading-none shrink-0">{terr.flag}</span>
-                              <span className="text-[10px] font-bold text-[#122027] truncate flex-1">{task.title}</span>
-                              <button
-                                onClick={() => setActiveTaskId(task.id)}
-                                className="shrink-0 opacity-0 group-hover:opacity-100 text-[#12a0e1] transition-opacity"
-                                title="Assign to team"
-                              >
-                                <ArrowRight className="w-3 h-3" />
-                              </button>
-                            </div>
-                          )}
+                          <div className="flex items-center gap-1.5 p-1.5">
+                            <span className="text-sm leading-none shrink-0">{terr.flag}</span>
+                            <span className="text-[10px] font-bold text-[#122027] truncate flex-1">{task.title}</span>
+                          </div>
                         </div>
                       );
                     })}
@@ -777,13 +630,6 @@ export default function TodaysList({ wrikeData, triggerToast: _triggerToast, las
                                 )}
                               </div>
                             </div>
-                            <button
-                              onClick={e => { e.stopPropagation(); handleUnassign(task.id, person, task.campaignId); }}
-                              className="absolute top-2 right-2 text-slate-300 hover:text-rose-500 hover:bg-rose-50 p-1 rounded-lg opacity-0 group-hover:opacity-100 transition-all"
-                              title="Unassign"
-                            >
-                              <X className="w-3 h-3" />
-                            </button>
                           </div>
                         );
                       })}

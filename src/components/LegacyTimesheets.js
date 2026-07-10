@@ -25,6 +25,7 @@ import {
   Plus,
   Layers,
   Calendar,
+  Database,
 } from "lucide-react";
 import {
   DEFAULT_JOBS,
@@ -35,6 +36,7 @@ import {
   FILM_MAPPINGS,
 } from "../constants.js";
 import { COLUMNS, DAYS, TIME_OPTIONS, getDarkTagStyle } from "./legacy/legacyConstants";
+import PageHeader, { pageHeaderActionClass } from "./shared/PageHeader";
 import TableSearchableSelect from "./legacy/TableSearchableSelect";
 
 export default function LegacyTimesheet({ wrikeData, isAdmin = false }) {
@@ -1331,7 +1333,7 @@ export default function LegacyTimesheet({ wrikeData, isAdmin = false }) {
   }`;
 
   return (
-    <div className="min-h-screen bg-slate-100 px-4 pt-8 pb-4 font-sans selection:bg-[#12a0e1]/30">
+    <div className="min-h-screen bg-slate-100 font-sans selection:bg-[#12a0e1]/30">
       {/* Toast */}
       {toast.show && (
         <div
@@ -1806,68 +1808,47 @@ export default function LegacyTimesheet({ wrikeData, isAdmin = false }) {
         </div>
       )}
 
-      {/* New week banner */}
-      {newWeekBanner && (
-        <div className="max-w-[1600px] mx-auto mb-3 flex items-center gap-3 px-4 py-3 bg-emerald-50 border border-emerald-200 rounded-2xl shadow-sm">
-          <span className="text-lg">🗓️</span>
-          <div className="flex-1">
-            <span className="font-black text-emerald-900 text-sm">New week!</span>
-            <span className="text-emerald-800 text-sm ml-1.5">Last week's entries are hidden here but still saved — they show up in the Jobs Feed.</span>
-          </div>
-          <button
-            onClick={dismissNewWeekBanner}
-            className="px-3 py-1.5 text-emerald-700 hover:text-emerald-900 text-sm font-bold rounded-xl transition-colors"
-          >
-            Got it
-          </button>
+      {/* --- HEADER --- */}
+      <PageHeader pageId="legacy" icon={Database} title="Weekly Timesheet" subtitle={weekDateRange}>
+        <div className="flex items-center gap-2 text-[13px] text-white/85 font-medium">
+          <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse shrink-0" />
+          Welcome Back, {wrikeFullName ? wrikeFullName : "Loading..."}
         </div>
-      )}
+        {wrikeUserId && (
+          <button
+            onClick={() => handleSyncMyJobs()}
+            disabled={isSyncingJobs}
+            className={pageHeaderActionClass}
+          >
+            <RefreshCw className={`w-3.5 h-3.5 ${isSyncingJobs ? "animate-spin" : ""}`} />
+            {isSyncingJobs ? "Syncing..." : "Sync My Jobs"}
+          </button>
+        )}
+      </PageHeader>
+
+      {/* Everything below the full-bleed header gets the page's horizontal
+          gutter + top/bottom spacing — the header itself must stay outside
+          any padded container to remain edge-to-edge. */}
+      <div className="px-4 sm:px-6 pt-3 pb-4">
+        {/* New week banner */}
+        {newWeekBanner && (
+          <div className="max-w-[1800px] mx-auto mb-3 flex items-center gap-3 px-4 py-3 bg-emerald-50 border border-emerald-200 rounded-2xl shadow-sm">
+            <span className="text-lg">🗓️</span>
+            <div className="flex-1">
+              <span className="font-black text-emerald-900 text-sm">New week!</span>
+              <span className="text-emerald-800 text-sm ml-1.5">Last week's entries are hidden here but still saved — they show up in the Jobs Feed.</span>
+            </div>
+            <button
+              onClick={dismissNewWeekBanner}
+              className="px-3 py-1.5 text-emerald-700 hover:text-emerald-900 text-sm font-bold rounded-xl transition-colors"
+            >
+              Got it
+            </button>
+          </div>
+        )}
 
       {/* --- STANDARD UI --- */}
-      <div className="max-w-[1600px] mx-auto bg-white shadow-2xl rounded-2xl relative min-h-[calc(100vh-10rem)] flex flex-col border border-slate-200">
-        {/* --- MODERN HEADER --- */}
-        <div className="bg-slate-900 text-white p-6 flex justify-between items-center border-b border-slate-800 rounded-t-2xl">
-          <div>
-            <div className="flex items-center gap-4 mb-1">
-              <h1 className="text-2xl font-black tracking-tight text-white">
-                Weekly Timesheet
-              </h1>
-              <span className="text-[13px] font-bold text-slate-400 bg-slate-800 px-3 py-1 rounded-full">
-                {weekDateRange}
-              </span>
-            </div>
-            <div className="text-[13px] text-slate-300 font-medium flex items-center gap-4 mt-2">
-              <div className="flex items-center gap-2">
-                <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
-                Welcome Back, {wrikeFullName ? wrikeFullName : "Loading..."}
-              </div>
-
-              {wrikeUserId && (
-                <button
-                  onClick={() => handleSyncMyJobs()}
-                  disabled={isSyncingJobs}
-                  className="flex items-center gap-1.5 bg-slate-800 hover:bg-slate-700 text-emerald-400 px-3 py-1 rounded-lg text-[11px] font-bold transition-all border border-slate-700 active:scale-95 disabled:opacity-50"
-                >
-                  <RefreshCw
-                    className={`w-3.5 h-3.5 ${
-                      isSyncingJobs ? "animate-spin text-emerald-500" : ""
-                    }`}
-                  />
-                  {isSyncingJobs ? "Syncing..." : "Sync My Jobs"}
-                </button>
-              )}
-            </div>
-          </div>
-
-          <div className="text-right">
-            <img
-              src="https://timesheet.xyi.com/img/xyi_logo_banner.png"
-              alt="XYi Design"
-              className="h-10 object-contain drop-shadow-md"
-            />
-          </div>
-        </div>
-
+      <div className="max-w-[1800px] mx-auto bg-white shadow-2xl rounded-2xl relative min-h-[calc(100vh-10rem)] flex flex-col border border-slate-200">
         {/* --- MODERN TABS --- */}
         <div className="flex px-4 pt-4 bg-slate-50 border-b border-slate-200 gap-2">
           {DAYS.map((day) => {
@@ -2410,6 +2391,7 @@ export default function LegacyTimesheet({ wrikeData, isAdmin = false }) {
             </button>
           </div>
         </div>
+      </div>
       </div>
     </div>
   );

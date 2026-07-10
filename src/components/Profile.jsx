@@ -23,6 +23,7 @@ import {
   ExternalLink,
 } from "lucide-react";
 import { supabase } from "../lib/supabaseClient";
+import PageHeader from "./shared/PageHeader";
 import { useTasks } from "../hooks/useTasks";
 import { useWrikeUser } from "../hooks/useWrikeUser";
 import { startWrikeOAuth, disconnectWrike, fetchWrikeOAuthStatus } from "../lib/wrikeApi";
@@ -1211,12 +1212,6 @@ export default function Profile({ wrikeData, onTokenChange, activeSection: activ
       });
   }, [wrikeUser?.id]);
 
-  const initials = useMemo(() => {
-    const f = profile?.first_name || wrikeUser?.firstName || "";
-    const l = profile?.last_name || "";
-    return `${f[0] || ""}${l[0] || ""}`.toUpperCase() || "?";
-  }, [profile, wrikeUser]);
-
   const displayName = profile
     ? `${profile.first_name || ""} ${profile.last_name || ""}`.trim()
     : wrikeUser?.firstName || "Your profile";
@@ -1238,69 +1233,34 @@ export default function Profile({ wrikeData, onTokenChange, activeSection: activ
           </div>
         </div>
       )}
-      <div className="max-w-[1400px] mx-auto px-4 sm:px-6 pt-8 space-y-6">
-        {/* Hero header */}
-        <div className="bg-white border border-[#dce4ec] rounded-[2rem] overflow-hidden shadow-sm">
-          {/* Gradient bar */}
-          <div className="h-1.5 bg-gradient-to-r from-[#12a0e1] to-[#1cc1a5]" />
-          <div className="p-6 sm:p-8 flex flex-col sm:flex-row items-start sm:items-center gap-6">
-            {/* Avatar */}
-            <div className="relative shrink-0">
-              <div className="w-20 h-20 rounded-2xl bg-gradient-to-br from-[#12a0e1] to-[#1cc1a5] flex items-center justify-center text-white text-2xl font-black shadow-lg shadow-[#12a0e1]/20">
-                {initials}
-              </div>
-              {/* Active dot */}
-              <div className="absolute -bottom-1 -right-1 w-4 h-4 rounded-full bg-[#1cc1a5] border-2 border-white" />
-            </div>
-
-            {/* Identity */}
-            <div className="flex-1 min-w-0">
-              <h1 className="text-3xl font-black tracking-tight text-[#122027]">
-                {displayName}
-              </h1>
-              <div className="flex flex-wrap items-center gap-2.5 mt-2">
-                {profile?.email && (
-                  <span className="text-xs text-[#768994] font-medium">
-                    {profile.email}
-                  </span>
-                )}
-                {wrikeUser?.id && (
-                  <span className="text-[10px] font-black text-[#768994] bg-slate-100 px-2.5 py-1 rounded-full uppercase tracking-wider">
-                    Wrike · {wrikeUser.id.slice(0, 8)}…
-                  </span>
-                )}
-                {profile?.updated_at && (
-                  <span className="text-[10px] font-black text-[#1cc1a5] bg-[#1cc1a5]/10 px-2.5 py-1 rounded-full uppercase tracking-wider flex items-center gap-1">
-                    <div className="w-1.5 h-1.5 rounded-full bg-[#1cc1a5]" />{" "}
-                    Active
-                  </span>
-                )}
+      <PageHeader pageId="profile" icon={User} title={displayName} subtitle={profile?.email}>
+        {wrikeUser?.id && (
+          <span className="text-[10px] font-black text-white/90 bg-white/15 border border-white/20 px-2.5 py-1 rounded-full uppercase tracking-wider">
+            Wrike · {wrikeUser.id.slice(0, 8)}…
+          </span>
+        )}
+        {profile?.updated_at && (
+          <span className="text-[10px] font-black text-white bg-white/15 border border-white/20 px-2.5 py-1 rounded-full uppercase tracking-wider flex items-center gap-1">
+            <span className="w-1.5 h-1.5 rounded-full bg-[#1cc1a5]" /> Active
+          </span>
+        )}
+        <div className="flex gap-4">
+          {[
+            { label: "Tasks", value: tasks.length },
+            { label: "Time", value: formatDurationText(totalSeconds) },
+            { label: "All-time", value: userStats.fetched ? userStats.allTime : "—" },
+          ].map(({ label, value }) => (
+            <div key={label} className="text-center">
+              <div className="text-xl font-black text-white">{value}</div>
+              <div className="text-[10px] font-black text-white/70 uppercase tracking-wider mt-0.5">
+                {label}
               </div>
             </div>
-
-            {/* Quick stats */}
-            <div className="flex gap-4 shrink-0">
-              {[
-                { label: "Tasks", value: tasks.length },
-                { label: "Time", value: formatDurationText(totalSeconds) },
-                {
-                  label: "All-time",
-                  value: userStats.fetched ? userStats.allTime : "—",
-                },
-              ].map(({ label, value }) => (
-                <div key={label} className="text-center">
-                  <div className="text-xl font-black text-[#122027]">
-                    {value}
-                  </div>
-                  <div className="text-[10px] font-black text-[#768994] uppercase tracking-wider mt-0.5">
-                    {label}
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
+          ))}
         </div>
+      </PageHeader>
 
+      <div className="max-w-[1400px] mx-auto px-4 sm:px-6 pt-8 space-y-6">
         {/* No-token banner */}
         {!hasToken && (
           <div className="bg-amber-50 border border-amber-200 rounded-2xl p-4 flex items-center gap-4">
@@ -1340,40 +1300,39 @@ export default function Profile({ wrikeData, onTokenChange, activeSection: activ
                 <button
                   key={id}
                   onClick={() => setActiveSection(id)}
-                  className={`group relative text-left bg-white border border-[#dce4ec] rounded-3xl p-5 shadow-sm hover:shadow-xl hover:-translate-y-1 transition-all duration-200 overflow-hidden ${
-                    featured ? "col-span-2 lg:col-span-3" : ""
+                  className={`group relative text-left border rounded-3xl shadow-sm hover:shadow-xl hover:-translate-y-1 transition-all duration-200 overflow-hidden ${
+                    featured
+                      ? `col-span-2 lg:col-span-3 p-7 border-transparent bg-gradient-to-br ${gradient}`
+                      : "p-5 bg-white border-[#dce4ec]"
                   }`}
                 >
-                  {/* Soft gradient wash */}
-                  <div
-                    className={`absolute inset-0 bg-gradient-to-br ${gradient} opacity-0 group-hover:opacity-[0.06] transition-opacity`}
-                  />
-                  <div className={`relative flex ${featured ? "items-center gap-5" : "flex-col gap-3"}`}>
+                  {/* Soft gradient wash (non-featured cards only — featured is already gradient-filled) */}
+                  {!featured && (
                     <div
-                      className={`shrink-0 rounded-2xl bg-gradient-to-br ${gradient} flex items-center justify-center text-white shadow-lg ${
-                        featured ? "w-16 h-16" : "w-12 h-12"
+                      className={`absolute inset-0 bg-gradient-to-br ${gradient} opacity-0 group-hover:opacity-[0.06] transition-opacity`}
+                    />
+                  )}
+                  <div className={`relative flex ${featured ? "items-center gap-6" : "flex-col gap-3"}`}>
+                    <div
+                      className={`shrink-0 rounded-2xl flex items-center justify-center shadow-lg ${
+                        featured ? "w-20 h-20 bg-white/20 text-white" : `w-12 h-12 bg-gradient-to-br ${gradient} text-white`
                       }`}
                     >
-                      <Icon className={featured ? "w-8 h-8" : "w-6 h-6"} />
+                      <Icon className={featured ? "w-10 h-10" : "w-6 h-6"} />
                     </div>
                     <div className="min-w-0 flex-1">
-                      <div className="flex items-center gap-2">
-                        <p className={`font-black text-[#122027] ${featured ? "text-xl" : "text-sm"}`}>
-                          {label}
-                        </p>
-                        {featured && (
-                          <span className="text-[9px] font-black text-[#1cc1a5] bg-[#1cc1a5]/10 px-2 py-0.5 rounded-full uppercase tracking-wider">
-                            Start here
-                          </span>
-                        )}
-                      </div>
-                      <p className={`text-[#768994] mt-0.5 ${featured ? "text-sm" : "text-[11px] leading-snug"}`}>
+                      <p className={`font-black ${featured ? "text-2xl text-white" : "text-sm text-[#122027]"}`}>
+                        {label}
+                      </p>
+                      <p className={`mt-0.5 ${featured ? "text-sm text-white/80" : "text-[11px] leading-snug text-[#768994]"}`}>
                         {desc}
                       </p>
                     </div>
                     <ChevronRight
-                      className={`shrink-0 text-slate-300 group-hover:text-[#12a0e1] group-hover:translate-x-0.5 transition-all ${
-                        featured ? "w-6 h-6" : "w-4 h-4 absolute top-0 right-0"
+                      className={`shrink-0 transition-all ${
+                        featured
+                          ? "w-7 h-7 text-white/70 group-hover:text-white group-hover:translate-x-0.5"
+                          : "w-4 h-4 absolute top-0 right-0 text-slate-300 group-hover:text-[#12a0e1] group-hover:translate-x-0.5"
                       }`}
                     />
                   </div>

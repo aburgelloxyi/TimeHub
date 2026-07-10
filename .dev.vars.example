@@ -1,6 +1,0 @@
-# Copy to .dev.vars (gitignored) and fill in real values for local dev.
-# Production values are set with `wrangler secret put <NAME>` instead — never
-# committed, never placed in wrangler.jsonc.
-
-WRIKE_CLIENT_SECRET=
-SUPABASE_SERVICE_ROLE_KEY=

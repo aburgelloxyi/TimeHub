@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { supabase } from "../lib/supabaseClient";
 import { getFilmName } from "../lib/wrikeEnrich";
+import PageHeader, { pageHeaderActionClass } from "./shared/PageHeader";
 import { FILM_MAPPINGS } from "../constants.js";
 import {
   Layout,
@@ -1313,60 +1314,47 @@ export default function CampaignCanvas({ wrikeData = [], folderCampaigns = [], t
         );
       })()}
 
-      <div className="max-w-[1800px] mx-auto px-4 sm:px-6 pt-8">
-        <header className="bg-white shadow-sm border border-[#dce4ec] rounded-[2rem] p-6 sm:px-8 flex flex-col md:flex-row items-start md:items-center justify-between gap-5 relative overflow-hidden">
-          <div className="flex items-center gap-4">
-            <div className="bg-gradient-to-br from-[#12a0e1] to-[#1cc1a5] p-3.5 rounded-2xl text-white shadow-lg shadow-[#12a0e1]/20">
-              <Layout className="w-8 h-8" />
-            </div>
-            <div>
-              <h1 className="text-3xl font-black text-[#122027] tracking-tight">
-                Campaign Canvas
-              </h1>
-              <div className="text-[#768994] text-sm font-medium mt-0.5 flex items-center gap-2">
-                Visual Command Centre for active campaigns
-                <span className="hidden md:flex items-center gap-1 bg-slate-50 px-2 py-0.5 rounded-md text-[10px] font-black tracking-widest border border-[#dce4ec] shadow-sm text-[#768994] ml-2">
-                  <Command className="w-3 h-3" /> Global Cmd + K Menu
-                </span>
-              </div>
-            </div>
-          </div>
-          {isAdmin && (
-            <div className="flex items-center gap-2">
+      <PageHeader pageId="canvas" icon={Layout} title="Campaign Canvas" subtitle="Visual Command Centre for active campaigns">
+        <span className="hidden md:flex items-center gap-1 bg-white/15 border border-white/20 px-2.5 py-1 rounded-md text-[10px] font-black tracking-widest text-white/85">
+          <Command className="w-3 h-3" /> Global Cmd + K Menu
+        </span>
+        {isAdmin && (
+          <>
+            <button
+              onClick={() => setShowMappingsPanel(true)}
+              title="View all film code mappings (admin only)"
+              className={pageHeaderActionClass}
+            >
+              <List className="w-3.5 h-3.5" />
+              {Object.keys(filmCodeMappings).length + Object.keys(FILM_MAPPINGS || {}).length} Codes
+            </button>
+            {scanFilmMappings && (
               <button
-                onClick={() => setShowMappingsPanel(true)}
-                title="View all film code mappings (admin only)"
-                className="flex items-center gap-2 bg-slate-100 hover:bg-slate-200 text-[#768994] hover:text-[#122027] border border-[#dce4ec] px-4 py-2.5 rounded-xl text-xs font-bold transition-all active:scale-95"
+                onClick={scanFilmMappings}
+                disabled={isScanning || isSyncing}
+                title="Scan all Wrike tasks to discover film code mappings (admin only)"
+                className={pageHeaderActionClass}
               >
-                <List className="w-3.5 h-3.5" />
-                {Object.keys(filmCodeMappings).length + Object.keys(FILM_MAPPINGS || {}).length} Codes
+                <Search className={`w-3.5 h-3.5 ${isScanning ? "animate-pulse" : ""}`} />
+                {isScanning ? "Scanning…" : "Map Films"}
               </button>
-              {scanFilmMappings && (
-                <button
-                  onClick={scanFilmMappings}
-                  disabled={isScanning || isSyncing}
-                  title="Scan all Wrike tasks to discover film code mappings (admin only)"
-                  className="flex items-center gap-2 bg-slate-100 hover:bg-slate-200 text-[#768994] hover:text-[#122027] border border-[#dce4ec] px-4 py-2.5 rounded-xl text-xs font-bold transition-all disabled:opacity-50 active:scale-95"
-                >
-                  <Search className={`w-3.5 h-3.5 ${isScanning ? "animate-pulse" : ""}`} />
-                  {isScanning ? "Scanning…" : "Map Films"}
-                </button>
-              )}
-              {syncNow && (
-                <button
-                  onClick={syncNow}
-                  disabled={isSyncing || isScanning}
-                  title="Force full Wrike sync (admin only)"
-                  className="flex items-center gap-2 bg-slate-100 hover:bg-slate-200 text-[#768994] hover:text-[#122027] border border-[#dce4ec] px-4 py-2.5 rounded-xl text-xs font-bold transition-all disabled:opacity-50 active:scale-95"
-                >
-                  <RefreshCw className={`w-3.5 h-3.5 ${isSyncing ? "animate-spin" : ""}`} />
-                  {isSyncing ? "Syncing…" : "Sync Wrike"}
-                </button>
-              )}
-            </div>
-          )}
-        </header>
+            )}
+            {syncNow && (
+              <button
+                onClick={syncNow}
+                disabled={isSyncing || isScanning}
+                title="Force full Wrike sync (admin only)"
+                className={pageHeaderActionClass}
+              >
+                <RefreshCw className={`w-3.5 h-3.5 ${isSyncing ? "animate-spin" : ""}`} />
+                {isSyncing ? "Syncing…" : "Sync Wrike"}
+              </button>
+            )}
+          </>
+        )}
+      </PageHeader>
 
+      <div className="max-w-[1800px] mx-auto px-4 sm:px-6 pt-8">
         {/* --- PERFECTLY CENTERED ICON DOCK --- */}
         {isLoading && (
           <div className="flex items-center justify-center gap-2 py-3 text-xs font-bold text-[#768994]">

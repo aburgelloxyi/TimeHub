@@ -16,6 +16,7 @@ import {
   buildChildToParent,
   buildFilmCodeMappings,
 } from "../lib/wrikeEnrich";
+import { subscribeToWrikeTaskEvents } from "../lib/wrikeWebhookSubscription";
 
 const FIELDS_FILTER = encodeURIComponent(
   "[customFields,parentIds,responsibleIds,subTaskIds,description]"
@@ -116,7 +117,7 @@ async function fetchWrikeTasks(sinceIso) {
 // 2+, so tasks from later pages come back without their description — which is
 // where the MATRIX table + notes live. Fetching by ID guarantees we get them.
 // ---------------------------------------------------------------------------
-async function fetchTasksByIds(ids) {
+export async function fetchTasksByIds(ids) {
   const out = [];
   // Batch up to 100 IDs per request — Wrike supports comma-separated IDs
   // and returns description by default (no fields param needed).
@@ -193,6 +194,16 @@ export function useWrikeCache() {
   const [syncError, setSyncError]               = useState(null);
   const syncingRef  = useRef(false);
   const scanningRef = useRef(false);
+  // Dictionaries needed to enrich a single webhook-pushed task outside of a
+  // full sync() call — sync() only keeps these as local variables, so we
+  // mirror the latest copy here whenever mount-load or sync() refreshes them.
+  const enrichCtxRef = useRef({
+    folderDictionary: {},
+    contactDictionary: {},
+    statusDictionary: {},
+    childToParent: {},
+    filmCodeMappings: {},
+  });
 
   const wrikeUserId = localStorage.getItem("wrike_user_id");
 
@@ -277,6 +288,13 @@ export function useWrikeCache() {
       if (meta?.film_code_mappings && Object.keys(meta.film_code_mappings).length) {
         setFilmCodeMappings(meta.film_code_mappings);
       }
+      enrichCtxRef.current = {
+        folderDictionary: meta?.folder_dictionary || {},
+        contactDictionary: meta?.contact_dictionary || {},
+        statusDictionary: meta?.status_dictionary || {},
+        childToParent: buildChildToParent(meta?.folder_dictionary || {}),
+        filmCodeMappings: meta?.film_code_mappings || {},
+      };
 
       // --- SELF-HEAL + STUDIO BACKFILL ---
       // MATRIX tasks that predate parentIds in FIELDS_FILTER have parentIds=undefined.
@@ -371,6 +389,7 @@ export function useWrikeCache() {
           }
         }
         console.log(`[WrikeCache] backfill: ${Object.keys(fd).length} folders, ${Object.keys(c2p).length} parent links`);
+        enrichCtxRef.current = { ...enrichCtxRef.current, folderDictionary: fd, childToParent: c2p };
         const derived = deriveFolderCampaigns(fd);
         if (derived.length > 0) {
           console.log(`[WrikeCache] folder campaigns derived: ${derived.length}`);
@@ -480,6 +499,13 @@ export function useWrikeCache() {
       // fields — title/parentIds/responsibleIds/subTaskIds — present on every page).
       const relevant = filterToMotionTeam(rawTasks, folderDictionary, contactDictionary);
 
+      // Tasks Wrike reports as changed but that no longer pass the filter
+      // (e.g. reassigned off the Motion team) must be purged from the cache —
+      // otherwise their stale pre-change copy lingers there forever, since
+      // nothing else ever revisits a task once it drops out of relevance.
+      const relevantIds = new Set(relevant.map((t) => t.id));
+      const droppedIds = rawTasks.filter((t) => !relevantIds.has(t.id)).map((t) => t.id);
+
       // Re-fetch descriptions for any relevant task missing one (pagination drops
       // the fields param on pages 2+). This restores the MATRIX table + notes.
       const missingDesc = relevant.filter((t) => !t.description).map((t) => t.id);
@@ -530,6 +556,10 @@ export function useWrikeCache() {
         await saveLocalTasks(filtered);
         await advanceLocalCursor(filtered);
       }
+      if (droppedIds.length > 0) {
+        await supabase.from("wrike_tasks_cache").delete().in("id", droppedIds);
+        console.log(`[WrikeCache] purged ${droppedIds.length} task(s) no longer Motion-relevant`);
+      }
 
       // Collect code→filmName mappings discovered in this sync and merge with existing
       const newMappings = buildFilmCodeMappings(filtered);
@@ -548,12 +578,20 @@ export function useWrikeCache() {
         status_dictionary:  needsMetaRefresh ? statusDictionary  : (meta?.status_dictionary  ?? {}),
         film_code_mappings: mergedFilmMappings,
       });
+      enrichCtxRef.current = {
+        folderDictionary,
+        contactDictionary,
+        statusDictionary,
+        childToParent,
+        filmCodeMappings: mergedFilmMappings,
+      };
 
       // Merge new tasks into state, then backfill studioName on any task still missing it.
       // Archived tasks (outside the lookback window) are never re-enriched, so we use the
       // live in-memory folderDictionary (always complete) rather than the Supabase-stored copy.
       setTasks((prev) => {
         const map = new Map(prev.map((t) => [t.id, t]));
+        droppedIds.forEach((id) => map.delete(id));
         filtered.forEach((t) => map.set(t.id, t));
         const merged = [...map.values()];
 
@@ -599,6 +637,81 @@ export function useWrikeCache() {
   }, [wrikeUserId, sync]);
 
   const syncNow = useCallback(() => sync({ fullRefresh: true }), [sync]);
+
+  // --- Live updates: Wrike webhook events pushed via Supabase Realtime ---
+  // The Worker (worker/index.js) receives Wrike webhooks and writes lightweight
+  // {task_id, event_type} rows into wrike_webhook_events. We pick those up here,
+  // fetch just the changed task(s), and run them through the same enrichTasks
+  // pipeline sync() uses — this is the fast path; sync()'s 15-min poll remains
+  // the fallback for missed webhook deliveries or when no tab is open.
+  const handleWebhookTaskIds = useCallback(async (ids) => {
+    if (!ids.length) return;
+
+    let ctx = enrichCtxRef.current;
+    if (Object.keys(ctx.folderDictionary).length === 0) {
+      // No dictionaries in memory yet (e.g. tab just opened, sync() hasn't run) —
+      // fall back to the last synced copy in Supabase.
+      const { data: meta } = await supabase
+        .from("wrike_sync_meta")
+        .select("folder_dictionary,contact_dictionary,status_dictionary,film_code_mappings")
+        .order("last_synced_at", { ascending: false })
+        .limit(1)
+        .single();
+      ctx = {
+        folderDictionary: meta?.folder_dictionary || {},
+        contactDictionary: meta?.contact_dictionary || {},
+        statusDictionary: meta?.status_dictionary || {},
+        childToParent: buildChildToParent(meta?.folder_dictionary || {}),
+        filmCodeMappings: meta?.film_code_mappings || {},
+      };
+      enrichCtxRef.current = ctx;
+    }
+
+    const raw = await fetchTasksByIds(ids);
+    if (!raw.length) return;
+
+    // Same relevance check sync() applies — a webhook-changed task that no
+    // longer (or never did) pass filterToMotionTeam must not be added to the
+    // shared cache, and must be purged if it's there from before.
+    const relevant = filterToMotionTeam(raw, ctx.folderDictionary, ctx.contactDictionary);
+    const relevantIds = new Set(relevant.map((t) => t.id));
+    const droppedIds = raw.filter((t) => !relevantIds.has(t.id)).map((t) => t.id);
+
+    const enriched = enrichTasks(
+      relevant,
+      ctx.folderDictionary,
+      ctx.contactDictionary,
+      ctx.statusDictionary,
+      ctx.childToParent,
+      ctx.filmCodeMappings
+    );
+
+    if (enriched.length > 0) {
+      const rows = enriched.map((t) => ({
+        id: t.id,
+        wrike_user_id: wrikeUserId,
+        task_data: t,
+        updated_date: t.updatedDate ?? null,
+      }));
+      await supabase.from("wrike_tasks_cache").upsert(rows);
+    }
+    if (droppedIds.length > 0) {
+      await supabase.from("wrike_tasks_cache").delete().in("id", droppedIds);
+    }
+
+    setTasks((prev) => {
+      const map = new Map(prev.map((p) => [p.id, p]));
+      droppedIds.forEach((id) => map.delete(id));
+      enriched.forEach((t) => map.set(t.id, t));
+      return [...map.values()];
+    });
+    console.log(`[WrikeCache] realtime: updated ${enriched.length}, purged ${droppedIds.length} task(s) from webhook event(s)`);
+  }, [wrikeUserId]);
+
+  useEffect(() => {
+    if (!wrikeUserId) return;
+    return subscribeToWrikeTaskEvents(handleWebhookTaskIds);
+  }, [wrikeUserId, handleWebhookTaskIds]);
 
   // --- Broad film-code mapping scan (all tasks, not just Motion-filtered) ---
   // Fetches every task from the last 2 years with minimal fields (parentIds only),

@@ -2,6 +2,7 @@
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "timesheeter",
   "compatibility_date": "2026-07-02",
+  "main": "worker/index.js",
   "observability": {
     "enabled": true
   },

@@ -325,6 +325,11 @@ async function handleWebhookRegister(request, url, env) {
   const secret = crypto.randomUUID().replace(/-/g, "") + crypto.randomUUID().replace(/-/g, "");
   const hookUrl = `${url.origin}/api/wrike/webhook`;
 
+  // Wrike validates hookUrl synchronously as part of webhook creation — it
+  // calls back to /api/wrike/webhook and expects a signed handshake response
+  // before the create call returns, so the secret must already be saved.
+  await upsertWebhookConfig(env, { webhookId: "", secret });
+
   const body = new URLSearchParams({ hookUrl, secret });
   const res = await fetch(`https://${row.api_host}/api/v4/webhooks`, {
     method: "POST",
@@ -336,6 +341,7 @@ async function handleWebhookRegister(request, url, env) {
   });
   if (!res.ok) {
     const text = await res.text().catch(() => "");
+    console.error("wrike webhook create failed", res.status, text);
     return json({ error: "wrike_webhook_create_failed", detail: text }, { status: 502 });
   }
   const data = await res.json();
@@ -357,9 +363,11 @@ async function handleWebhookEvent(request, env) {
   const hookSecretHeader = request.headers.get("X-Hook-Secret");
 
   if (hookSecretHeader) {
-    // Handshake: prove we know the secret by signing the value Wrike sent us.
+    // Handshake: prove we know the secret by signing the value Wrike sent us
+    // and echoing it back in the *same* header name (X-Hook-Secret, not
+    // X-Hook-Signature) — per developers.wrike.com/docs/webhooks.
     const signature = await hmacSha256Hex(config.secret, hookSecretHeader);
-    return new Response(null, { status: 200, headers: { "X-Hook-Signature": signature } });
+    return new Response(null, { status: 200, headers: { "X-Hook-Secret": signature } });
   }
 
   const signatureHeader = request.headers.get("X-Hook-Signature") || "";

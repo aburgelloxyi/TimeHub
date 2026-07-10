@@ -1,11 +1,24 @@
 import React, { useState, useEffect } from "react";
-import { X, Shield, Users, Clock, Key, RefreshCw, CheckCircle, AlertCircle } from "lucide-react";
+import { X, Shield, Users, Clock, Key, RefreshCw, CheckCircle, AlertCircle, Zap } from "lucide-react";
 import { supabase } from "../lib/supabaseClient";
 
 export default function AdminModal({ onClose }) {
   const [profiles, setProfiles] = useState([]);
   const [loading, setLoading] = useState(true);
   const [taskCounts, setTaskCounts] = useState({});
+  const [webhookState, setWebhookState] = useState({ status: "idle", message: "" });
+
+  const registerWebhook = async () => {
+    setWebhookState({ status: "loading", message: "" });
+    try {
+      const res = await fetch("/api/wrike/webhook/register", { method: "POST" });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+      setWebhookState({ status: "success", message: `Live sync enabled (webhook ${data.webhookId})` });
+    } catch (e) {
+      setWebhookState({ status: "error", message: e.message });
+    }
+  };
 
   useEffect(() => {
     const load = async () => {
@@ -90,6 +103,28 @@ export default function AdminModal({ onClose }) {
               <div className="text-[10px] font-black text-[#768994] uppercase tracking-wider mt-0.5">{label}</div>
             </div>
           ))}
+        </div>
+
+        {/* Live sync setup */}
+        <div className="flex items-center gap-3 px-6 py-3 border-b border-[#dce4ec] bg-slate-50/50">
+          <button
+            onClick={registerWebhook}
+            disabled={webhookState.status === "loading"}
+            className="flex items-center gap-1.5 text-[11px] font-black text-[#122027] bg-white border border-[#dce4ec] hover:border-[#12a0e1] rounded-full px-3 py-1.5 transition-colors disabled:opacity-50"
+          >
+            <Zap className={`w-3 h-3 text-[#12a0e1] ${webhookState.status === "loading" ? "animate-pulse" : ""}`} />
+            {webhookState.status === "loading" ? "Enabling…" : "Enable live task sync"}
+          </button>
+          {webhookState.status === "success" && (
+            <span className="flex items-center gap-1 text-[10px] font-bold text-[#1cc1a5]">
+              <CheckCircle className="w-3 h-3" /> {webhookState.message}
+            </span>
+          )}
+          {webhookState.status === "error" && (
+            <span className="flex items-center gap-1 text-[10px] font-bold text-red-500">
+              <AlertCircle className="w-3 h-3" /> {webhookState.message}
+            </span>
+          )}
         </div>
 
         {/* Team list */}

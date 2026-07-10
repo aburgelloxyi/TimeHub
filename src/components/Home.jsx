@@ -3,6 +3,7 @@ import { Clock, LayoutList, Layout, Database, User, ChevronRight, Key } from "lu
 import gsap from "gsap";
 import { useGSAP } from "@gsap/react";
 import { supabase } from "../lib/supabaseClient";
+import { PAGE_GRADIENTS } from "../lib/pageGradients";
 import "@fontsource-variable/bricolage-grotesque";
 
 gsap.registerPlugin(useGSAP);
@@ -18,35 +19,35 @@ const SECTIONS = [
     icon: Clock,
     // Brand blue→teal at full brightness (owner's call: brand pop over the
     // ~3:1 large-text contrast the darkened variant hit).
-    gradient: "from-[#12a0e1] to-[#1cc1a5]",
+    gradient: PAGE_GRADIENTS.timesheet,
   },
   {
     id: "todayslist",
     label: "Motion Board",
     desc: "Team task allocation",
     icon: LayoutList,
-    gradient: "from-violet-500 to-purple-600",
+    gradient: PAGE_GRADIENTS.todayslist,
   },
   {
     id: "canvas",
     label: "Digi Canvas",
     desc: "MATRIX visualiser",
     icon: Layout,
-    gradient: "from-amber-600 to-orange-700",
+    gradient: PAGE_GRADIENTS.canvas,
   },
   {
     id: "legacy",
     label: "Legacy",
     desc: "Old timesheet database",
     icon: Database,
-    gradient: "from-slate-500 to-slate-700",
+    gradient: PAGE_GRADIENTS.legacy,
   },
   {
     id: "profile",
     label: "Profile hub",
     desc: "Your jobs & settings",
     icon: User,
-    gradient: "from-sky-600 to-blue-600",
+    gradient: PAGE_GRADIENTS.profile,
   },
 ];
 

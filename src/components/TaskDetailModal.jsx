@@ -18,6 +18,7 @@ import {
   ChevronLeft,
   ChevronRight,
   TableProperties,
+  ListTree,
 } from "lucide-react";
 import {
   TERRITORY_FLAGS,
@@ -25,6 +26,8 @@ import {
   CATEGORIES,
   DEFAULT_JOBS,
 } from "../constants";
+import { supabase } from "../lib/supabaseClient";
+import { parseWrikeData } from "../lib/wrikeEnrich";
 import { guessFieldsFromTask } from "../utils/wrikeHelpers";
 import SearchableSelect from "./shared/SearchableSelect";
 import { parsePdfDeliverySpecs } from "../utils/pdfTableParser";
@@ -1023,6 +1026,65 @@ export default function TaskDetailModal({
   const [fetchedAttachments, setFetchedAttachments] = useState(null);
   const [amendNote, setAmendNote] = useState(null);
   const [amendLoading, setAmendLoading] = useState(false);
+  const [fetchedFullTask, setFetchedFullTask] = useState(null);
+  const [subtasks, setSubtasks] = useState([]);
+  const [subtasksLoading, setSubtasksLoading] = useState(false);
+
+  // Fetch the full task fresh by ID whenever the modal opens. The `task` prop
+  // is often a stripped-down board card (no description/subTaskIds), and the
+  // shared wrikeData cache only holds it by coincidence now that some views
+  // fetch independently — so we always pull the authoritative copy here. This
+  // gives us the real description (for notes) and subTaskIds (for the subtask
+  // list below), regardless of which view opened the modal.
+  useEffect(() => {
+    setFetchedFullTask(null);
+    setSubtasks([]);
+    if (!task?.id) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch(`/api/wrike/tasks/${task.id}`);
+        const full = (await res.json()).data?.[0];
+        if (cancelled || !full) return;
+        setFetchedFullTask(full);
+
+        const subIds = full.subTaskIds || [];
+        if (subIds.length === 0) return;
+        setSubtasksLoading(true);
+
+        // Resolve customStatusId -> human name via the last-synced status
+        // dictionary (same source the enrichment pipeline uses).
+        let statusDict = {};
+        try {
+          const { data: meta } = await supabase
+            .from("wrike_sync_meta")
+            .select("status_dictionary")
+            .order("last_synced_at", { ascending: false })
+            .limit(1)
+            .single();
+          statusDict = meta?.status_dictionary || {};
+        } catch (_) { /* fall back to raw status below */ }
+
+        const sres = await fetch(`/api/wrike/tasks/${subIds.join(",")}`);
+        const subs = (await sres.json()).data || [];
+        if (cancelled) return;
+        setSubtasks(
+          subs.map((s) => ({
+            id: s.id,
+            title: s.title,
+            status: s.status,
+            statusName: s.customStatusId ? (statusDict[s.customStatusId] || s.status) : s.status,
+            permalink: s.permalink || `https://www.wrike.com/open.htm?id=${s.id}`,
+          }))
+        );
+      } catch (_) {
+        /* best-effort — modal still renders without subtasks */
+      } finally {
+        if (!cancelled) setSubtasksLoading(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [task?.id]);
 
   useEffect(() => {
     if (!task || attachmentsProp) return;
@@ -1102,14 +1164,24 @@ export default function TaskDetailModal({
   if (!task) return null;
 
   // 👇 3. The rest of your variables stay down here 👇
+  // Parse the freshly-fetched raw description the same way the enrichment
+  // pipeline does (splits out the MATRIX table, decodes entities) so notes
+  // read cleanly even for tasks that were never in the shared cache.
+  const parsedFetched = fetchedFullTask?.description
+    ? parseWrikeData(fetchedFullTask.description)
+    : null;
   const notes =
     fullTask.notesText ||
+    parsedFetched?.notesText ||
     (fullTask.description
       ? fullTask.description.replace(/<[^>]*>/g, "").trim()
       : "") ||
     "";
   const links = extractLinks(notes);
-  const folderPaths = extractFolderPaths(notes, fullTask.extractedPathData);
+  const folderPaths = extractFolderPaths(
+    notes,
+    fullTask.extractedPathData || parsedFetched?.extractedPathData
+  );
   const attachments = attachmentsProp ?? fetchedAttachments ?? [];
   const overdue = isOverdue(task.dueDate);
   const terr = getTerritoryData(task.title);
@@ -1235,6 +1307,57 @@ export default function TaskDetailModal({
                   )}
                 </div>
               </div>
+
+              {(subtasksLoading || subtasks.length > 0) && (
+                <div className="bg-slate-50 rounded-2xl border border-slate-200/60 overflow-hidden">
+                  <div className="flex items-center gap-2 px-4 py-2.5 border-b border-slate-200/60 bg-white">
+                    <ListTree className="w-3.5 h-3.5 text-slate-400" />
+                    <span className="text-[9px] font-black uppercase tracking-widest text-slate-400">
+                      Subtasks{subtasks.length ? ` (${subtasks.length})` : ""}
+                    </span>
+                    {subtasks.length > 0 && (
+                      <span className="ml-auto text-[10px] font-bold text-slate-400">
+                        {subtasks.filter((s) => s.status === "Completed").length}/{subtasks.length} done
+                      </span>
+                    )}
+                  </div>
+                  <div className="p-2 max-h-56 overflow-y-auto flex flex-col gap-1">
+                    {subtasksLoading && subtasks.length === 0 ? (
+                      <div className="flex items-center gap-2 text-xs text-slate-400 px-2 py-1.5">
+                        <div className="w-3.5 h-3.5 border-2 border-slate-200 border-t-[#12a0e1] rounded-full animate-spin" />
+                        Loading subtasks…
+                      </div>
+                    ) : (
+                      subtasks.map((st) => {
+                        const done = st.status === "Completed";
+                        return (
+                          <a
+                            key={st.id}
+                            href={st.permalink}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="flex items-center gap-2 px-2.5 py-1.5 rounded-lg hover:bg-white transition-colors"
+                          >
+                            {done ? (
+                              <Check className="w-3.5 h-3.5 text-emerald-500 shrink-0" />
+                            ) : (
+                              <Square className="w-3.5 h-3.5 text-slate-300 shrink-0" />
+                            )}
+                            <span
+                              className={`text-xs font-medium flex-1 truncate ${
+                                done ? "text-slate-400 line-through" : "text-slate-700"
+                              }`}
+                            >
+                              {st.title}
+                            </span>
+                            <span className={getTagStyle(st.statusName)}>{st.statusName}</span>
+                          </a>
+                        );
+                      })
+                    )}
+                  </div>
+                </div>
+              )}
 
               {enableTimeLog && (
                 <TimeLogPanel

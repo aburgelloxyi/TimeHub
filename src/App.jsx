@@ -706,6 +706,7 @@ export default function App() {
         <TodaysList
           wrikeData={globalWrikeData}
           triggerToast={triggerToast}
+          isActive={activePage === "todayslist"}
         />
       </div>
 

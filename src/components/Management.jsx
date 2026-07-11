@@ -2125,7 +2125,7 @@ function AdminHub({ expandedGroup, onToggleGroup, onOpenItem }) {
           const isOpen = expandedGroup === group.id;
           return (
             <div key={group.id}>
-              <HubRow section={group} onClick={() => onToggleGroup(group.id)} open={isOpen} first large />
+              <HubRow section={group} onClick={() => onToggleGroup(group.id)} open={isOpen} first />
               <AnimatePresence initial={false}>
                 {isOpen && (
                   <motion.div

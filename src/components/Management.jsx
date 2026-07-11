@@ -3,7 +3,7 @@ import {
   Briefcase, Film, Users, Tag, AlignLeft, Building2,
   Plus, Pencil, Trash2, X, Check, Search,
   RefreshCw, Shield, AlertTriangle, ChevronLeft, ChevronRight,
-  ArrowUpAZ, ArrowDownAZ, LayoutDashboard, TrendingUp, CheckCircle2, UserCog, Activity,
+  ArrowUpAZ, ArrowDownAZ, CheckCircle2, UserCog, Activity,
   FolderPlus, Folder, FolderOpen, Sparkles, Loader2,
   FileBarChart, ClipboardList, Globe, Layers,
 } from "lucide-react";
@@ -11,6 +11,7 @@ import { supabase } from "../lib/supabaseClient";
 import { SEED_CLIENTS, SEED_PROJECT_DESCRIPTIONS } from "../data/seedData";
 import { DEFAULT_JOBS, CATEGORIES } from "../constants";
 import PageHeader from "./shared/PageHeader";
+import HubRow from "./shared/HubRow";
 
 // Film titles extracted from DEFAULT_JOBS (everything before " : XY")
 const SEED_FILMS = [...new Set(
@@ -31,26 +32,58 @@ const PRINT_DIGITAL = ["Digital", "Print", "Both"];
 // Jobs (Setup / Book / Feed) deliberately live on the standalone Job Book
 // page now (JobBook.jsx) — Administration keeps Reports, Staff Accounts, and
 // the reference-data lists, matching the PMs' mental model.
-const TABS = [
-  { id: "overview",             label: "Overview",              icon: LayoutDashboard },
-  { id: "project-time",         label: "Project/Time",          icon: FileBarChart },
-  { id: "timesheet-completion", label: "Timesheet Completion",  icon: ClipboardList },
-  { id: "people",               label: "People",                icon: Users     },
-  { id: "positions",            label: "Positions",             icon: UserCog   },
-  { id: "films",                label: "Films",                 icon: Film      },
-  { id: "clients",              label: "Clients",               icon: Building2 },
-  { id: "descs",                label: "Project Type Descriptions", icon: AlignLeft },
-  { id: "categories",           label: "Item Categories",       icon: Tag       },
-  { id: "translations",         label: "Translation Countries", icon: Globe     },
-  { id: "departments",          label: "Departments",           icon: Layers    },
+//
+// Navigation is a two-level drill-down (group -> item), the same HubRow
+// idiom Profile Hub uses, instead of an 11-wide tab bar. One decision at a
+// time, in a shape a manager already knows from the rest of the app — that
+// consistency is the whole point of this structure, not a tab count problem.
+const NAV_GROUPS = [
+  {
+    id: "reports",
+    label: "Reports",
+    desc: "Logged time by job, and who still needs to submit",
+    icon: FileBarChart,
+    gradient: "from-[#122027] to-[#12a0e1]",
+    items: [
+      { id: "project-time", label: "Project/Time", icon: FileBarChart, desc: "Every logged hour, grouped by job" },
+      { id: "timesheet-completion", label: "Timesheet Completion", icon: ClipboardList, desc: "Who hasn't submitted for the week", soon: true },
+    ],
+  },
+  {
+    id: "staff",
+    label: "Staff Accounts",
+    desc: "People, their positions & department access",
+    icon: Users,
+    gradient: "from-teal-500 to-[#1cc1a5]",
+    items: [
+      { id: "people", label: "People", icon: Users, desc: "Everyone's role, position & department" },
+      { id: "positions", label: "Positions", icon: UserCog, desc: "Job titles used across the team" },
+    ],
+  },
+  {
+    id: "supporting",
+    label: "Supporting Content",
+    desc: "Films, clients, descriptions, categories, countries & departments",
+    icon: Layers,
+    gradient: "from-violet-500 to-purple-600",
+    items: [
+      { id: "films", label: "Films", icon: Film, desc: "Every film in production" },
+      { id: "clients", label: "Clients", icon: Building2, desc: "Studios and companies you work with" },
+      { id: "descs", label: "Project Type Descriptions", icon: AlignLeft, desc: "The project types that follow each job number" },
+      { id: "categories", label: "Item Categories", icon: Tag, desc: "Work item categories used on jobs" },
+      { id: "translations", label: "Translation Countries", icon: Globe, desc: "Countries available for translation work" },
+      { id: "departments", label: "Departments", icon: Layers, desc: "The department list used across the app" },
+    ],
+  },
 ];
 
-const TAB_GROUPS = [
-  { ids: ["overview"] },
-  { ids: ["project-time", "timesheet-completion"], label: "Reports" },
-  { ids: ["people", "positions"], label: "Staff Accounts" },
-  { ids: ["films", "clients", "descs", "categories", "translations", "departments"], label: "Supporting Content" },
-];
+function findNavItem(id) {
+  for (const group of NAV_GROUPS) {
+    const item = group.items.find((i) => i.id === id);
+    if (item) return { group, item };
+  }
+  return null;
+}
 
 // ── Project Description quick-filter chips ────────────────────────────────────
 // keyword uses "<CODE> " (with trailing space) so "UK Something" matches but
@@ -1998,28 +2031,10 @@ export function JobsFeedSection() {
   );
 }
 
-// ── Overview / Dashboard ───────────────────────────────────────────────────────
-function OverviewSection({ setActiveTab }) {
-  const [counts, setCounts] = useState({});
-  const [loading, setLoading] = useState(true);
+// ── Administration hub (level 0) ────────────────────────────────────────────
+function AdminHub({ onOpenGroup }) {
   const [feedEntries, setFeedEntries] = useState([]);
   const [feedLoading, setFeedLoading] = useState(true);
-
-  useEffect(() => {
-    Promise.all([
-      supabase.from("profiles").select("wrike_user_id", { count: "exact", head: true }),
-      supabase.from("films").select("id", { count: "exact", head: true }),
-      supabase.from("clients").select("id", { count: "exact", head: true }),
-      supabase.from("job_categories").select("id", { count: "exact", head: true }),
-      supabase.from("project_descriptions").select("id", { count: "exact", head: true }),
-      supabase.from("positions").select("id", { count: "exact", head: true }),
-      supabase.from("translation_countries").select("id", { count: "exact", head: true }),
-      supabase.from("job_departments").select("id", { count: "exact", head: true }),
-    ]).then(([people, films, clients, cats, descs, positions, translations, departments]) => {
-      setCounts({ people: people.count ?? 0, films: films.count ?? 0, clients: clients.count ?? 0, categories: cats.count ?? 0, descriptions: descs.count ?? 0, positions: positions.count ?? 0, translations: translations.count ?? 0, departments: departments.count ?? 0 });
-      setLoading(false);
-    });
-  }, []);
 
   useEffect(() => {
     setFeedLoading(true);
@@ -2053,86 +2068,16 @@ function OverviewSection({ setActiveTab }) {
     return e.film_title || "—";
   };
 
-  const CARD_GROUPS = [
-    {
-      label: "Reports",
-      cards: [
-        { id: "project-time",         label: "Project/Time",         icon: FileBarChart,  color: "from-[#122027] to-[#12a0e1]", light: "bg-[#12a0e1]/10 text-[#12a0e1] border-[#12a0e1]/20", count: null },
-        { id: "timesheet-completion", label: "Timesheet Completion", icon: ClipboardList, color: "from-[#0e86be] to-[#12a0e1]", light: "bg-[#12a0e1]/10 text-[#12a0e1] border-[#12a0e1]/20", count: null, soon: true },
-      ],
-    },
-    {
-      label: "Staff Accounts",
-      cards: [
-        { id: "people",    label: "People",    icon: Users,   color: "from-teal-500 to-[#1cc1a5]", light: "bg-teal-50 text-teal-700 border-teal-200", count: counts.people },
-        { id: "positions", label: "Positions", icon: UserCog, color: "from-rose-500 to-pink-600",  light: "bg-rose-50 text-rose-700 border-rose-200",  count: counts.positions },
-      ],
-    },
-    {
-      label: "Supporting Content",
-      cards: [
-        { id: "films",        label: "Films",           icon: Film,      color: "from-violet-500 to-purple-600", light: "bg-violet-50 text-violet-700 border-violet-200",    count: counts.films },
-        { id: "clients",      label: "Clients",         icon: Building2, color: "from-blue-500 to-cyan-600",     light: "bg-blue-50 text-blue-700 border-blue-200",          count: counts.clients },
-        { id: "descs",        label: "Project Type Descriptions", icon: AlignLeft, color: "from-emerald-500 to-teal-600",  light: "bg-emerald-50 text-emerald-700 border-emerald-200", count: counts.descriptions },
-        { id: "categories",   label: "Item Categories", icon: Tag,       color: "from-amber-500 to-orange-500",  light: "bg-amber-50 text-amber-700 border-amber-200",       count: counts.categories },
-        { id: "translations", label: "Translation Countries", icon: Globe, color: "from-sky-500 to-blue-600",   light: "bg-sky-50 text-sky-700 border-sky-200",             count: counts.translations },
-        { id: "departments",  label: "Departments",     icon: Layers,    color: "from-slate-500 to-slate-700",   light: "bg-slate-100 text-slate-600 border-slate-200",      count: counts.departments },
-      ],
-    },
-  ];
-
-  const NavCard = ({ card }) => {
-    const Icon = card.icon;
-    return (
-      <button onClick={() => setActiveTab(card.id)}
-        className="group text-left bg-white border border-[#dce4ec] rounded-2xl p-5 hover:shadow-md hover:border-slate-300 transition-all">
-        <div className={`w-10 h-10 rounded-xl bg-gradient-to-br ${card.color} flex items-center justify-center mb-4 shadow-sm group-hover:scale-105 transition-transform`}>
-          <Icon className="w-5 h-5 text-white" />
-        </div>
-        <p className="text-[10px] font-black uppercase tracking-widest text-[#768994] mb-1">{card.label}</p>
-        {card.soon ? (
-          <p className="text-sm font-bold text-[#768994] mt-1">Coming soon</p>
-        ) : card.count === null ? (
-          <p className="text-sm font-bold text-[#768994] mt-1">Live feed</p>
-        ) : loading ? (
-          <div className="h-8 w-12 bg-slate-100 rounded animate-pulse" />
-        ) : (
-          <p className="text-3xl font-black text-[#122027]">{(card.count ?? 0).toLocaleString()}</p>
-        )}
-        <p className={`text-[10px] font-bold mt-2 px-2 py-0.5 rounded-full border inline-flex items-center gap-1 ${card.light}`}>
-          {card.soon ? "Preview →" : "Open →"}
-        </p>
-      </button>
-    );
-  };
-
   return (
     <div className="space-y-6">
 
-      {/* Grouped nav cards */}
-      <div className="space-y-5">
-        {/* Reports + Staff Accounts side by side */}
-        <div className="flex flex-col lg:flex-row gap-8">
-          {["Reports", "Staff Accounts"].map(groupLabel => {
-            const group = CARD_GROUPS.find(g => g.label === groupLabel);
-            return (
-              <div key={groupLabel} className="flex-1">
-                <p className="text-[9px] font-black uppercase tracking-widest text-[#b0bec8] mb-3 px-1">{groupLabel}</p>
-                <div className="grid grid-cols-2 gap-4">
-                  {group.cards.map(card => <NavCard key={card.id} card={card} />)}
-                </div>
-              </div>
-            );
-          })}
-        </div>
-
-        {/* Supporting Content full row */}
-        <div>
-          <p className="text-[9px] font-black uppercase tracking-widest text-[#b0bec8] mb-3 px-1">Supporting Content</p>
-          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-4">
-            {CARD_GROUPS.find(g => g.label === "Supporting Content").cards.map(card => <NavCard key={card.id} card={card} />)}
-          </div>
-        </div>
+      {/* The three destinations — one decision at a time, same HubRow
+          language as Profile Hub, instead of an 11-wide tab bar or a card
+          grid. Drilling into a group shows its items the same way. */}
+      <div className="bg-white rounded-3xl border border-[#dce4ec] shadow-sm overflow-hidden">
+        {NAV_GROUPS.map((group) => (
+          <HubRow key={group.id} section={group} onClick={() => onOpenGroup(group.id)} />
+        ))}
       </div>
 
       {/* Recent activity — most-recent logged tasks (the full Jobs Feed lives
@@ -2415,7 +2360,12 @@ function ComingSoon({ icon: Icon, title, body, note }) {
 }
 
 export default function Management({ wrikeUserId, department }) {
-  const [activeTab, setActiveTab] = useState("overview");
+  // Two-level drill-down, mirroring Profile Hub: activeGroup picks one of
+  // the three destinations, activeTab picks one item inside it. Both null
+  // means "show the hub" — there's never more than one row of choices on
+  // screen at once.
+  const [activeGroup, setActiveGroup] = useState(null);
+  const [activeTab, setActiveTab] = useState(null);
 
   // Administration is a first-class page for PMs; the hardcoded allowlist
   // remains as an admin override for everyone else.
@@ -2442,7 +2392,8 @@ export default function Management({ wrikeUserId, department }) {
     );
   }
 
-  const activeTabMeta = TABS.find(t => t.id === activeTab);
+  const nav = activeTab ? findNavItem(activeTab) : null;
+  const group = nav ? nav.group : activeGroup ? NAV_GROUPS.find((g) => g.id === activeGroup) : null;
 
   return (
     <div className="min-h-screen bg-slate-100 text-[#122027] font-sans pb-16">
@@ -2452,7 +2403,7 @@ export default function Management({ wrikeUserId, department }) {
         pageId="management"
         icon={Shield}
         title="Administration"
-        subtitle="Jobs · People · Reference data"
+        subtitle="Reports · Staff Accounts · Supporting Content"
       >
         {MANAGEMENT_IDS.length === 0 && (
           <div className="flex items-center gap-2 bg-white/15 border border-white/20 backdrop-blur-sm rounded-xl px-3 py-2">
@@ -2465,70 +2416,88 @@ export default function Management({ wrikeUserId, department }) {
       </PageHeader>
 
       <div className="max-w-[1800px] mx-auto px-4 sm:px-6 pt-6 space-y-6">
-        {/* Tab navigation — wraps rather than overflowing now that Supporting
-            Content carries six lists. */}
-        <div className="flex flex-wrap items-center gap-y-2">
-          {TAB_GROUPS.map((group, gi) => {
-            const groupTabs = group.ids.map(id => TABS.find(t => t.id === id)).filter(Boolean);
-            return (
-              <React.Fragment key={gi}>
-                {gi > 0 && (
-                  <div className="flex items-center mx-5">
-                    <div className="w-px h-4 bg-[#dce4ec]" />
-                  </div>
-                )}
-                <div className="flex flex-wrap items-center gap-1">
-                  {groupTabs.map(tab => {
-                    const Icon = tab.icon;
-                    const active = activeTab === tab.id;
-                    return (
-                      // Active tab carries the page's gradient identity —
-                      // same treatment as the Rail's active slot.
-                      <button key={tab.id} onClick={() => setActiveTab(tab.id)}
-                        className={`flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-bold transition-all ${
-                          active
-                            ? "bg-gradient-to-br from-[#122027] to-[#12a0e1] text-white shadow-lg"
-                            : "text-[#768994] hover:text-[#122027] hover:bg-white/60"
-                        }`}>
-                        <Icon className="w-3.5 h-3.5" />
-                        {tab.label}
-                      </button>
-                    );
-                  })}
+        {/* Level 0: the hub — three destinations, nothing else to choose. */}
+        {!group && <AdminHub onOpenGroup={setActiveGroup} />}
+
+        {/* Level 1: a group's items */}
+        {group && !nav && (
+          <div>
+            <div className="flex items-center gap-3 mb-4">
+              <button
+                onClick={() => setActiveGroup(null)}
+                className="flex items-center gap-1.5 text-xs font-bold text-[#768994] hover:text-[#122027] bg-white border border-[#dce4ec] hover:border-slate-300 rounded-xl px-3 py-2 shadow-sm transition-all"
+              >
+                <ChevronLeft className="w-4 h-4" /> Administration
+              </button>
+              <div className="flex items-center gap-2.5 min-w-0">
+                <div className={`w-8 h-8 rounded-xl bg-gradient-to-br ${group.gradient} flex items-center justify-center text-white shadow-sm shrink-0`}>
+                  <group.icon className="w-4 h-4" />
                 </div>
-              </React.Fragment>
-            );
-          })}
-        </div>
+                <h2 className="font-display text-xl font-bold text-[#122027] tracking-tight truncate">{group.label}</h2>
+              </div>
+            </div>
 
-        {/* Content */}
-        <div className="bg-white border border-[#dce4ec] rounded-2xl p-6 shadow-sm">
-          <div className="flex items-center gap-2.5 mb-5 pb-4 border-b border-[#dce4ec]">
-            {activeTabMeta && <activeTabMeta.icon className="w-4 h-4 text-[#12a0e1]" />}
-            <h2 className="text-sm font-black uppercase tracking-widest text-[#122027]">{activeTabMeta?.label}</h2>
+            <div className="bg-white rounded-3xl border border-[#dce4ec] shadow-sm overflow-hidden">
+              {group.items.map((item) => (
+                <HubRow
+                  key={item.id}
+                  section={item}
+                  onClick={() => setActiveTab(item.id)}
+                  badge={
+                    item.soon ? (
+                      <span className="text-[9px] font-black uppercase tracking-widest text-[#768994] group-hover:text-white/80 bg-slate-100 group-hover:bg-white/15 px-2 py-1 rounded-full transition-colors duration-300">
+                        Coming soon
+                      </span>
+                    ) : null
+                  }
+                />
+              ))}
+            </div>
           </div>
+        )}
 
-          {activeTab === "overview"   && <OverviewSection setActiveTab={setActiveTab} />}
-          {/* Project/Time is the logged-time-per-job feed — same component
-              Job Book uses (JobsFeedSection), not a separate report. */}
-          {activeTab === "project-time" && <JobsFeedSection />}
-          {activeTab === "timesheet-completion" && (
-            <ComingSoon
-              icon={ClipboardList}
-              title="Staff Timesheet Completion"
-              body="A live list of which staff haven't submitted their timesheet for a given week, so it's obvious at a glance who still needs to."
-              note="Buildable from submitted tasks vs the staff roster — flagged as the next report to build."
-            />
-          )}
-          {activeTab === "people"     && <PeopleSection />}
-          {activeTab === "films"      && <SimpleListSection table="films" labelField="title" label="Films" placeholder="Film title…" />}
-          {activeTab === "clients"    && <SimpleListSection table="clients" labelField="name" label="Clients" quickFilters={STUDIO_GROUPS} quickFilterLabel="Filter by studio" />}
-          {activeTab === "categories" && <SimpleListSection table="job_categories" labelField="name" label="Item Categories" groups={CATEGORY_GROUPS} />}
-          {activeTab === "descs"      && <SimpleListSection table="project_descriptions" labelField="description" label="Project Type Descriptions" isLong quickFilters={DESC_QUICK_FILTERS} quickFilterLabel="Filter by territory" groups={DESCRIPTION_GROUPS} />}
-          {activeTab === "positions"  && <SimpleListSection table="positions" labelField="title" label="Positions" placeholder="e.g. Creative Director…" />}
-          {activeTab === "translations" && <SimpleListSection table="translation_countries" labelField="name" label="Translation Countries" placeholder="e.g. France…" />}
-          {activeTab === "departments"  && <SimpleListSection table="job_departments" labelField="name" label="Departments" placeholder="e.g. Print…" />}
-        </div>
+        {/* Level 2: the item's actual content */}
+        {nav && (
+          <div>
+            <div className="flex items-center gap-3 mb-4">
+              <button
+                onClick={() => setActiveTab(null)}
+                className="flex items-center gap-1.5 text-xs font-bold text-[#768994] hover:text-[#122027] bg-white border border-[#dce4ec] hover:border-slate-300 rounded-xl px-3 py-2 shadow-sm transition-all"
+              >
+                <ChevronLeft className="w-4 h-4" /> {group.label}
+              </button>
+              <div className="flex items-center gap-2.5 min-w-0">
+                <div className={`w-8 h-8 rounded-xl bg-gradient-to-br ${group.gradient} flex items-center justify-center text-white shadow-sm shrink-0`}>
+                  <nav.item.icon className="w-4 h-4" />
+                </div>
+                <h2 className="font-display text-xl font-bold text-[#122027] tracking-tight truncate">{nav.item.label}</h2>
+              </div>
+            </div>
+
+            <div className="bg-white border border-[#dce4ec] rounded-2xl p-6 shadow-sm">
+              {/* Project/Time is the logged-time-per-job feed — same
+                  component Job Book uses (JobsFeedSection), not a separate
+                  report. */}
+              {activeTab === "project-time" && <JobsFeedSection />}
+              {activeTab === "timesheet-completion" && (
+                <ComingSoon
+                  icon={ClipboardList}
+                  title="Staff Timesheet Completion"
+                  body="A live list of which staff haven't submitted their timesheet for a given week, so it's obvious at a glance who still needs to."
+                  note="Buildable from submitted tasks vs the staff roster — flagged as the next report to build."
+                />
+              )}
+              {activeTab === "people"     && <PeopleSection />}
+              {activeTab === "films"      && <SimpleListSection table="films" labelField="title" label="Films" placeholder="Film title…" />}
+              {activeTab === "clients"    && <SimpleListSection table="clients" labelField="name" label="Clients" quickFilters={STUDIO_GROUPS} quickFilterLabel="Filter by studio" />}
+              {activeTab === "categories" && <SimpleListSection table="job_categories" labelField="name" label="Item Categories" groups={CATEGORY_GROUPS} />}
+              {activeTab === "descs"      && <SimpleListSection table="project_descriptions" labelField="description" label="Project Type Descriptions" isLong quickFilters={DESC_QUICK_FILTERS} quickFilterLabel="Filter by territory" groups={DESCRIPTION_GROUPS} />}
+              {activeTab === "positions"  && <SimpleListSection table="positions" labelField="title" label="Positions" placeholder="e.g. Creative Director…" />}
+              {activeTab === "translations" && <SimpleListSection table="translation_countries" labelField="name" label="Translation Countries" placeholder="e.g. France…" />}
+              {activeTab === "departments"  && <SimpleListSection table="job_departments" labelField="name" label="Departments" placeholder="e.g. Print…" />}
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );

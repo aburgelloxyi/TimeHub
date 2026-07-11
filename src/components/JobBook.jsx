@@ -63,7 +63,7 @@ export default function JobBook() {
                   {tab === id && (
                     <motion.span
                       layoutId="jobbook-tab-pill"
-                      className="absolute inset-0 bg-white rounded-lg shadow-sm"
+                      className="absolute inset-0 bg-white/70 backdrop-blur-sm rounded-lg shadow-sm"
                       transition={{ type: "spring", stiffness: 500, damping: 32 }}
                     />
                   )}

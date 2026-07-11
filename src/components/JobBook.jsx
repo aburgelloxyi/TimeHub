@@ -68,32 +68,43 @@ export default function JobBook() {
             active one stays permanently filled with the page's own
             gradient (not just on hover) so it still reads as "you are
             here" once the pointer moves away. */}
-        <div ref={navRef} className="grid grid-cols-1 sm:grid-cols-3 gap-px bg-[#dce4ec] border border-[#dce4ec] rounded-2xl overflow-hidden mb-6 shadow-sm">
-          {TABS.map(({ id, label, desc, icon: Icon }) => {
+        {/* No overflow-hidden here anymore — an outward glow needs room to
+            escape past a button's own box, which this wrapper would
+            otherwise clip on every side (its height/width exactly track
+            the row of buttons, so even the middle door's glow would get
+            cut top and bottom). The rounded-2xl shape is preserved by
+            giving the first/last buttons their own matching corner
+            radius instead, same fix as PeopleSection's department cards. */}
+        <div ref={navRef} className="grid grid-cols-1 sm:grid-cols-3 gap-px bg-[#dce4ec] border border-[#dce4ec] rounded-2xl mb-6 shadow-sm">
+          {TABS.map(({ id, label, desc, icon: Icon }, i) => {
             const isActive = tab === id;
+            const edgeRounding = i === 0 ? "rounded-l-2xl" : i === TABS.length - 1 ? "rounded-r-2xl" : "";
             return (
               <button
                 key={id}
                 onClick={() => setTab(id)}
-                // Inset glow, not a regular box-shadow — the grid wrapper
-                // has overflow-hidden (to clip the 3 columns to its own
-                // rounded corners), which would clip a normal outward-
-                // blurring glow on whichever door happens to sit at an
-                // edge. An inset shadow stays inside the button's own box
-                // by definition, so it's immune to that regardless of
-                // which door is active.
-                className={`group relative flex flex-col items-start gap-3 p-6 text-left overflow-hidden transition-[background-color,box-shadow] duration-300 ${
+                // No overflow-hidden on the button itself either — an
+                // element clips its OWN box-shadow when it has
+                // overflow:hidden, not just child content, so the glow
+                // would still get cut even with the wrapper fixed. The
+                // sweep div (below) gets its own clipped inner wrapper
+                // instead, matching this button's corner rounding.
+                className={`group relative flex flex-col items-start gap-3 p-6 text-left transition-[background-color,box-shadow] duration-300 ${edgeRounding} ${
                   isActive
-                    ? `bg-gradient-to-br ${PAGE_GRADIENTS.jobbook} shadow-[inset_0_0_0_1px_rgba(255,255,255,0.45),inset_0_0_24px_-4px_rgba(45,212,191,0.85)]`
+                    ? `bg-gradient-to-br ${PAGE_GRADIENTS.jobbook} shadow-[0_0_0_1px_rgba(255,255,255,0.45),0_0_28px_2px_rgba(45,212,191,0.85)]`
                     : "bg-white"
                 }`}
               >
                 {/* Hover sweep only for the inactive doors — the active one
-                    already carries the fill permanently. */}
+                    already carries the fill permanently. Own overflow-hidden
+                    + matching corner rounding, since the button above it
+                    can no longer clip its own children. */}
                 {!isActive && (
-                  <div
-                    className={`absolute inset-0 bg-gradient-to-br ${PAGE_GRADIENTS.jobbook} origin-left scale-x-0 group-hover:scale-x-100 transition-transform duration-300 ease-out`}
-                  />
+                  <div className={`absolute inset-0 overflow-hidden ${edgeRounding}`}>
+                    <div
+                      className={`absolute inset-0 bg-gradient-to-br ${PAGE_GRADIENTS.jobbook} origin-left scale-x-0 group-hover:scale-x-100 transition-transform duration-300 ease-out`}
+                    />
+                  </div>
                 )}
 
                 <div

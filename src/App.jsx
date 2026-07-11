@@ -45,7 +45,7 @@ import AdminModal from "./components/AdminModal";
 import Management from "./components/Management";
 import JobBook from "./components/JobBook";
 import Home from "./components/Home";
-import { PAGES, pageIdsFor } from "./lib/departments";
+import { PAGES, pageIdsFor, boardLabelFor } from "./lib/departments";
 import { useDepartment } from "./hooks/useDepartment";
 import { MANAGEMENT_IDS } from "./components/Management";
 import { setWrikeUserId } from "./lib/supabaseClient";
@@ -283,7 +283,7 @@ export default function App() {
     },
     {
       id: "nav-todayslist",
-      title: "Motion Board",
+      title: boardLabelFor(department),
       desc: "Team task allocation board",
       type: "Navigation",
       icon: LayoutList,
@@ -772,6 +772,7 @@ export default function App() {
           wrikeData={globalWrikeData}
           triggerToast={triggerToast}
           isActive={activePage === "todayslist"}
+          department={department}
         />
       </div>
 

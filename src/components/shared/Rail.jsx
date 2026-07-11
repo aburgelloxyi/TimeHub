@@ -3,7 +3,7 @@ import { Home } from "lucide-react";
 import { supabase } from "../../lib/supabaseClient";
 import { MANAGEMENT_IDS } from "../Management";
 import { PAGE_GRADIENTS } from "../../lib/pageGradients";
-import { PAGES, pageIdsFor } from "../../lib/departments";
+import { PAGES, pageIdsFor, pageFor } from "../../lib/departments";
 import { useDepartment } from "../../hooks/useDepartment";
 
 // Replaces the old pill navbar (NavPill.js) — a slim, always-present rail
@@ -24,7 +24,7 @@ export default function Rail({ activePage, setActivePage }) {
   const isAdmin =
     MANAGEMENT_IDS.length === 0 || MANAGEMENT_IDS.includes(wrikeUserId);
   if (isAdmin && !railIds.includes("management")) railIds.push("management");
-  const sections = railIds.map((id) => PAGES[id]);
+  const sections = railIds.map((id) => pageFor(id, department));
 
   useEffect(() => {
     if (!wrikeUserId) return;

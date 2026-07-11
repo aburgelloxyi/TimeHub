@@ -73,15 +73,32 @@ export const PAGES = {
 // before their department's set is defined.
 export const DEPARTMENT_PAGES = {
   Motion: ["timesheet", "todayslist", "canvas", "legacy", "profile"],
+  Print: ["timesheet", "todayslist", "canvas", "legacy", "profile"],
   PM: ["management", "jobbook", "legacy", "profile"],
 };
 
 export const DEFAULT_PAGE_IDS = ["timesheet", "todayslist", "canvas", "legacy", "profile"];
 
+// The team board (todayslist) is one page whose identity follows the viewer's
+// department — Print staff see "Print Board" with their own roster, everyone
+// else sees the Motion board. Keeps a single page id/route while letting the
+// nav label (Home rows, Rail, command palette) and the board header adapt.
+export function boardLabelFor(department) {
+  return department === "Print" ? "Print Board" : "Motion Board";
+}
+
 export function pageIdsFor(department) {
   return DEPARTMENT_PAGES[department] || DEFAULT_PAGE_IDS;
 }
 
+// Returns the page object with any department-specific overrides applied
+// (currently just the board label). Used wherever a single page's display
+// data is needed for a known viewer department.
+export function pageFor(id, department) {
+  if (id === "todayslist") return { ...PAGES[id], label: boardLabelFor(department) };
+  return PAGES[id];
+}
+
 export function pagesFor(department) {
-  return pageIdsFor(department).map((id) => PAGES[id]);
+  return pageIdsFor(department).map((id) => pageFor(id, department));
 }

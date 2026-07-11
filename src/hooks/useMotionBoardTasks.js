@@ -103,13 +103,20 @@ async function fetchBoardTasks(teamIds, dueDateEnd) {
   return rawTasks;
 }
 
-// Narrow, independent Motion Board data source — fetches only Active tasks
-// due today through the end of next work week, assigned to the Motion team
-// (+ Riccardo), once on mount. No periodic polling: freshness after that
-// comes entirely from Wrike webhooks (worker/index.js -> wrike_webhook_events
-// -> Supabase Realtime), unlike the shared useWrikeCache() hook other tabs
-// use, which still needs the full historical dataset for logging time.
-export function useMotionBoardTasks() {
+// Narrow, independent board data source — fetches only Active tasks due today
+// through the end of next work week, assigned to a team, once on mount. No
+// periodic polling: freshness after that comes entirely from Wrike webhooks
+// (worker/index.js -> wrike_webhook_events -> Supabase Realtime), unlike the
+// shared useWrikeCache() hook other tabs use, which still needs the full
+// historical dataset for logging time.
+//
+// `externalTeamIds`:
+//   - undefined → Motion mode: resolve the team from contacts via the
+//     hardcoded MOTION_TEAM_NAME_MAP (+ Riccardo), exactly as before.
+//   - array     → Print (or any profiles-derived) mode: use these Wrike user
+//     IDs directly as the team; wait until the array is non-empty, and
+//     refetch if it changes.
+export function useMotionBoardTasks(externalTeamIds) {
   const [boardTasks, setBoardTasks] = useState([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -122,15 +129,27 @@ export function useMotionBoardTasks() {
     dueDateEnd: endOfNextWorkWeek(),
   });
 
+  const external = externalTeamIds !== undefined;
+  // Stable key so the effect refetches only when the actual id set changes,
+  // not on every render's fresh array identity.
+  const externalKey = external ? [...externalTeamIds].sort().join(",") : null;
+
   useEffect(() => {
+    // External mode with no ids yet (roster still loading) — nothing to fetch.
+    if (external && (!externalTeamIds || externalTeamIds.length === 0)) {
+      setBoardTasks([]);
+      setIsLoading(false);
+      return;
+    }
     let cancelled = false;
+    setIsLoading(true);
     (async () => {
       try {
         const [{ contacts, contactDictionary }, { folderDictionary, statusDictionary }] = await Promise.all([
           fetchContactDictionary(),
           fetchFolderDictionary(),
         ]);
-        const teamIds = resolveTeamIds(contacts);
+        const teamIds = external ? externalTeamIds : resolveTeamIds(contacts);
         const dueDateEnd = endOfNextWorkWeek();
         const childToParent = buildChildToParent(folderDictionary);
         ctxRef.current = { folderDictionary, contactDictionary, statusDictionary, childToParent, teamIds, dueDateEnd };
@@ -160,7 +179,8 @@ export function useMotionBoardTasks() {
       }
     })();
     return () => { cancelled = true; };
-  }, []);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [externalKey]);
 
   const handleTaskIds = useCallback(async (ids) => {
     if (!ids.length) return;

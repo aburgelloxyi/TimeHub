@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect, useRef, useMemo } from "react";
 import { motion } from "framer-motion";
 import {
   LayoutList,
@@ -32,6 +32,65 @@ const MEMBER_LANES = {
   Luke:    { gradient: "from-orange-600 to-red-600",    ink: "light", dot: "bg-orange-600" },
   Turk:    { gradient: "from-cyan-600 to-sky-600",      ink: "light", dot: "bg-cyan-600" },
 };
+
+// Palette for department boards whose roster comes from profiles (Print and
+// any future department) — assigned by lane index. Reuses the Motion lanes'
+// tuned gradients + the same white/dark ink contrast rule.
+const LANE_PALETTE = [
+  { gradient: "from-blue-500 to-indigo-600",    ink: "light", dot: "bg-blue-500" },
+  { gradient: "from-emerald-600 to-teal-600",   ink: "light", dot: "bg-emerald-600" },
+  { gradient: "from-pink-600 to-rose-600",      ink: "light", dot: "bg-pink-600" },
+  { gradient: "from-amber-300 to-yellow-400",   ink: "dark",  dot: "bg-amber-400" },
+  { gradient: "from-purple-500 to-violet-600",  ink: "light", dot: "bg-purple-500" },
+  { gradient: "from-orange-600 to-red-600",     ink: "light", dot: "bg-orange-600" },
+  { gradient: "from-cyan-600 to-sky-600",       ink: "light", dot: "bg-cyan-600" },
+  { gradient: "from-fuchsia-600 to-pink-600",   ink: "light", dot: "bg-fuchsia-600" },
+  { gradient: "from-lime-400 to-green-500",     ink: "dark",  dot: "bg-lime-500" },
+  { gradient: "from-slate-500 to-slate-700",    ink: "light", dot: "bg-slate-500" },
+];
+
+// Derive a board team from profiles tagged with `department` (Print, and any
+// department that later gets its own board). Members, lane colours, the
+// Wrike-id→member map (for id-based task assignment) and the id list for the
+// task fetch all come straight from the profiles rows. Disabled → empty, so
+// the Motion board (which passes enabled=false) never triggers the query.
+function useDepartmentTeam(department, enabled) {
+  const empty = { members: [], lanes: {}, wrikeIdToMember: {}, teamWrikeIds: [] };
+  const [team, setTeam] = useState({ ...empty, loading: enabled });
+
+  useEffect(() => {
+    if (!enabled) { setTeam({ ...empty, loading: false }); return; }
+    let cancelled = false;
+    setTeam((t) => ({ ...t, loading: true }));
+    supabase
+      .from("profiles")
+      .select("wrike_user_id, first_name, last_name")
+      .eq("department", department)
+      .order("first_name")
+      .then(({ data }) => {
+        if (cancelled) return;
+        const rows = (data || []).filter((p) => p.wrike_user_id);
+        const members = [], lanes = {}, wrikeIdToMember = {}, teamWrikeIds = [];
+        const seen = new Set();
+        rows.forEach((p, i) => {
+          const base = [p.first_name, p.last_name].filter(Boolean).join(" ") || p.wrike_user_id;
+          // Keep lane keys unique even if two people share a display name.
+          let label = base, n = 2;
+          while (seen.has(label)) label = `${base} (${n++})`;
+          seen.add(label);
+          members.push(label);
+          lanes[label] = LANE_PALETTE[i % LANE_PALETTE.length];
+          wrikeIdToMember[p.wrike_user_id] = label;
+          teamWrikeIds.push(p.wrike_user_id);
+        });
+        setTeam({ members, lanes, wrikeIdToMember, teamWrikeIds, loading: false });
+      });
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [department, enabled]);
+
+  return team;
+}
 
 // Play the full lane entrance once per app session; later visits get the
 // shortened rise — same pacing contract as Home's menu.
@@ -261,9 +320,44 @@ function AttachmentThumb({ attachment, large = false, onPreview }) {
   );
 }
 
-export default function TodaysList({ wrikeData, triggerToast: _triggerToast, isActive = true }) {
+export default function TodaysList({ wrikeData, triggerToast: _triggerToast, isActive = true, department }) {
   const triggerToast = _triggerToast ?? ((msg) => console.warn("Toast:", msg));
-  const { boardTasks } = useMotionBoardTasks();
+
+  // Print (and any future non-Motion department) drives the board off its own
+  // profiles-tagged roster; Motion keeps its hardcoded team + Riccardo slate
+  // exactly as before. `board` is the single config the rest of the component
+  // reads — members, lane colours, how tasks map to people, and the slate.
+  const isPrint = department === "Print";
+  const deptTeam = useDepartmentTeam(department, isPrint);
+  const board = useMemo(() => (
+    isPrint
+      ? {
+          members: deptTeam.members,
+          lanes: deptTeam.lanes,
+          subtitle: "Print Tasks Allocation",
+          matchBy: "id",
+          wrikeIdToMember: deptTeam.wrikeIdToMember,
+          slateLead: null,
+          slateName: null,
+        }
+      : {
+          members: TEAM_MEMBERS,
+          lanes: MEMBER_LANES,
+          subtitle: "Motioners Tasks Allocation",
+          matchBy: "name",
+          nameMap: MOTION_TEAM_NAME_MAP,
+          slateLead: "Riccardo",
+          slateName: "Riccardo's Slate",
+        }
+  ), [isPrint, deptTeam]);
+
+  // Print scopes the board state cache under its own key so it never collides
+  // with the Motion board's saved assignments.
+  const storageKey = isPrint ? "print_board_state_v1" : "motion_board_state_v1";
+
+  // Motion resolves its team internally (undefined); Print feeds its roster's
+  // Wrike ids so the fetch only pulls that team's tasks.
+  const { boardTasks } = useMotionBoardTasks(isPrint ? deptTeam.teamWrikeIds : undefined);
   const boardRef = useRef(null);
   const wasActiveRef = useRef(false);
 
@@ -373,25 +467,7 @@ export default function TodaysList({ wrikeData, triggerToast: _triggerToast, isA
   // ── Board persistence ─────────────────────────────────────────────────────
   // Load saved board state from Supabase on mount
   useEffect(() => {
-    supabase.from("canvas_pinned_campaigns")
-      .select("campaign_id, pinned_at")
-      .order("pinned_at", { ascending: true })
-      .then(({ data }) => {
-        if (!data || data.length === 0) return;
-        const key = "motion_board_state_v1";
-        const local = localStorage.getItem(key);
-        if (local) {
-          try {
-            const parsed = JSON.parse(local);
-            if (parsed.campaigns) setCampaigns(parsed.campaigns);
-            if (parsed.assignments) setAssignments(parsed.assignments);
-            if (parsed.timeframe) setTimeframe(parsed.timeframe);
-          } catch (e) { /* ignore parse errors */ }
-        }
-      });
-    // Also try localStorage directly as fast path
-    const key = "motion_board_state_v1";
-    const local = localStorage.getItem(key);
+    const local = localStorage.getItem(storageKey);
     if (local) {
       try {
         const parsed = JSON.parse(local);
@@ -400,7 +476,7 @@ export default function TodaysList({ wrikeData, triggerToast: _triggerToast, isA
         if (parsed.timeframe) setTimeframe(parsed.timeframe);
       } catch (e) { /* ignore */ }
     }
-  }, []);
+  }, [storageKey]);
 
   // Fetch attachments for all tasks currently on the board.
   // Scoped to assigned tasks (~30) so we can fire one request per task without
@@ -441,7 +517,7 @@ export default function TodaysList({ wrikeData, triggerToast: _triggerToast, isA
   // Debounced save whenever board state changes
   const saveBoardState = (newCampaigns, newAssignments, newTimeframe) => {
     const state = { campaigns: newCampaigns, assignments: newAssignments, timeframe: newTimeframe, savedAt: new Date().toISOString() };
-    localStorage.setItem("motion_board_state_v1", JSON.stringify(state));
+    localStorage.setItem(storageKey, JSON.stringify(state));
     // Clear pending save
     if (saveTimeout.current) clearTimeout(saveTimeout.current);
   };
@@ -452,7 +528,7 @@ export default function TodaysList({ wrikeData, triggerToast: _triggerToast, isA
       triggerToast("No Wrike data available yet.");
       return;
     }
-    const freshAssignments = TEAM_MEMBERS.reduce((acc, name) => ({ ...acc, [name]: [] }), {});
+    const freshAssignments = board.members.reduce((acc, name) => ({ ...acc, [name]: [] }), {});
     const freshBacklog = {};
     const now = new Date(); now.setHours(0, 0, 0, 0);
     let minDate, maxDate;
@@ -479,8 +555,30 @@ export default function TodaysList({ wrikeData, triggerToast: _triggerToast, isA
       const taskDate = new Date(task.dueDate);
       if (isNaN(taskDate.getTime()) || taskDate < minDate || taskDate > maxDate) return;
       const wrikeLink = task.permalink || `https://www.wrike.com/open.htm?id=${task.id}`;
+      const card = {
+        id: task.id, title: task.title,
+        campaignId: task.parentIds?.[0] || "unknown",
+        campaignName: task.projectName || "Wrike Import",
+        tag: task.customStatusName || "Wrike",
+        customStatusId: task.customStatusId,
+        permalink: wrikeLink,
+        dueDate: task.dueDate || null,
+      };
+
+      if (board.matchBy === "id") {
+        // Print (profiles-derived): assign by Wrike responsibleId → member,
+        // no slate. responsibleIds survive enrichment via the task spread.
+        const targets = [...new Set((task.responsibleIds || []).map((id) => board.wrikeIdToMember[id]).filter(Boolean))];
+        targets.forEach((boardName) => {
+          if (freshAssignments[boardName]) freshAssignments[boardName].push(card);
+        });
+        return;
+      }
+
+      // Motion (name-based): the lead's tasks form the slate, everyone else's
+      // land in their lane via the hardcoded name map.
       if (!task.assignees) return;
-      if (task.assignees.includes("Riccardo")) {
+      if (board.slateLead && task.assignees.includes(board.slateLead)) {
         const campId = task.parentIds?.[0] || "camp-misc";
         const campName = task.projectName || "Misc / Uncategorized";
         if (!freshBacklog[campId]) freshBacklog[campId] = { id: campId, name: campName, subtasks: [] };
@@ -491,20 +589,10 @@ export default function TodaysList({ wrikeData, triggerToast: _triggerToast, isA
           permalink: wrikeLink,
         });
       } else {
-        Object.keys(MOTION_TEAM_NAME_MAP).forEach((wrikeName) => {
+        Object.keys(board.nameMap).forEach((wrikeName) => {
           if (task.assignees.includes(wrikeName)) {
-            const boardName = MOTION_TEAM_NAME_MAP[wrikeName];
-            if (freshAssignments[boardName]) {
-              freshAssignments[boardName].push({
-                id: task.id, title: task.title,
-                campaignId: task.parentIds?.[0] || "unknown",
-                campaignName: task.projectName || "Wrike Import",
-                tag: task.customStatusName || "Wrike",
-                customStatusId: task.customStatusId,
-                permalink: wrikeLink,
-                dueDate: task.dueDate || null,
-              });
-            }
+            const boardName = board.nameMap[wrikeName];
+            if (freshAssignments[boardName]) freshAssignments[boardName].push(card);
           }
         });
       }
@@ -531,10 +619,11 @@ export default function TodaysList({ wrikeData, triggerToast: _triggerToast, isA
   const allAssigned = Object.values(assignments).flat();
   const backlogCount = campaigns.reduce((s, c) => s + c.subtasks.length, 0);
   const motionCount = allAssigned.filter((t) => (t.tag || "").toLowerCase().includes("motion")).length;
+  const overdueCount = allAssigned.filter((t) => isOverdue(t.dueDate)).length;
 
   return (
     <div ref={boardRef} className="min-h-screen bg-slate-100 text-[#122027] font-sans selection:bg-[#12a0e1]/30 selection:text-[#122027]">
-      <PageHeader pageId="todayslist" icon={LayoutList} title={`${timeframe}'s List`} subtitle="Motioners Tasks Allocation">
+      <PageHeader pageId="todayslist" icon={LayoutList} title={`${timeframe}'s List`} subtitle={board.subtitle}>
         {/* The day's summary lives in the header, like a call sheet's totals —
             white figures on the page gradient instead of a floating card row */}
         <div className="flex items-center gap-6 mr-2">
@@ -542,13 +631,15 @@ export default function TodaysList({ wrikeData, triggerToast: _triggerToast, isA
             <div className="font-display text-2xl font-bold text-white leading-none">{allAssigned.length}</div>
             <div className="text-[9px] font-black uppercase tracking-widest text-white/70">on the board</div>
           </div>
+          {board.slateLead && (
+            <div className="text-right">
+              <div className="font-display text-2xl font-bold text-white leading-none">{backlogCount}</div>
+              <div className="text-[9px] font-black uppercase tracking-widest text-white/70">backlog</div>
+            </div>
+          )}
           <div className="text-right">
-            <div className="font-display text-2xl font-bold text-white leading-none">{backlogCount}</div>
-            <div className="text-[9px] font-black uppercase tracking-widest text-white/70">backlog</div>
-          </div>
-          <div className="text-right">
-            <div className="font-display text-2xl font-bold text-white leading-none">{motionCount}</div>
-            <div className="text-[9px] font-black uppercase tracking-widest text-white/70">motion</div>
+            <div className="font-display text-2xl font-bold text-white leading-none">{isPrint ? overdueCount : motionCount}</div>
+            <div className="text-[9px] font-black uppercase tracking-widest text-white/70">{isPrint ? "overdue" : "motion"}</div>
           </div>
         </div>
         <div className="hidden sm:block w-px h-8 bg-white/20 mr-1" />
@@ -580,16 +671,18 @@ export default function TodaysList({ wrikeData, triggerToast: _triggerToast, isA
 
       <div className="max-w-[1800px] mx-auto px-4 sm:px-6 py-6 flex flex-col gap-4">
 
-        {/* ── Riccardo's Slate ─────────────────────────────────────────────
+        {/* ── The lead's Slate ─────────────────────────────────────────────
             The lead's triage pile as a film slate: one dark strip of ink,
             white type, campaign-grouped chips. The only dark block on the
             page — everything below it stays quiet so it reads as "not yet
-            allocated" at a glance. */}
+            allocated" at a glance. Motion-only (Riccardo); department boards
+            with no configured lead skip it. */}
+        {board.slateLead && (
         <div className="bg-[#122027] rounded-2xl overflow-hidden shrink-0">
           <div className="flex items-center gap-4 px-5 pt-4 pb-3">
             <div className="overflow-hidden">
               <div data-lane-rise className="flex items-baseline gap-3">
-                <h2 className="font-display text-lg font-bold text-white tracking-tight leading-none">Riccardo's Slate</h2>
+                <h2 className="font-display text-lg font-bold text-white tracking-tight leading-none">{board.slateName}</h2>
                 <span className="text-[10px] font-black uppercase tracking-widest text-white/50">
                   {campaigns.reduce((s, c) => s + c.subtasks.length, 0)} unallocated
                 </span>
@@ -627,6 +720,7 @@ export default function TodaysList({ wrikeData, triggerToast: _triggerToast, isA
             ))}
           </div>
         </div>
+        )}
 
           {/* Files panel */}
           {(attachmentsLoading || Object.keys(taskAttachments).length > 0) && (
@@ -685,9 +779,16 @@ export default function TodaysList({ wrikeData, triggerToast: _triggerToast, isA
             washed while the lane is focused. Clicking a cap expands the
             lane; the others compress to slivers. */}
         <div className="bg-white rounded-2xl border border-[#dce4ec] shadow-sm overflow-hidden">
-          {TEAM_MEMBERS.map((person, laneIdx) => {
-            const tasks = assignments[person];
-            const lane = MEMBER_LANES[person];
+          {board.members.length === 0 && (
+            <p className="text-sm text-slate-400 italic px-6 py-8 text-center">
+              {isPrint
+                ? "No Print team members yet — tag people's department as “Print” in Administration › People."
+                : "No team members."}
+            </p>
+          )}
+          {board.members.map((person, laneIdx) => {
+            const tasks = assignments[person] || [];
+            const lane = board.lanes[person];
             const isFocused = focusedPerson === person;
             const isCollapsed = focusedPerson !== null && !isFocused;
             const personOverdue = tasks.filter((t) => isOverdue(t.dueDate)).length;
@@ -699,7 +800,12 @@ export default function TodaysList({ wrikeData, triggerToast: _triggerToast, isA
                 key={person}
                 className={`flex items-stretch transition-all duration-300 ease-in-out ${
                   laneIdx > 0 ? "border-t border-[#dce4ec]" : ""
-                } ${isCollapsed ? "h-12" : isFocused ? "h-72" : "h-[6.5rem]"}`}
+                  // +8px over the "natural" 6.5rem/72 heights — the thin
+                  // scrollbar's own height comes out of a fixed-height flex
+                  // row's content box, so without this the cards lose that
+                  // space and their titles clip instead of the scrollbar
+                  // just sitting in a bit of slack underneath them.
+                } ${isCollapsed ? "h-12" : isFocused ? "h-[18.5rem]" : "h-[7rem]"}`}
               >
                 {/* Lane cap */}
                 <button

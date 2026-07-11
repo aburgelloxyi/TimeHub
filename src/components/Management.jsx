@@ -2114,17 +2114,16 @@ function AdminHub({ expandedGroup, onToggleGroup, onOpenItem }) {
 
       {/* The three destinations — clicking one unfolds its items right there
           in place (an accordion), rather than navigating to a separate
-          screen. Only one open at a time, so the list never grows past
-          "3 rows, or 3 rows plus a handful of items" — nothing to scroll
-          past to get back to the other two.
-          Recent Activity removed (experiment: see how the hub reads with
-          just the menu, sized up via `first` on every row instead of only
-          the literal first one, since it's now the only thing on the page). */}
-      <div className="bg-white rounded-3xl border border-[#dce4ec] shadow-sm overflow-hidden">
+          screen. Each is its own separate card now (was one shared
+          bordered list with rows butted against each other) — same
+          treatment PeopleSection's department cards already use, so a
+          manager sees three distinct destinations, not one dense block
+          that happens to have three rows. */}
+      <div className="space-y-4">
         {NAV_GROUPS.map((group) => {
           const isOpen = expandedGroup === group.id;
           return (
-            <div key={group.id}>
+            <div key={group.id} className="bg-white rounded-3xl border border-[#dce4ec] shadow-sm overflow-hidden">
               <HubRow section={group} onClick={() => onToggleGroup(group.id)} open={isOpen} first />
               <AnimatePresence initial={false}>
                 {isOpen && (
@@ -2133,7 +2132,7 @@ function AdminHub({ expandedGroup, onToggleGroup, onOpenItem }) {
                     animate={{ height: "auto", opacity: 1 }}
                     exit={{ height: 0, opacity: 0 }}
                     transition={{ duration: 0.25, ease: [0.25, 0.1, 0.25, 1] }}
-                    className="overflow-hidden bg-slate-50 border-b border-[#dce4ec]"
+                    className="overflow-hidden bg-slate-50 border-t border-[#dce4ec]"
                   >
                     {/* Same HubRow, just compact — identical gradient sweep
                         and hover behavior as the parent row, not a

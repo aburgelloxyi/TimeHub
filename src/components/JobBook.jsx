@@ -44,13 +44,17 @@ export default function JobBook() {
               </h2>
             </div>
 
-            <div className="flex bg-slate-100 border border-[#dce4ec] p-1.5 rounded-xl">
+            {/* Tinted teal — Job Book's own accent (PAGE_GRADIENTS.jobbook is
+                teal->emerald) — instead of neutral grey, so the switcher
+                still reads as "this page's control" now that it's sitting
+                in a plain white card instead of on the gradient header. */}
+            <div className="flex bg-teal-50 border border-teal-100 p-1.5 rounded-xl">
               {TABS.map(({ id, label, icon: Icon }) => (
                 <button
                   key={id}
                   onClick={() => setTab(id)}
                   className={`relative isolate flex items-center gap-2 px-4 py-2 text-xs font-black uppercase tracking-wider rounded-lg transition-colors ${
-                    tab === id ? "text-[#122027]" : "text-[#768994] hover:text-[#122027] hover:bg-white/60"
+                    tab === id ? "text-[#122027]" : "text-teal-700/70 hover:text-teal-900 hover:bg-white/60"
                   }`}
                 >
                   {/* Shared layoutId — the pill slides between tabs instead of

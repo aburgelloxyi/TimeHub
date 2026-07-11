@@ -9,6 +9,15 @@
     -webkit-font-smoothing: antialiased;
     text-rendering: optimizeLegibility;
   }
+
+  /* Reserve the vertical scrollbar's space permanently so a page whose
+     content grows past the viewport height (Timesheets' table, Motion
+     Board's lanes load async) doesn't reflow horizontally when the
+     scrollbar appears/disappears mid-transition — that reflow was the
+     scrollbar-flash + rightward jog on entering those two pages. */
+  html {
+    scrollbar-gutter: stable;
+  }
 }
 
 /* Film grain over the whole viewport for depth (sits above the page background

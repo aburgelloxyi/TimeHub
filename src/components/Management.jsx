@@ -2303,17 +2303,26 @@ function PeopleSection() {
           <p className="font-display text-base font-bold text-[#122027] tracking-tight truncate">{fullName}</p>
           <p className="text-xs text-[#768994] truncate">{p.email || p.wrike_user_id}</p>
         </div>
+        {/* Same searchable dropdown Job Book uses for its pickers, instead
+            of a bare native <select> — the app's one dropdown style. "No
+            department"/"No position" are plain entries in the option list
+            (StrictSelect is selection-only, no separate clear affordance),
+            translated back to null on the way out. */}
         <div className="flex flex-col gap-1.5 shrink-0 w-36 sm:w-40">
-          <select value={p.department || ""} onChange={e => updateField(p.wrike_user_id, { department: e.target.value || null })}
-            className="w-full text-xs font-bold text-[#122027] border border-[#dce4ec] rounded-lg px-2.5 py-1.5 outline-none focus:border-[#12a0e1] bg-white">
-            <option value="">No department</option>
-            {departments.map(d => <option key={d} value={d}>{d}</option>)}
-          </select>
-          <select value={p.position_id || ""} onChange={e => updateField(p.wrike_user_id, { position_id: e.target.value ? Number(e.target.value) : null })}
-            className="w-full text-xs font-bold text-[#122027] border border-[#dce4ec] rounded-lg px-2.5 py-1.5 outline-none focus:border-[#12a0e1] bg-white">
-            <option value="">No position</option>
-            {positions.map(pos => <option key={pos.id} value={pos.id}>{pos.title}</option>)}
-          </select>
+          <StrictSelect
+            value={p.department || "No department"}
+            onChange={(v) => updateField(p.wrike_user_id, { department: v === "No department" ? null : v })}
+            options={["No department", ...departments]}
+          />
+          <StrictSelect
+            value={positions.find(pos => pos.id === p.position_id)?.title || "No position"}
+            onChange={(v) => {
+              if (v === "No position") { updateField(p.wrike_user_id, { position_id: null }); return; }
+              const pos = positions.find(pos => pos.title === v);
+              updateField(p.wrike_user_id, { position_id: pos?.id ?? null });
+            }}
+            options={["No position", ...positions.map(pos => pos.title)]}
+          />
         </div>
       </div>
     );

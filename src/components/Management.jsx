@@ -39,7 +39,7 @@ const TABS = [
   { id: "positions",            label: "Positions",             icon: UserCog   },
   { id: "films",                label: "Films",                 icon: Film      },
   { id: "clients",              label: "Clients",               icon: Building2 },
-  { id: "descs",                label: "Project Descriptions",  icon: AlignLeft },
+  { id: "descs",                label: "Project Type Descriptions", icon: AlignLeft },
   { id: "categories",           label: "Item Categories",       icon: Tag       },
   { id: "translations",         label: "Translation Countries", icon: Globe     },
   { id: "departments",          label: "Departments",           icon: Layers    },
@@ -65,7 +65,13 @@ const DESC_QUICK_FILTERS = [
 ];
 
 // ── Department groups (for People tab) ────────────────────────────────────────
-const DEPARTMENTS = ["PM", "Motion", "Digital", "AM", "Operations", "Print"];
+// The assignable department NAMES now come from the editable job_departments
+// table (Supporting Content → Departments), fetched in PeopleSection — not
+// hardcoded here. DEPT_GROUPS below stays hardcoded on purpose: it's a
+// per-department visual identity (bucket colour/gradient) and a
+// developer-maintained decision, not something a PM adding a department
+// should auto-generate. Anyone in a department without an entry here lands
+// in the "—" catch-all bucket instead of being silently dropped.
 const DEPT_GROUPS = [
   { label: "PM",         color: "bg-blue-50 text-blue-700 border-blue-200",           gradient: "from-blue-500 to-blue-700"         },
   { label: "Motion",     color: "bg-violet-50 text-violet-700 border-violet-200",     gradient: "from-violet-500 to-violet-700"     },
@@ -2051,7 +2057,7 @@ function OverviewSection({ setActiveTab }) {
     {
       label: "Reports",
       cards: [
-        { id: "project-time",         label: "Project/Time",         icon: FileBarChart,  color: "from-[#122027] to-[#12a0e1]", light: "bg-[#12a0e1]/10 text-[#12a0e1] border-[#12a0e1]/20", count: null, soon: true },
+        { id: "project-time",         label: "Project/Time",         icon: FileBarChart,  color: "from-[#122027] to-[#12a0e1]", light: "bg-[#12a0e1]/10 text-[#12a0e1] border-[#12a0e1]/20", count: null },
         { id: "timesheet-completion", label: "Timesheet Completion", icon: ClipboardList, color: "from-[#0e86be] to-[#12a0e1]", light: "bg-[#12a0e1]/10 text-[#12a0e1] border-[#12a0e1]/20", count: null, soon: true },
       ],
     },
@@ -2067,7 +2073,7 @@ function OverviewSection({ setActiveTab }) {
       cards: [
         { id: "films",        label: "Films",           icon: Film,      color: "from-violet-500 to-purple-600", light: "bg-violet-50 text-violet-700 border-violet-200",    count: counts.films },
         { id: "clients",      label: "Clients",         icon: Building2, color: "from-blue-500 to-cyan-600",     light: "bg-blue-50 text-blue-700 border-blue-200",          count: counts.clients },
-        { id: "descs",        label: "Descriptions",    icon: AlignLeft, color: "from-emerald-500 to-teal-600",  light: "bg-emerald-50 text-emerald-700 border-emerald-200", count: counts.descriptions },
+        { id: "descs",        label: "Project Type Descriptions", icon: AlignLeft, color: "from-emerald-500 to-teal-600",  light: "bg-emerald-50 text-emerald-700 border-emerald-200", count: counts.descriptions },
         { id: "categories",   label: "Item Categories", icon: Tag,       color: "from-amber-500 to-orange-500",  light: "bg-amber-50 text-amber-700 border-amber-200",       count: counts.categories },
         { id: "translations", label: "Translation Countries", icon: Globe, color: "from-sky-500 to-blue-600",   light: "bg-sky-50 text-sky-700 border-sky-200",             count: counts.translations },
         { id: "departments",  label: "Departments",     icon: Layers,    color: "from-slate-500 to-slate-700",   light: "bg-slate-100 text-slate-600 border-slate-200",      count: counts.departments },
@@ -2200,6 +2206,7 @@ function OverviewSection({ setActiveTab }) {
 function PeopleSection() {
   const [people, setPeople]         = useState([]);
   const [positions, setPositions]   = useState([]);
+  const [departments, setDepartments] = useState([]);
   const [loading, setLoading]       = useState(true);
   const [syncing, setSyncing]       = useState(false);
   const [syncMsg, setSyncMsg]       = useState("");
@@ -2207,12 +2214,14 @@ function PeopleSection() {
 
   const load = useCallback(async () => {
     setLoading(true);
-    const [{ data: profiles }, { data: pos }] = await Promise.all([
+    const [{ data: profiles }, { data: pos }, { data: depts }] = await Promise.all([
       supabase.from("profiles").select("*").order("first_name"),
       supabase.from("positions").select("*").order("title"),
+      supabase.from("job_departments").select("name").order("name"),
     ]);
     setPeople(profiles || []);
     setPositions(pos || []);
+    setDepartments((depts || []).map(d => d.name));
     setLoading(false);
   }, []);
 
@@ -2238,13 +2247,14 @@ function PeopleSection() {
       const contacts = ((await contactsRes.json()).data || []).filter(c => c.type === "Person" && !c.deleted);
 
       // Build wrikeUserId → department map from group membership.
-      // Match group title against our DEPARTMENTS list (case-insensitive substring).
+      // Match group title against the editable job_departments list
+      // (case-insensitive substring).
       const deptMap = {};
       if (groupsRes.ok) {
         const groups = (await groupsRes.json()).data || [];
         for (const group of groups) {
           const title = group.title || "";
-          const dept = DEPARTMENTS.find(d =>
+          const dept = departments.find(d =>
             title.toLowerCase() === d.toLowerCase() ||
             title.toLowerCase().includes(d.toLowerCase()) ||
             d.toLowerCase().includes(title.toLowerCase())
@@ -2279,11 +2289,14 @@ function PeopleSection() {
     }
   };
 
-  // Bucket people into department groups
+  // Bucket people into department groups. Keyed against DEPT_GROUPS (the
+  // hardcoded visual-identity list), not the editable departments list — a
+  // brand-new department with no bucket colour yet lands in "—" instead of
+  // being silently dropped, until a developer gives it a DEPT_GROUPS entry.
   const buckets = useMemo(() => {
     const out = Object.fromEntries(DEPT_GROUPS.map(g => [g.label, []]));
     for (const p of people) {
-      const key = p.department && DEPARTMENTS.includes(p.department) ? p.department : "—";
+      const key = p.department && DEPT_GROUPS.some(g => g.label === p.department) ? p.department : "—";
       out[key].push(p);
     }
     return out;
@@ -2311,7 +2324,7 @@ function PeopleSection() {
           <select value={p.department || ""} onChange={e => updateField(p.wrike_user_id, { department: e.target.value || null })}
             className="text-[11px] font-bold text-[#122027] border border-[#dce4ec] rounded-lg px-2 py-1 outline-none focus:border-[#12a0e1] bg-white max-w-[110px]">
             <option value="">No dept.</option>
-            {DEPARTMENTS.map(d => <option key={d} value={d}>{d}</option>)}
+            {departments.map(d => <option key={d} value={d}>{d}</option>)}
           </select>
           <select value={p.position_id || ""} onChange={e => updateField(p.wrike_user_id, { position_id: e.target.value ? Number(e.target.value) : null })}
             className="text-[11px] text-[#768994] border border-[#dce4ec] rounded-lg px-2 py-1 outline-none focus:border-[#12a0e1] bg-white max-w-[110px]">
@@ -2496,19 +2509,14 @@ export default function Management({ wrikeUserId, department }) {
           </div>
 
           {activeTab === "overview"   && <OverviewSection setActiveTab={setActiveTab} />}
-          {activeTab === "project-time" && (
-            <ComingSoon
-              icon={FileBarChart}
-              title="Project / Time Report"
-              body="The billed project-and-time report — filterable by week, client, film, department, staff and office, with per-line hourly rates and totals."
-              note="Needs an hourly-rate model first (rates per person or position) — that data doesn't live in the new database yet. Rebuild scoped separately."
-            />
-          )}
+          {/* Project/Time is the logged-time-per-job feed — same component
+              Job Book uses (JobsFeedSection), not a separate report. */}
+          {activeTab === "project-time" && <JobsFeedSection />}
           {activeTab === "timesheet-completion" && (
             <ComingSoon
               icon={ClipboardList}
               title="Staff Timesheet Completion"
-              body="Who hasn't submitted their timesheet for a given week — the chase-list Tracy and Sue use every Friday."
+              body="A live list of which staff haven't submitted their timesheet for a given week, so it's obvious at a glance who still needs to."
               note="Buildable from submitted tasks vs the staff roster — flagged as the next report to build."
             />
           )}
@@ -2516,7 +2524,7 @@ export default function Management({ wrikeUserId, department }) {
           {activeTab === "films"      && <SimpleListSection table="films" labelField="title" label="Films" placeholder="Film title…" />}
           {activeTab === "clients"    && <SimpleListSection table="clients" labelField="name" label="Clients" quickFilters={STUDIO_GROUPS} quickFilterLabel="Filter by studio" />}
           {activeTab === "categories" && <SimpleListSection table="job_categories" labelField="name" label="Item Categories" groups={CATEGORY_GROUPS} />}
-          {activeTab === "descs"      && <SimpleListSection table="project_descriptions" labelField="description" label="Project Descriptions" isLong quickFilters={DESC_QUICK_FILTERS} quickFilterLabel="Filter by territory" groups={DESCRIPTION_GROUPS} />}
+          {activeTab === "descs"      && <SimpleListSection table="project_descriptions" labelField="description" label="Project Type Descriptions" isLong quickFilters={DESC_QUICK_FILTERS} quickFilterLabel="Filter by territory" groups={DESCRIPTION_GROUPS} />}
           {activeTab === "positions"  && <SimpleListSection table="positions" labelField="title" label="Positions" placeholder="e.g. Creative Director…" />}
           {activeTab === "translations" && <SimpleListSection table="translation_countries" labelField="name" label="Translation Countries" placeholder="e.g. France…" />}
           {activeTab === "departments"  && <SimpleListSection table="job_departments" labelField="name" label="Departments" placeholder="e.g. Print…" />}

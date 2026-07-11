@@ -27,40 +27,47 @@ export default function JobBook() {
         icon={Briefcase}
         title="Job Book"
         subtitle="Live job numbers, setup & feed"
-      >
-        <div className="flex bg-white/15 border border-white/20 backdrop-blur-sm p-1.5 rounded-xl">
-          {TABS.map(({ id, label, icon: Icon }) => (
-            <button
-              key={id}
-              onClick={() => setTab(id)}
-              className={`relative isolate flex items-center gap-2 px-4 py-2 text-xs font-black uppercase tracking-wider rounded-lg transition-colors ${
-                tab === id ? "text-[#122027]" : "text-white/80 hover:text-white hover:bg-white/10"
-              }`}
-            >
-              {/* Shared layoutId — the pill slides between tabs instead of
-                  popping on the newly-active one (same gesture as Motion
-                  Board's timeframe switcher). */}
-              {tab === id && (
-                <motion.span
-                  layoutId="jobbook-tab-pill"
-                  className="absolute inset-0 bg-white rounded-lg shadow-sm"
-                  transition={{ type: "spring", stiffness: 500, damping: 32 }}
-                />
-              )}
-              <Icon className="relative z-10 w-3.5 h-3.5" />
-              <span className="relative z-10">{label}</span>
-            </button>
-          ))}
-        </div>
-      </PageHeader>
+      />
 
       <div className="max-w-[1800px] mx-auto px-4 sm:px-6 py-6">
         <div className="bg-white border border-[#dce4ec] rounded-2xl p-6 shadow-sm">
-          <div className="flex items-center gap-2.5 mb-5 pb-4 border-b border-[#dce4ec]">
-            {activeMeta && <activeMeta.icon className="w-4 h-4 text-[#12a0e1]" />}
-            <h2 className="text-sm font-black uppercase tracking-widest text-[#122027]">
-              {activeMeta?.label}
-            </h2>
+          {/* The tab switcher lives beside the content it controls now,
+              instead of on the gradient header — Job Book's three tabs are
+              "pick a tool" (Setup/Book/Feed), not a frequently-flipped
+              filter like Motion Board's Today/Tomorrow/Next Week, so they
+              don't need the header's visual weight. */}
+          <div className="flex items-center justify-between gap-3 flex-wrap mb-5 pb-4 border-b border-[#dce4ec]">
+            <div className="flex items-center gap-2.5">
+              {activeMeta && <activeMeta.icon className="w-4 h-4 text-[#12a0e1]" />}
+              <h2 className="text-sm font-black uppercase tracking-widest text-[#122027]">
+                {activeMeta?.label}
+              </h2>
+            </div>
+
+            <div className="flex bg-slate-100 border border-[#dce4ec] p-1.5 rounded-xl">
+              {TABS.map(({ id, label, icon: Icon }) => (
+                <button
+                  key={id}
+                  onClick={() => setTab(id)}
+                  className={`relative isolate flex items-center gap-2 px-4 py-2 text-xs font-black uppercase tracking-wider rounded-lg transition-colors ${
+                    tab === id ? "text-[#122027]" : "text-[#768994] hover:text-[#122027] hover:bg-white/60"
+                  }`}
+                >
+                  {/* Shared layoutId — the pill slides between tabs instead of
+                      popping on the newly-active one (same gesture as Motion
+                      Board's timeframe switcher). */}
+                  {tab === id && (
+                    <motion.span
+                      layoutId="jobbook-tab-pill"
+                      className="absolute inset-0 bg-white rounded-lg shadow-sm"
+                      transition={{ type: "spring", stiffness: 500, damping: 32 }}
+                    />
+                  )}
+                  <Icon className="relative z-10 w-3.5 h-3.5" />
+                  <span className="relative z-10">{label}</span>
+                </button>
+              ))}
+            </div>
           </div>
 
           {tab === "jobsSetup" && <JobsSetupSection setActiveTab={setTab} />}

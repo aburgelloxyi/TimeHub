@@ -2003,7 +2003,10 @@ export function JobsFeedSection() {
   const exportToExcel = () => {
     const headers = COLS.map(c => c.label.join(" "));
     const rows = filtered.map(e => COLS.map(c => getCellText(e, c.key)));
-    const csv = [headers, ...rows]
+    // Leading BOM — Excel doesn't sniff UTF-8 for a local CSV file without
+    // one and falls back to Windows-1252, which mangles the em-dash
+    // placeholder (and anything else non-ASCII) into "â€"".
+    const csv = "﻿" + [headers, ...rows]
       .map(r => r.map(c => `"${String(c).replace(/"/g, '""')}"`).join(","))
       .join("\n");
     const url = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8;" }));

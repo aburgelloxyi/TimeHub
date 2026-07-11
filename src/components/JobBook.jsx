@@ -1,9 +1,12 @@
-import React, { useState } from "react";
-import { motion } from "framer-motion";
+import React, { useState, useRef } from "react";
+import gsap from "gsap";
+import { useGSAP } from "@gsap/react";
 import { Briefcase, FolderPlus, Activity } from "lucide-react";
 import PageHeader from "./shared/PageHeader";
 import { JobsSetupSection, JobBookSection, JobsFeedSection } from "./Management";
 import { PAGE_GRADIENTS } from "../lib/pageGradients";
+
+gsap.registerPlugin(useGSAP);
 
 // The PMs' day-to-day surface: every Jobs tool on one page — Setup, the
 // Book itself, and the Feed — without the rest of Administration around
@@ -12,14 +15,42 @@ import { PAGE_GRADIENTS } from "../lib/pageGradients";
 // ("jobsSetup" / "jobs" / "feed") so the sections' internal deep-links
 // (e.g. Jobs Setup's "View in Job Book") work unchanged via setTab.
 const TABS = [
-  { id: "jobsSetup", label: "Jobs Setup", icon: FolderPlus },
-  { id: "jobs",      label: "Job Book",   icon: Briefcase },
-  { id: "feed",      label: "Jobs Feed",  icon: Activity },
+  { id: "jobsSetup", label: "Jobs Setup", desc: "Create new job numbers", icon: FolderPlus },
+  { id: "jobs",      label: "Job Book",   desc: "Live budgets & tracking", icon: Briefcase },
+  { id: "feed",      label: "Jobs Feed",  desc: "Every logged hour by job", icon: Activity },
 ];
+
+// Play the masked-rise entrance once per session — same contract as
+// Profile Hub's own hub rows (see profileEntrancePlayed in Profile.jsx).
+let jobBookEntrancePlayed = false;
+
+const prefersReducedMotion = () =>
+  window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 
 export default function JobBook() {
   const [tab, setTab] = useState("jobs");
-  const activeMeta = TABS.find((t) => t.id === tab);
+  const navRef = useRef(null);
+
+  // Same masked-rise reveal as Profile Hub's rows (data-hub-rise, translated
+  // fully below its own overflow-hidden mask, then eased up into view) —
+  // reused here rather than reinvented, so this reads as the same "hub"
+  // vocabulary at a different layout, not a new animation idiom.
+  useGSAP(
+    () => {
+      if (!navRef.current || prefersReducedMotion()) return;
+      const rises = gsap.utils.toArray("[data-hub-rise]", navRef.current);
+      if (!rises.length || jobBookEntrancePlayed) return;
+      jobBookEntrancePlayed = true;
+      gsap.set(rises, { yPercent: 120 });
+      gsap.to(rises, {
+        yPercent: 0,
+        duration: 0.6,
+        ease: "expo.out",
+        stagger: 0.08,
+      });
+    },
+    { scope: navRef }
+  );
 
   return (
     <div className="min-h-screen bg-slate-100 text-[#122027] font-sans pb-16">
@@ -31,55 +62,65 @@ export default function JobBook() {
       />
 
       <div className="max-w-[1800px] mx-auto px-4 sm:px-6 py-6">
-        <div className="bg-white border border-[#dce4ec] rounded-2xl p-6 shadow-sm">
-          {/* The tab switcher lives beside the content it controls now,
-              instead of on the gradient header — Job Book's three tabs are
-              "pick a tool" (Setup/Book/Feed), not a frequently-flipped
-              filter like Motion Board's Today/Tomorrow/Next Week, so they
-              don't need the header's visual weight. */}
-          <div className="flex items-center justify-between gap-3 flex-wrap mb-5 pb-4 border-b border-[#dce4ec]">
-            <div className="flex items-center gap-2.5">
-              {activeMeta && <activeMeta.icon className="w-4 h-4 text-[#12a0e1]" />}
-              <h2 className="text-sm font-black uppercase tracking-widest text-[#122027]">
-                {activeMeta?.label}
-              </h2>
-            </div>
+        {/* Three doors instead of a small pill switcher — same hover-sweep/
+            icon-chip language HubRow uses, laid out as equal columns since
+            these are three peer tools, not a stacked drill-down list. The
+            active one stays permanently filled with the page's own
+            gradient (not just on hover) so it still reads as "you are
+            here" once the pointer moves away. */}
+        <div ref={navRef} className="grid grid-cols-1 sm:grid-cols-3 gap-px bg-[#dce4ec] border border-[#dce4ec] rounded-2xl overflow-hidden mb-6 shadow-sm">
+          {TABS.map(({ id, label, desc, icon: Icon }) => {
+            const isActive = tab === id;
+            return (
+              <button
+                key={id}
+                onClick={() => setTab(id)}
+                className={`group relative flex flex-col items-start gap-3 p-6 text-left overflow-hidden transition-colors duration-300 ${
+                  isActive ? `bg-gradient-to-br ${PAGE_GRADIENTS.jobbook}` : "bg-white"
+                }`}
+              >
+                {/* Hover sweep only for the inactive doors — the active one
+                    already carries the fill permanently. */}
+                {!isActive && (
+                  <div
+                    className={`absolute inset-0 bg-gradient-to-br ${PAGE_GRADIENTS.jobbook} origin-left scale-x-0 group-hover:scale-x-100 transition-transform duration-300 ease-out`}
+                  />
+                )}
 
-            {/* Tinted teal — Job Book's own accent (PAGE_GRADIENTS.jobbook is
-                teal->emerald) — instead of neutral grey, so the switcher
-                still reads as "this page's control" now that it's sitting
-                in a plain white card instead of on the gradient header. */}
-            <div className="flex bg-teal-50 border border-teal-100 p-1.5 rounded-xl">
-              {TABS.map(({ id, label, icon: Icon }) => (
-                <button
-                  key={id}
-                  onClick={() => setTab(id)}
-                  className={`relative isolate flex items-center gap-2 px-4 py-2 text-xs font-black uppercase tracking-wider rounded-lg transition-colors ${
-                    tab === id ? "text-white" : "text-teal-700/70 hover:text-teal-900 hover:bg-white/60"
+                <div
+                  className={`relative z-10 w-11 h-11 rounded-2xl flex items-center justify-center transition-colors duration-300 ${
+                    isActive
+                      ? "bg-white/20 text-white"
+                      : `bg-gradient-to-br ${PAGE_GRADIENTS.jobbook} text-white group-hover:bg-none group-hover:bg-white/20`
                   }`}
                 >
-                  {/* Shared layoutId — the pill slides between tabs instead of
-                      popping on the newly-active one (same gesture as Motion
-                      Board's timeframe switcher). Filled with the page's own
-                      gradient (same token the Rail uses for its active icon)
-                      instead of a shade of white — white-on-pale-tint was
-                      never going to have real contrast no matter the
-                      opacity; a solid accent fill does, and it's a color
-                      this page actually owns. */}
-                  {tab === id && (
-                    <motion.span
-                      layoutId="jobbook-tab-pill"
-                      className={`absolute inset-0 bg-gradient-to-br ${PAGE_GRADIENTS.jobbook} border border-white/20 rounded-lg shadow-md`}
-                      transition={{ type: "spring", stiffness: 500, damping: 32 }}
-                    />
-                  )}
-                  <Icon className="relative z-10 w-3.5 h-3.5" />
-                  <span className="relative z-10">{label}</span>
-                </button>
-              ))}
-            </div>
-          </div>
+                  <Icon className="w-5 h-5" />
+                </div>
 
+                <div className="relative z-10 min-w-0 overflow-hidden">
+                  <div data-hub-rise>
+                    <p
+                      className={`font-display text-lg font-bold tracking-tight transition-colors duration-300 ${
+                        isActive ? "text-white" : "text-[#122027] group-hover:text-white"
+                      }`}
+                    >
+                      {label}
+                    </p>
+                    <p
+                      className={`text-xs mt-1 transition-colors duration-300 ${
+                        isActive ? "text-white/80" : "text-[#768994] group-hover:text-white/80"
+                      }`}
+                    >
+                      {desc}
+                    </p>
+                  </div>
+                </div>
+              </button>
+            );
+          })}
+        </div>
+
+        <div className="bg-white border border-[#dce4ec] rounded-2xl p-6 shadow-sm">
           {tab === "jobsSetup" && <JobsSetupSection setActiveTab={setTab} />}
           {tab === "jobs" && <JobBookSection setActiveTab={setTab} />}
           {tab === "feed" && <JobsFeedSection />}

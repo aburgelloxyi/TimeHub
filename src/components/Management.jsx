@@ -9,6 +9,7 @@ import {
 import { supabase } from "../lib/supabaseClient";
 import { SEED_CLIENTS, SEED_PROJECT_DESCRIPTIONS } from "../data/seedData";
 import { DEFAULT_JOBS, CATEGORIES } from "../constants";
+import PageHeader from "./shared/PageHeader";
 
 // Film titles extracted from DEFAULT_JOBS (everything before " : XY")
 const SEED_FILMS = [...new Set(
@@ -1079,7 +1080,8 @@ const JOBS_SETUP_TABS = [
   { id: "custom",   label: "Custom Job",    desc: "Add a single one-off job manually, with its own job number and details.", icon: Plus, color: "from-emerald-500 to-teal-600" },
 ];
 
-function JobsSetupSection({ setActiveTab }) {
+// Exported: also rendered inside the PMs' standalone Job Book page (JobBook.jsx).
+export function JobsSetupSection({ setActiveTab }) {
   const [innerTab, setInnerTab] = useState("campaign");
   const [studio, setStudio] = useState("Paramount");
   const [filmTitle, setFilmTitle] = useState("");
@@ -1726,7 +1728,8 @@ export function JobBookSection({ setActiveTab }) {
 }
 
 // ── Jobs Feed ─────────────────────────────────────────────────────────────────
-function JobsFeedSection() {
+// Exported: also rendered inside the PMs' standalone Job Book page (JobBook.jsx).
+export function JobsFeedSection() {
   const [entries, setEntries] = useState([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
@@ -2403,30 +2406,25 @@ export default function Management({ wrikeUserId, department }) {
 
   return (
     <div className="min-h-screen bg-slate-100 text-[#122027] font-sans pb-16">
-      <div className="max-w-[1800px] mx-auto px-4 sm:px-6 pt-8 space-y-6">
-        {/* Header */}
-        <div className="bg-white border border-[#dce4ec] rounded-[2rem] overflow-hidden shadow-sm">
-          <div className="h-1.5 bg-gradient-to-r from-[#122027] to-[#12a0e1]" />
-          <div className="p-6 flex items-center gap-5">
-            <div className="w-16 h-16 rounded-2xl bg-gradient-to-br from-[#122027] to-[#12a0e1] flex items-center justify-center shadow-lg">
-              <Shield className="w-8 h-8 text-white" />
-            </div>
-            <div>
-              <p className="text-[10px] font-black uppercase tracking-widest text-[#12a0e1]">Management</p>
-              <h1 className="text-3xl font-black tracking-tight text-[#122027]">Job Management</h1>
-              <p className="text-xs text-[#768994] mt-0.5">Job Book · Reference Data · Market Codes</p>
-            </div>
-            {MANAGEMENT_IDS.length === 0 && (
-              <div className="ml-auto flex items-center gap-2 bg-amber-50 border border-amber-200 rounded-xl px-3 py-2">
-                <AlertTriangle className="w-3.5 h-3.5 text-amber-500 shrink-0" />
-                <p className="text-[10px] font-bold text-amber-700">
-                  Add your Wrike ID to <code className="font-mono">MANAGEMENT_IDS</code> in Management.jsx
-                </p>
-              </div>
-            )}
+      {/* Full-bleed gradient header — same PageHeader treatment as every
+          other page, so the Home wash resolves into it (see pageGradients). */}
+      <PageHeader
+        pageId="management"
+        icon={Shield}
+        title="Administration"
+        subtitle="Jobs · People · Reference data"
+      >
+        {MANAGEMENT_IDS.length === 0 && (
+          <div className="flex items-center gap-2 bg-white/15 border border-white/20 backdrop-blur-sm rounded-xl px-3 py-2">
+            <AlertTriangle className="w-3.5 h-3.5 text-amber-300 shrink-0" />
+            <p className="text-[10px] font-bold text-white/90">
+              Add your Wrike ID to <code className="font-mono">MANAGEMENT_IDS</code> in Management.jsx
+            </p>
           </div>
-        </div>
+        )}
+      </PageHeader>
 
+      <div className="max-w-[1800px] mx-auto px-4 sm:px-6 pt-6 space-y-6">
         {/* Tab navigation */}
         <div className="flex items-center">
           {TAB_GROUPS.map((group, gi) => {
@@ -2444,13 +2442,15 @@ export default function Management({ wrikeUserId, department }) {
                     const Icon = tab.icon;
                     const active = activeTab === tab.id;
                     return (
+                      // Active tab carries the page's gradient identity —
+                      // same treatment as the Rail's active slot.
                       <button key={tab.id} onClick={() => setActiveTab(tab.id)}
                         className={`flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-bold transition-all ${
                           active
-                            ? "bg-white border border-[#dce4ec] text-[#122027] shadow-sm"
-                            : "text-[#768994] hover:text-[#122027] hover:bg-white/50"
+                            ? "bg-gradient-to-br from-[#122027] to-[#12a0e1] text-white shadow-lg"
+                            : "text-[#768994] hover:text-[#122027] hover:bg-white/60"
                         }`}>
-                        <Icon className={`w-3.5 h-3.5 ${active ? "text-[#12a0e1]" : ""}`} />
+                        <Icon className="w-3.5 h-3.5" />
                         {tab.label}
                       </button>
                     );

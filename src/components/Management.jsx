@@ -12,6 +12,7 @@ import {
 import { supabase } from "../lib/supabaseClient";
 import { SEED_CLIENTS, SEED_PROJECT_DESCRIPTIONS } from "../data/seedData";
 import { DEFAULT_JOBS, CATEGORIES } from "../constants";
+import { fullName as cleanFullName, cleanNamePart } from "../lib/formatName";
 import PageHeader from "./shared/PageHeader";
 import HubRow from "./shared/HubRow";
 
@@ -1860,7 +1861,7 @@ export function JobsFeedSection() {
     ]);
 
     const profileMap = Object.fromEntries(
-      (profiles || []).map(p => [p.wrike_user_id, `${p.first_name || ""} ${p.last_name || ""}`.trim()])
+      (profiles || []).map(p => [p.wrike_user_id, cleanFullName(p.first_name, p.last_name)])
     );
     const jobMap = Object.fromEntries((jobs || []).map(j => [j.job_number, j]));
 
@@ -2122,7 +2123,7 @@ function AdminHub({ expandedGroup, onToggleGroup, onOpenItem }) {
           userIds.length ? supabase.from("profiles").select("wrike_user_id, first_name, last_name").in("wrike_user_id", userIds) : Promise.resolve({ data: [] }),
           jobNums.length ? supabase.from("jobs").select("job_number, office, print_digital, job_work_category, ordered_by, billed_to, fixed_cost").in("job_number", jobNums) : Promise.resolve({ data: [] }),
         ]);
-        const profileMap = Object.fromEntries((profiles || []).map(p => [p.wrike_user_id, `${p.first_name || ""} ${p.last_name || ""}`.trim()]));
+        const profileMap = Object.fromEntries((profiles || []).map(p => [p.wrike_user_id, cleanFullName(p.first_name, p.last_name)]));
         const jobMap = Object.fromEntries((jobs || []).map(j => [j.job_number, j]));
         setFeedEntries(tasks.map(t => ({ ...t, _name: profileMap[t.wrike_user_id] || "—", _job: jobMap[t.job_number] || {} })));
         setFeedLoading(false);
@@ -2397,8 +2398,13 @@ function PeopleSection() {
   };
 
   const PersonCard = ({ p }) => {
-    const initials = `${p.first_name?.[0] || ""}${p.last_name?.[0] || ""}`.toUpperCase() || "?";
-    const fullName = [p.first_name, p.last_name].filter(Boolean).join(" ") || "Unknown";
+    // Cleaned first, then initialed — an emoji leading a raw Wrike name
+    // (e.g. "🌸 Jov") would otherwise become the initial instead of the
+    // actual first letter.
+    const cleanFirst = cleanNamePart(p.first_name);
+    const cleanLast = cleanNamePart(p.last_name);
+    const initials = `${cleanFirst[0] || ""}${cleanLast[0] || ""}`.toUpperCase() || "?";
+    const fullName = [cleanFirst, cleanLast].filter(Boolean).join(" ") || "Unknown";
     return (
       <div className="flex items-stretch bg-white border border-[#dce4ec] rounded-2xl overflow-hidden hover:border-slate-300 hover:shadow-sm transition-all">
         {/* Flush to the card's own edges (top/bottom/left), full height —

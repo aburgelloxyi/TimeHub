@@ -10,6 +10,7 @@ import gsap from "gsap";
 import { useGSAP } from "@gsap/react";
 import { TERRITORY_FLAGS, MOTION_TEAM_NAME_MAP } from "../constants";
 import { supabase } from "../lib/supabaseClient";
+import { fullName as cleanFullName } from "../lib/formatName";
 import { useMotionBoardTasks } from "../hooks/useMotionBoardTasks";
 import PageHeader from "./shared/PageHeader";
 import TaskDetailModal, { FilePreviewLightbox } from "./TaskDetailModal";
@@ -73,7 +74,7 @@ function useDepartmentTeam(department, enabled) {
         const members = [], lanes = {}, wrikeIdToMember = {}, teamWrikeIds = [];
         const seen = new Set();
         rows.forEach((p, i) => {
-          const base = [p.first_name, p.last_name].filter(Boolean).join(" ") || p.wrike_user_id;
+          const base = cleanFullName(p.first_name, p.last_name, p.wrike_user_id);
           // Keep lane keys unique even if two people share a display name.
           let label = base, n = 2;
           while (seen.has(label)) label = `${base} (${n++})`;

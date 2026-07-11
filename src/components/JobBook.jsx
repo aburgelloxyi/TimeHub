@@ -89,13 +89,14 @@ export default function JobBook() {
                 // would still get cut even with the wrapper fixed. The
                 // sweep div (below) gets its own clipped inner wrapper
                 // instead, matching this button's corner rounding.
-                // Tight, saturated, minimal blur — a "laser" edge rather
-                // than a soft halo: three teal layers, brightest/lightest
-                // at the rim fading to deeper and softer outward, instead
-                // of a white rim handing off to a separate teal color.
+                // Two layers, not three — dropped the widest/softest outer
+                // layer entirely (that was the main source of diffusion),
+                // and the rim is now a solid, fully-opaque emerald rather
+                // than a bright-but-translucent teal, so it reads first as
+                // a border with only a sliver of glow riding along it.
                 className={`group relative flex flex-col items-start gap-3 p-6 text-left transition-[background-color,box-shadow] duration-300 ${edgeRounding} ${
                   isActive
-                    ? `bg-gradient-to-br ${PAGE_GRADIENTS.jobbook} shadow-[0_0_0_1px_rgba(153,246,228,0.95),0_0_3px_0px_rgba(45,212,191,1),0_0_8px_1px_rgba(20,184,166,0.75)]`
+                    ? `bg-gradient-to-br ${PAGE_GRADIENTS.jobbook} shadow-[0_0_0_1.5px_rgba(16,185,129,1),0_0_4px_0px_rgba(45,212,191,0.9)]`
                     : "bg-white"
                 }`}
               >

@@ -3,6 +3,7 @@ import { motion } from "framer-motion";
 import { Briefcase, FolderPlus, Activity } from "lucide-react";
 import PageHeader from "./shared/PageHeader";
 import { JobsSetupSection, JobBookSection, JobsFeedSection } from "./Management";
+import { PAGE_GRADIENTS } from "../lib/pageGradients";
 
 // The PMs' day-to-day surface: every Jobs tool on one page — Setup, the
 // Book itself, and the Feed — without the rest of Administration around
@@ -54,20 +55,21 @@ export default function JobBook() {
                   key={id}
                   onClick={() => setTab(id)}
                   className={`relative isolate flex items-center gap-2 px-4 py-2 text-xs font-black uppercase tracking-wider rounded-lg transition-colors ${
-                    tab === id ? "text-[#122027]" : "text-teal-700/70 hover:text-teal-900 hover:bg-white/60"
+                    tab === id ? "text-white" : "text-teal-700/70 hover:text-teal-900 hover:bg-white/60"
                   }`}
                 >
                   {/* Shared layoutId — the pill slides between tabs instead of
                       popping on the newly-active one (same gesture as Motion
-                      Board's timeframe switcher). */}
+                      Board's timeframe switcher). Filled with the page's own
+                      gradient (same token the Rail uses for its active icon)
+                      instead of a shade of white — white-on-pale-tint was
+                      never going to have real contrast no matter the
+                      opacity; a solid accent fill does, and it's a color
+                      this page actually owns. */}
                   {tab === id && (
-                    // Lighter touch than the earlier attempt (white/70 read as
-                    // almost the same color as the teal-50 track and nearly
-                    // vanished) — white/85 with no blur keeps shadow-md's edge
-                    // crisp while still letting a hint of the tint through.
                     <motion.span
                       layoutId="jobbook-tab-pill"
-                      className="absolute inset-0 bg-white/85 rounded-lg shadow-md"
+                      className={`absolute inset-0 bg-gradient-to-br ${PAGE_GRADIENTS.jobbook} rounded-lg shadow-md`}
                       transition={{ type: "spring", stiffness: 500, damping: 32 }}
                     />
                   )}

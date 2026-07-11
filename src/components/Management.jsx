@@ -7,7 +7,7 @@ import {
   RefreshCw, Shield, AlertTriangle, ChevronLeft, ChevronRight,
   ArrowUpAZ, ArrowDownAZ, CheckCircle2, UserCog, Activity,
   FolderPlus, Folder, FolderOpen, Sparkles, Loader2,
-  FileBarChart, ClipboardList, Globe, Layers,
+  FileBarChart, ClipboardList, Globe, Layers, Download,
 } from "lucide-react";
 import { supabase } from "../lib/supabaseClient";
 import { SEED_CLIENTS, SEED_PROJECT_DESCRIPTIONS } from "../data/seedData";
@@ -1987,6 +1987,36 @@ export function JobsFeedSection() {
     }
   };
 
+  // Text-only version of getCellValue for the export — the two boolean
+  // columns render a checkmark icon on screen, which can't go in a CSV cell.
+  const getCellText = (e, key) => {
+    if (key === "client_amends") return e.client_amends ? "Yes" : "";
+    if (key === "is_3d") return e.is_3d ? "Yes" : "";
+    return getCellValue(e, key);
+  };
+
+  // Same CSV-Blob-and-click-a-link approach as the app's other export
+  // (App.jsx's "Download CSV" palette action) — Excel opens CSV natively,
+  // so there's no need for an xlsx-writing dependency just for this.
+  // Exports whatever the current month/search filters are showing, not
+  // the full unfiltered table.
+  const exportToExcel = () => {
+    const headers = COLS.map(c => c.label.join(" "));
+    const rows = filtered.map(e => COLS.map(c => getCellText(e, c.key)));
+    const csv = [headers, ...rows]
+      .map(r => r.map(c => `"${String(c).replace(/"/g, '""')}"`).join(","))
+      .join("\n");
+    const url = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8;" }));
+    const a = document.createElement("a");
+    a.href = url;
+    const scope = monthFilter ? fmtMonthLabel(monthFilter).replace(" ", "_") : "All";
+    a.download = `ProjectTime_${scope}_${new Date().toISOString().split("T")[0]}.csv`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  };
+
   return (
     <div className="flex flex-col gap-4">
       {/* Filters row */}
@@ -2009,9 +2039,19 @@ export function JobsFeedSection() {
             className="w-full pl-9 pr-3 py-2 border border-[#dce4ec] rounded-xl text-sm text-[#122027] outline-none focus:border-[#12a0e1] bg-white"
           />
         </div>
-        <span className="text-xs font-bold text-[#b0bec5] ml-auto">
-          {loading ? "Loading…" : `${filtered.length} entr${filtered.length === 1 ? "y" : "ies"}`}
-        </span>
+        <div className="flex items-center gap-3 ml-auto">
+          <span className="text-xs font-bold text-[#b0bec5]">
+            {loading ? "Loading…" : `${filtered.length} entr${filtered.length === 1 ? "y" : "ies"}`}
+          </span>
+          <button
+            onClick={exportToExcel}
+            disabled={loading || filtered.length === 0}
+            className="flex items-center gap-1.5 px-3.5 py-2 bg-white border border-[#dce4ec] hover:border-slate-300 text-[#122027] text-xs font-bold rounded-xl transition-all disabled:opacity-50"
+          >
+            <Download className="w-3.5 h-3.5" />
+            Export to Excel
+          </button>
+        </div>
       </div>
 
       {/* Table */}

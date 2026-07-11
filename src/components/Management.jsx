@@ -2291,37 +2291,29 @@ function PeopleSection() {
     const initials = `${p.first_name?.[0] || ""}${p.last_name?.[0] || ""}`.toUpperCase() || "?";
     const fullName = [p.first_name, p.last_name].filter(Boolean).join(" ") || "Unknown";
     return (
-      <div className="bg-white border border-[#dce4ec] rounded-2xl p-4 hover:border-slate-300 hover:shadow-sm transition-all">
-        <div className="flex items-center gap-3 mb-3.5">
-          {p.avatar_url ? (
-            <img src={p.avatar_url} alt={fullName} className="w-12 h-12 rounded-2xl object-cover shrink-0" />
-          ) : (
-            <div className="w-12 h-12 rounded-2xl bg-gradient-to-br from-[#12a0e1] to-[#1cc1a5] text-white flex items-center justify-center font-display font-bold shrink-0">
-              {initials}
-            </div>
-          )}
-          <div className="flex-1 min-w-0">
-            <p className="font-display text-base font-bold text-[#122027] tracking-tight truncate">{fullName}</p>
-            <p className="text-xs text-[#768994] truncate">{p.email || p.wrike_user_id}</p>
+      <div className="flex items-center gap-3 bg-white border border-[#dce4ec] rounded-2xl p-3.5 hover:border-slate-300 hover:shadow-sm transition-all">
+        {p.avatar_url ? (
+          <img src={p.avatar_url} alt={fullName} className="w-12 h-12 rounded-2xl object-cover shrink-0" />
+        ) : (
+          <div className="w-12 h-12 rounded-2xl bg-gradient-to-br from-[#12a0e1] to-[#1cc1a5] text-white flex items-center justify-center font-display font-bold shrink-0">
+            {initials}
           </div>
+        )}
+        <div className="flex-1 min-w-0">
+          <p className="font-display text-base font-bold text-[#122027] tracking-tight truncate">{fullName}</p>
+          <p className="text-xs text-[#768994] truncate">{p.email || p.wrike_user_id}</p>
         </div>
-        <div className="grid grid-cols-2 gap-2.5">
-          <div>
-            <label className="block text-[9px] font-black uppercase tracking-widest text-[#b0bec8] mb-1">Department</label>
-            <select value={p.department || ""} onChange={e => updateField(p.wrike_user_id, { department: e.target.value || null })}
-              className="w-full text-xs font-bold text-[#122027] border border-[#dce4ec] rounded-lg px-2.5 py-2 outline-none focus:border-[#12a0e1] bg-white">
-              <option value="">None</option>
-              {departments.map(d => <option key={d} value={d}>{d}</option>)}
-            </select>
-          </div>
-          <div>
-            <label className="block text-[9px] font-black uppercase tracking-widest text-[#b0bec8] mb-1">Position</label>
-            <select value={p.position_id || ""} onChange={e => updateField(p.wrike_user_id, { position_id: e.target.value ? Number(e.target.value) : null })}
-              className="w-full text-xs font-bold text-[#122027] border border-[#dce4ec] rounded-lg px-2.5 py-2 outline-none focus:border-[#12a0e1] bg-white">
-              <option value="">None</option>
-              {positions.map(pos => <option key={pos.id} value={pos.id}>{pos.title}</option>)}
-            </select>
-          </div>
+        <div className="flex flex-col gap-1.5 shrink-0 w-36 sm:w-40">
+          <select value={p.department || ""} onChange={e => updateField(p.wrike_user_id, { department: e.target.value || null })}
+            className="w-full text-xs font-bold text-[#122027] border border-[#dce4ec] rounded-lg px-2.5 py-1.5 outline-none focus:border-[#12a0e1] bg-white">
+            <option value="">No department</option>
+            {departments.map(d => <option key={d} value={d}>{d}</option>)}
+          </select>
+          <select value={p.position_id || ""} onChange={e => updateField(p.wrike_user_id, { position_id: e.target.value ? Number(e.target.value) : null })}
+            className="w-full text-xs font-bold text-[#122027] border border-[#dce4ec] rounded-lg px-2.5 py-1.5 outline-none focus:border-[#12a0e1] bg-white">
+            <option value="">No position</option>
+            {positions.map(pos => <option key={pos.id} value={pos.id}>{pos.title}</option>)}
+          </select>
         </div>
       </div>
     );

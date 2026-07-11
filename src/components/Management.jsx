@@ -5,7 +5,7 @@ import {
   Briefcase, Film, Users, Tag, AlignLeft, Building2,
   Plus, Pencil, Trash2, X, Check, Search,
   RefreshCw, Shield, AlertTriangle, ChevronLeft, ChevronRight,
-  ArrowUpAZ, ArrowDownAZ, CheckCircle2, UserCog, Activity,
+  ArrowUpAZ, ArrowDownAZ, CheckCircle2, UserCog,
   FolderPlus, Folder, FolderOpen, Sparkles, Loader2,
   FileBarChart, ClipboardList, Globe, Layers, Download,
 } from "lucide-react";
@@ -2109,41 +2109,6 @@ export function JobsFeedSection() {
 
 // ── Administration hub (level 0) ────────────────────────────────────────────
 function AdminHub({ expandedGroup, onToggleGroup, onOpenItem }) {
-  const [feedEntries, setFeedEntries] = useState([]);
-  const [feedLoading, setFeedLoading] = useState(true);
-
-  useEffect(() => {
-    setFeedLoading(true);
-    supabase.from("tasks").select("*").order("id", { ascending: false }).limit(8)
-      .then(async ({ data: tasks }) => {
-        if (!tasks?.length) { setFeedEntries([]); setFeedLoading(false); return; }
-        const userIds = [...new Set(tasks.map(t => t.wrike_user_id).filter(Boolean))];
-        const jobNums = [...new Set(tasks.map(t => t.job_number).filter(Boolean))];
-        const [{ data: profiles }, { data: jobs }] = await Promise.all([
-          userIds.length ? supabase.from("profiles").select("wrike_user_id, first_name, last_name").in("wrike_user_id", userIds) : Promise.resolve({ data: [] }),
-          jobNums.length ? supabase.from("jobs").select("job_number, office, print_digital, job_work_category, ordered_by, billed_to, fixed_cost").in("job_number", jobNums) : Promise.resolve({ data: [] }),
-        ]);
-        const profileMap = Object.fromEntries((profiles || []).map(p => [p.wrike_user_id, cleanFullName(p.first_name, p.last_name)]));
-        const jobMap = Object.fromEntries((jobs || []).map(j => [j.job_number, j]));
-        setFeedEntries(tasks.map(t => ({ ...t, _name: profileMap[t.wrike_user_id] || "—", _job: jobMap[t.job_number] || {} })));
-        setFeedLoading(false);
-      });
-  }, []);
-
-  const fmtDate = (d) => {
-    if (!d) return "—";
-    if (/^\d{4}-\d{2}-\d{2}$/.test(d)) { const [y, m, day] = d.split("-"); return `${day}.${m}.${y.slice(2)}`; }
-    const slash = d.match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
-    if (slash) return `${slash[1]}.${slash[2]}.${slash[3].slice(2)}`;
-    return d;
-  };
-
-  const getFilmTitle = (e) => {
-    const colonIdx = (e.job_number || "").indexOf(" : ");
-    if (colonIdx > 0) return e.job_number.slice(0, colonIdx).trim();
-    return e.film_title || "—";
-  };
-
   return (
     <div className="space-y-6">
 
@@ -2151,13 +2116,16 @@ function AdminHub({ expandedGroup, onToggleGroup, onOpenItem }) {
           in place (an accordion), rather than navigating to a separate
           screen. Only one open at a time, so the list never grows past
           "3 rows, or 3 rows plus a handful of items" — nothing to scroll
-          past to get back to the other two. */}
+          past to get back to the other two.
+          Recent Activity removed (experiment: see how the hub reads with
+          just the menu, sized up via `first` on every row instead of only
+          the literal first one, since it's now the only thing on the page). */}
       <div className="bg-white rounded-3xl border border-[#dce4ec] shadow-sm overflow-hidden">
         {NAV_GROUPS.map((group) => {
           const isOpen = expandedGroup === group.id;
           return (
             <div key={group.id}>
-              <HubRow section={group} onClick={() => onToggleGroup(group.id)} open={isOpen} />
+              <HubRow section={group} onClick={() => onToggleGroup(group.id)} open={isOpen} first large />
               <AnimatePresence initial={false}>
                 {isOpen && (
                   <motion.div
@@ -2191,69 +2159,6 @@ function AdminHub({ expandedGroup, onToggleGroup, onOpenItem }) {
             </div>
           );
         })}
-      </div>
-
-      {/* Recent activity — most-recent logged tasks (the full Jobs Feed lives
-          on the Job Book page now). */}
-      <div className="bg-[#f8fafc] border border-[#dce4ec] rounded-2xl overflow-hidden">
-        <div className="flex items-center justify-between px-5 py-4 border-b border-[#dce4ec]">
-          <div className="flex items-center gap-2.5">
-            <div className="w-7 h-7 rounded-lg bg-gradient-to-br from-[#122027] to-[#12a0e1] flex items-center justify-center shadow-sm">
-              <Activity className="w-3.5 h-3.5 text-white" />
-            </div>
-            <div>
-              <p className="text-[10px] font-black uppercase tracking-widest text-[#768994]">Live</p>
-              <p className="text-sm font-black text-[#122027] leading-none">Recent Activity</p>
-            </div>
-          </div>
-        </div>
-        <div className="overflow-x-auto">
-          <table className="w-full text-[11px]">
-            <thead>
-              <tr className="bg-[#122027]">
-                {["Job #", "Date", "Client", "Film", "Description", "Person", "Office"].map(h => (
-                  <th key={h} className="px-3 py-2 text-left font-black uppercase tracking-wider text-[8.5px] text-white/80 whitespace-nowrap">{h}</th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {feedLoading ? (
-                Array.from({ length: 5 }).map((_, i) => (
-                  <tr key={i} className="border-b border-[#f0f4f8]">
-                    {Array.from({ length: 7 }).map((_, j) => (
-                      <td key={j} className="px-3 py-2"><div className="h-3 bg-slate-200 rounded animate-pulse" style={{ width: `${50 + Math.random() * 50}%` }} /></td>
-                    ))}
-                  </tr>
-                ))
-              ) : feedEntries.length === 0 ? (
-                <tr><td colSpan={7} className="px-4 py-8 text-center text-[#b0bec5]">No recent entries</td></tr>
-              ) : feedEntries.map((e, i) => (
-                <tr key={e.id} className={`border-b border-[#f0f4f8] hover:bg-[#edf5fb] transition-colors ${i % 2 === 0 ? "bg-white" : "bg-[#f8fafc]"}`}>
-                  <td className="px-3 py-2 font-black text-[#12a0e1] text-[10px] whitespace-nowrap">
-                    {(() => {
-                      const s = e.job_number || "";
-                      const colonIdx = s.indexOf(" : ");
-                      if (colonIdx < 0) return s || "—";
-                      const after = s.slice(colonIdx + 3);
-                      const commaIdx = after.indexOf(",");
-                      return commaIdx > 0 ? after.slice(0, commaIdx).trim() : after.trim();
-                    })()}
-                  </td>
-                  <td className="px-3 py-2 text-[#768994] whitespace-nowrap font-mono">{fmtDate(e.date)}</td>
-                  <td className="px-3 py-2 text-[#122027] whitespace-nowrap">{e.client || "—"}</td>
-                  <td className="px-3 py-2 text-[#122027] whitespace-nowrap">{getFilmTitle(e)}</td>
-                  <td className="px-3 py-2 text-[#768994] max-w-[180px] truncate">{e.project_description || "—"}</td>
-                  <td className="px-3 py-2 text-[#122027] whitespace-nowrap">{e._name}</td>
-                  <td className="px-3 py-2">
-                    {e._job?.office ? (
-                      <span className="text-[9px] font-black px-1.5 py-0.5 rounded-md bg-[#12a0e1]/10 text-[#12a0e1]">{e._job.office}</span>
-                    ) : "—"}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
       </div>
 
     </div>

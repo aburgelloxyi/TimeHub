@@ -17,13 +17,23 @@ import { ChevronRight } from "lucide-react";
 // keeping the exact same gradient-sweep/hover behavior — so a submenu row
 // and its parent row feel like the same control at two sizes, not two
 // different components that happen to look similar.
-export default function HubRow({ section, onClick, badge, first, open, compact }) {
+//
+// `large` scales the icon chip + padding up a step, independent of `first`
+// (which only bumps the label text). A page whose top-level rows ARE the
+// whole page — Administration's hub, with nothing else competing for
+// attention — reads better with everything enlarged together (icon, type,
+// breathing room) rather than just bigger type on a same-size icon.
+export default function HubRow({ section, onClick, badge, first, open, compact, large }) {
   const { label, desc, icon: Icon, gradient } = section;
   return (
     <button
       onClick={onClick}
       className={`group relative w-full flex items-center text-left border-b border-[#dce4ec] last:border-b-0 focus:outline-none focus-visible:ring-4 focus-visible:ring-inset focus-visible:ring-white/70 ${
-        compact ? "gap-4 pl-9 pr-5 sm:pl-12 sm:pr-7 py-4" : "gap-4 sm:gap-5 px-5 sm:px-7 py-5"
+        compact
+          ? "gap-4 pl-9 pr-5 sm:pl-12 sm:pr-7 py-4"
+          : large
+          ? "gap-5 sm:gap-6 px-7 sm:px-9 py-7"
+          : "gap-4 sm:gap-5 px-5 sm:px-7 py-5"
       }`}
     >
       <div
@@ -34,10 +44,10 @@ export default function HubRow({ section, onClick, badge, first, open, compact }
           it sits on has itself gone gradient. */}
       <div
         className={`relative z-10 shrink-0 rounded-2xl bg-gradient-to-br ${gradient} group-hover:bg-none group-hover:bg-white/20 group-focus:bg-none group-focus:bg-white/20 flex items-center justify-center text-white transition-colors duration-300 ${
-          compact ? "w-9 h-9" : "w-11 h-11"
+          compact ? "w-9 h-9" : large ? "w-16 h-16" : "w-11 h-11"
         }`}
       >
-        <Icon className={compact ? "w-4 h-4" : "w-5 h-5"} />
+        <Icon className={compact ? "w-4 h-4" : large ? "w-7 h-7" : "w-5 h-5"} />
       </div>
 
       <div className="relative z-10 min-w-0 flex-1 overflow-hidden">
@@ -49,7 +59,7 @@ export default function HubRow({ section, onClick, badge, first, open, compact }
           >
             {label}
           </p>
-          <p className={`text-[#768994] group-hover:text-white/80 group-focus:text-white/80 mt-1 truncate transition-colors duration-300 ${compact ? "text-xs" : "text-xs sm:text-sm"}`}>
+          <p className={`text-[#768994] group-hover:text-white/80 group-focus:text-white/80 mt-1 truncate transition-colors duration-300 ${compact ? "text-xs" : large ? "text-sm sm:text-base" : "text-xs sm:text-sm"}`}>
             {desc}
           </p>
         </div>
@@ -58,10 +68,10 @@ export default function HubRow({ section, onClick, badge, first, open, compact }
       <div className="relative z-10 flex items-center gap-3 shrink-0">
         {badge}
         {open === undefined ? (
-          <ChevronRight className={`text-[#768994] group-hover:text-white group-focus:text-white group-hover:translate-x-1 transition-all duration-300 ${compact ? "w-4 h-4" : "w-5 h-5"}`} />
+          <ChevronRight className={`text-[#768994] group-hover:text-white group-focus:text-white group-hover:translate-x-1 transition-all duration-300 ${compact ? "w-4 h-4" : large ? "w-6 h-6" : "w-5 h-5"}`} />
         ) : (
           <ChevronRight
-            className={`text-[#768994] group-hover:text-white group-focus:text-white transition-transform duration-300 ${open ? "rotate-90" : ""} ${compact ? "w-4 h-4" : "w-5 h-5"}`}
+            className={`text-[#768994] group-hover:text-white group-focus:text-white transition-transform duration-300 ${open ? "rotate-90" : ""} ${compact ? "w-4 h-4" : large ? "w-6 h-6" : "w-5 h-5"}`}
           />
         )}
       </div>

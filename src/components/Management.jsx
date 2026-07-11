@@ -756,7 +756,7 @@ function StrictSelect({ value, onChange, options, placeholder, loading, classNam
       <button type="button" disabled={loading}
         onClick={() => setOpen(o => !o)}
         className="w-full flex items-center justify-between gap-2 border border-[#dce4ec] rounded-xl px-3 py-2.5 text-sm font-bold text-[#122027] outline-none focus:border-[#12a0e1] bg-white disabled:opacity-50 transition-colors hover:border-[#12a0e1]">
-        <span className={value ? "" : "text-[#b0bec5] font-medium"}>
+        <span className={`min-w-0 truncate ${value ? "" : "text-[#b0bec5] font-medium"}`}>
           {loading ? "Loading…" : (value || placeholder || "Select…")}
         </span>
         <ChevronRight className={`w-3.5 h-3.5 text-[#768994] shrink-0 transition-transform ${open ? "rotate-90" : ""}`} />
@@ -2194,6 +2194,11 @@ function PeopleSection() {
   const [syncing, setSyncing]       = useState(false);
   const [syncMsg, setSyncMsg]       = useState("");
   const [expanded, setExpanded]     = useState({});
+  // Per-department: has its expand/collapse animation finished? Multiple
+  // departments can be open at once here (unlike the top-level hub, this
+  // isn't an exclusive accordion), so this has to be tracked per label, not
+  // as one shared flag. See toggleGroup below for why it matters.
+  const [settled, setSettled]       = useState({});
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -2285,7 +2290,14 @@ function PeopleSection() {
     return out;
   }, [people]);
 
-  const toggleGroup = (label) => setExpanded(prev => ({ ...prev, [label]: !prev[label] }));
+  const toggleGroup = (label) => {
+    // Any toggle (opening or closing) starts a height transition, so the
+    // clipping needs to be hidden again until it finishes — otherwise a
+    // dropdown left open from before the animation started would render
+    // past the box's edge mid-transition.
+    setSettled(prev => ({ ...prev, [label]: false }));
+    setExpanded(prev => ({ ...prev, [label]: !prev[label] }));
+  };
 
   const PersonCard = ({ p }) => {
     const initials = `${p.first_name?.[0] || ""}${p.last_name?.[0] || ""}`.toUpperCase() || "?";
@@ -2368,17 +2380,23 @@ function PeopleSection() {
             if (items.length === 0) return null;
             const isOpen = !!expanded[group.label];
             return (
-              <div key={group.label} className="bg-white rounded-2xl border border-[#dce4ec] shadow-sm overflow-hidden">
-                <HubRow
-                  section={{
-                    label: group.label,
-                    desc: `${items.length} ${items.length === 1 ? "person" : "people"}`,
-                    icon: Users,
-                    gradient: group.gradient,
-                  }}
-                  onClick={() => toggleGroup(group.label)}
-                  open={isOpen}
-                />
+              // No overflow-hidden on this outer card — its rounded corners
+              // come from the two children below clipping themselves
+              // (header, body), so the body can go overflow-visible once
+              // settled without square-cornering the header along with it.
+              <div key={group.label} className="bg-white rounded-2xl border border-[#dce4ec] shadow-sm">
+                <div className={`overflow-hidden ${isOpen ? "rounded-t-2xl" : "rounded-2xl"}`}>
+                  <HubRow
+                    section={{
+                      label: group.label,
+                      desc: `${items.length} ${items.length === 1 ? "person" : "people"}`,
+                      icon: Users,
+                      gradient: group.gradient,
+                    }}
+                    onClick={() => toggleGroup(group.label)}
+                    open={isOpen}
+                  />
+                </div>
                 <AnimatePresence initial={false}>
                   {isOpen && (
                     <motion.div
@@ -2386,7 +2404,9 @@ function PeopleSection() {
                       animate={{ height: "auto", opacity: 1 }}
                       exit={{ height: 0, opacity: 0 }}
                       transition={{ duration: 0.25, ease: [0.25, 0.1, 0.25, 1] }}
-                      className="overflow-hidden bg-slate-50 border-t border-[#dce4ec]"
+                      onAnimationComplete={() => setSettled(prev => ({ ...prev, [group.label]: true }))}
+                      style={{ overflow: settled[group.label] ? "visible" : "hidden" }}
+                      className="bg-slate-50 border-t border-[#dce4ec] rounded-b-2xl"
                     >
                       <div className="grid grid-cols-1 xl:grid-cols-2 gap-2.5 p-3">
                         {items.map(p => <PersonCard key={p.wrike_user_id} p={p} />)}

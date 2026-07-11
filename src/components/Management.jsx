@@ -1,4 +1,5 @@
-import React, { useState, useEffect, useCallback, useMemo } from "react";
+import React, { useState, useEffect, useCallback, useMemo, useRef } from "react";
+import { createPortal } from "react-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   Briefcase, Film, Users, Tag, AlignLeft, Building2,
@@ -745,26 +746,55 @@ function ComboField({ label, value, onChange, options, placeholder, required, fi
 function StrictSelect({ value, onChange, options, placeholder, loading, className = "" }) {
   const [q, setQ] = useState("");
   const [open, setOpen] = useState(false);
+  const [rect, setRect] = useState(null);
+  const btnRef = useRef(null);
 
   const hits = useMemo(() => {
     if (!q) return options.slice(0, 60);
     return options.filter(o => o.toLowerCase().includes(q.toLowerCase())).slice(0, 60);
   }, [options, q]);
 
+  const toggle = () => {
+    if (!open) setRect(btnRef.current.getBoundingClientRect());
+    setOpen(o => !o);
+  };
+
+  // The panel is portaled to <body> and positioned from the button's own
+  // rect, rather than CSS-nested `absolute` inside whatever card/accordion
+  // it happens to sit in — nesting meant it inherited that ancestor's
+  // clipping and paint order, so once a card was tall enough (or another
+  // card sat right below it) the open panel could render clipped or
+  // behind the next sibling instead of on top of everything, regardless
+  // of its own z-index. Keep the rect in sync while open so scrolling the
+  // page doesn't leave it stranded over the wrong spot.
+  useEffect(() => {
+    if (!open) return;
+    const reposition = () => setRect(btnRef.current.getBoundingClientRect());
+    window.addEventListener("scroll", reposition, true);
+    window.addEventListener("resize", reposition);
+    return () => {
+      window.removeEventListener("scroll", reposition, true);
+      window.removeEventListener("resize", reposition);
+    };
+  }, [open]);
+
   return (
-    <div className={`relative ${className}`}>
-      <button type="button" disabled={loading}
-        onClick={() => setOpen(o => !o)}
+    <div className={className}>
+      <button ref={btnRef} type="button" disabled={loading}
+        onClick={toggle}
         className="w-full flex items-center justify-between gap-2 border border-[#dce4ec] rounded-xl px-3 py-2.5 text-sm font-bold text-[#122027] outline-none focus:border-[#12a0e1] bg-white disabled:opacity-50 transition-colors hover:border-[#12a0e1]">
         <span className={`min-w-0 truncate ${value ? "" : "text-[#b0bec5] font-medium"}`}>
           {loading ? "Loading…" : (value || placeholder || "Select…")}
         </span>
         <ChevronRight className={`w-3.5 h-3.5 text-[#768994] shrink-0 transition-transform ${open ? "rotate-90" : ""}`} />
       </button>
-      {open && (
+      {open && rect && createPortal(
         <>
-          <div className="fixed inset-0 z-[99]" onClick={() => setOpen(false)} />
-          <div className="absolute z-[100] left-0 right-0 mt-1.5 bg-white border border-[#dce4ec] rounded-2xl shadow-2xl overflow-hidden">
+          <div className="fixed inset-0 z-[9998]" onClick={() => setOpen(false)} />
+          <div
+            className="fixed z-[9999] bg-white border border-[#dce4ec] rounded-2xl shadow-2xl overflow-hidden"
+            style={{ top: rect.bottom + 6, left: rect.left, width: rect.width }}
+          >
             <div className="p-2 border-b border-[#dce4ec]/60">
               <div className="relative">
                 <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-[#b0bec5]" />
@@ -786,7 +816,8 @@ function StrictSelect({ value, onChange, options, placeholder, loading, classNam
               ))}
             </div>
           </div>
-        </>
+        </>,
+        document.body
       )}
     </div>
   );

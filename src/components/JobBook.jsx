@@ -72,13 +72,15 @@ export default function JobBook() {
             escape past a button's own box, which this wrapper would
             otherwise clip on every side (its height/width exactly track
             the row of buttons, so even the middle door's glow would get
-            cut top and bottom). The rounded-2xl shape is preserved by
-            giving the first/last buttons their own matching corner
-            radius instead, same fix as PeopleSection's department cards. */}
-        <div ref={navRef} className="grid grid-cols-1 sm:grid-cols-3 gap-px bg-[#dce4ec] border border-[#dce4ec] rounded-2xl mb-6 shadow-sm">
+            cut top and bottom). The rounded-t-2xl shape is preserved by
+            giving the first/last buttons their own matching TOP corner
+            only — the bottom stays square now, since it sits flush
+            against the content panel below instead of having its own
+            rounded bottom + a gap. */}
+        <div ref={navRef} className="grid grid-cols-1 sm:grid-cols-3 gap-px bg-[#dce4ec] border border-[#dce4ec] border-b-0 rounded-t-2xl shadow-sm">
           {TABS.map(({ id, label, desc, icon: Icon }, i) => {
             const isActive = tab === id;
-            const edgeRounding = i === 0 ? "rounded-l-2xl" : i === TABS.length - 1 ? "rounded-r-2xl" : "";
+            const edgeRounding = i === 0 ? "rounded-tl-2xl" : i === TABS.length - 1 ? "rounded-tr-2xl" : "";
             return (
               <button
                 key={id}
@@ -145,7 +147,11 @@ export default function JobBook() {
           })}
         </div>
 
-        <div className="bg-white border border-[#dce4ec] rounded-2xl p-6 shadow-sm">
+        {/* rounded-b-2xl, not rounded-2xl — the top edge is now the seam
+            with the door row above (its border-t is the only divider
+            line between the two, since the door row itself has
+            border-b-0), not a separate rounded corner of its own. */}
+        <div className="bg-white border border-[#dce4ec] rounded-b-2xl p-6 shadow-sm">
           {tab === "jobsSetup" && <JobsSetupSection setActiveTab={setTab} />}
           {tab === "jobs" && <JobBookSection setActiveTab={setTab} />}
           {tab === "feed" && <JobsFeedSection />}

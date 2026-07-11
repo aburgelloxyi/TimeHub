@@ -2092,28 +2092,23 @@ function AdminHub({ expandedGroup, onToggleGroup, onOpenItem }) {
                     transition={{ duration: 0.25, ease: [0.25, 0.1, 0.25, 1] }}
                     className="overflow-hidden bg-slate-50 border-b border-[#dce4ec]"
                   >
+                    {/* Same HubRow, just compact — identical gradient sweep
+                        and hover behavior as the parent row, not a
+                        hand-rolled approximation of it. */}
                     {group.items.map((item) => (
-                      <button
+                      <HubRow
                         key={item.id}
+                        compact
+                        section={{ ...item, gradient: group.gradient }}
                         onClick={() => onOpenItem(item.id)}
-                        className="group/item w-full flex items-center gap-4 pl-9 pr-5 sm:pl-12 sm:pr-7 py-4 text-left border-t border-[#dce4ec] first:border-t-0 hover:bg-white transition-colors focus:outline-none focus-visible:ring-4 focus-visible:ring-inset focus-visible:ring-[#12a0e1]/30"
-                      >
-                        <div className={`shrink-0 w-9 h-9 rounded-xl bg-gradient-to-br ${group.gradient} flex items-center justify-center text-white`}>
-                          <item.icon className="w-4 h-4" />
-                        </div>
-                        <div className="min-w-0 flex-1">
-                          <p className="text-sm sm:text-base font-display font-bold text-[#122027] tracking-tight leading-none">
-                            {item.label}
-                          </p>
-                          <p className="text-xs text-[#768994] mt-1 truncate">{item.desc}</p>
-                        </div>
-                        {item.soon && (
-                          <span className="text-[9px] font-black uppercase tracking-widest text-[#768994] bg-slate-100 px-2 py-1 rounded-full shrink-0">
-                            Coming soon
-                          </span>
-                        )}
-                        <ChevronRight className="w-4 h-4 text-[#768994] group-hover/item:translate-x-1 transition-transform duration-300 shrink-0" />
-                      </button>
+                        badge={
+                          item.soon ? (
+                            <span className="text-[9px] font-black uppercase tracking-widest text-[#768994] group-hover:text-white/80 bg-slate-100 group-hover:bg-white/15 px-2 py-1 rounded-full transition-colors duration-300">
+                              Coming soon
+                            </span>
+                          ) : null
+                        }
+                      />
                     ))}
                   </motion.div>
                 )}

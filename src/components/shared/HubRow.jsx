@@ -32,7 +32,7 @@ export default function HubRow({ section, onClick, badge, first, open, compact, 
         compact
           ? "gap-4 pl-9 pr-5 sm:pl-12 sm:pr-7 py-4"
           : large
-          ? "gap-5 sm:gap-6 px-7 sm:px-9 py-7"
+          ? "gap-6 sm:gap-8 px-8 sm:px-11 py-9"
           : "gap-4 sm:gap-5 px-5 sm:px-7 py-5"
       }`}
     >
@@ -44,22 +44,22 @@ export default function HubRow({ section, onClick, badge, first, open, compact, 
           it sits on has itself gone gradient. */}
       <div
         className={`relative z-10 shrink-0 rounded-2xl bg-gradient-to-br ${gradient} group-hover:bg-none group-hover:bg-white/20 group-focus:bg-none group-focus:bg-white/20 flex items-center justify-center text-white transition-colors duration-300 ${
-          compact ? "w-9 h-9" : large ? "w-16 h-16" : "w-11 h-11"
+          compact ? "w-9 h-9" : large ? "w-20 h-20" : "w-11 h-11"
         }`}
       >
-        <Icon className={compact ? "w-4 h-4" : large ? "w-7 h-7" : "w-5 h-5"} />
+        <Icon className={compact ? "w-4 h-4" : large ? "w-9 h-9" : "w-5 h-5"} />
       </div>
 
       <div className="relative z-10 min-w-0 flex-1 overflow-hidden">
         <div data-hub-rise>
           <p
             className={`font-display font-bold tracking-tight leading-none text-[#122027] group-hover:text-white group-focus:text-white transition-colors duration-300 ${
-              compact ? "text-sm sm:text-base" : first ? "text-2xl sm:text-3xl" : "text-xl sm:text-2xl"
+              compact ? "text-sm sm:text-base" : large ? "text-3xl sm:text-5xl" : first ? "text-2xl sm:text-3xl" : "text-xl sm:text-2xl"
             }`}
           >
             {label}
           </p>
-          <p className={`text-[#768994] group-hover:text-white/80 group-focus:text-white/80 mt-1 truncate transition-colors duration-300 ${compact ? "text-xs" : large ? "text-sm sm:text-base" : "text-xs sm:text-sm"}`}>
+          <p className={`text-[#768994] group-hover:text-white/80 group-focus:text-white/80 mt-1.5 truncate transition-colors duration-300 ${compact ? "text-xs" : large ? "text-base sm:text-lg" : "text-xs sm:text-sm"}`}>
             {desc}
           </p>
         </div>
@@ -68,10 +68,10 @@ export default function HubRow({ section, onClick, badge, first, open, compact, 
       <div className="relative z-10 flex items-center gap-3 shrink-0">
         {badge}
         {open === undefined ? (
-          <ChevronRight className={`text-[#768994] group-hover:text-white group-focus:text-white group-hover:translate-x-1 transition-all duration-300 ${compact ? "w-4 h-4" : large ? "w-6 h-6" : "w-5 h-5"}`} />
+          <ChevronRight className={`text-[#768994] group-hover:text-white group-focus:text-white group-hover:translate-x-1 transition-all duration-300 ${compact ? "w-4 h-4" : large ? "w-8 h-8" : "w-5 h-5"}`} />
         ) : (
           <ChevronRight
-            className={`text-[#768994] group-hover:text-white group-focus:text-white transition-transform duration-300 ${open ? "rotate-90" : ""} ${compact ? "w-4 h-4" : large ? "w-6 h-6" : "w-5 h-5"}`}
+            className={`text-[#768994] group-hover:text-white group-focus:text-white transition-transform duration-300 ${open ? "rotate-90" : ""} ${compact ? "w-4 h-4" : large ? "w-8 h-8" : "w-5 h-5"}`}
           />
         )}
       </div>

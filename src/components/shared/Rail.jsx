@@ -69,7 +69,7 @@ export default function Rail({ activePage, setActivePage }) {
         aria-hidden
         className={`pointer-events-none absolute inset-x-0 top-0 h-36 bg-gradient-to-br ${
           PAGE_GRADIENTS[activePage] || PAGE_GRADIENTS.management
-        } opacity-60 [mask-image:linear-gradient(to_bottom,black,transparent)]`}
+        } opacity-45 [mask-image:linear-gradient(to_bottom,black,transparent)]`}
       />
 
       <button

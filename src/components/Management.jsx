@@ -2268,6 +2268,7 @@ function PeopleSection() {
   const [syncing, setSyncing]       = useState(false);
   const [syncMsg, setSyncMsg]       = useState("");
   const [expanded, setExpanded]     = useState({});
+  const [search, setSearch]         = useState("");
   // Per-department: has its expand/collapse animation finished? Multiple
   // departments can be open at once here (unlike the top-level hub, this
   // isn't an exclusive accordion), so this has to be tracked per label, not
@@ -2355,14 +2356,36 @@ function PeopleSection() {
   // hardcoded visual-identity list), not the editable departments list — a
   // brand-new department with no bucket colour yet lands in "—" instead of
   // being silently dropped, until a developer gives it a DEPT_GROUPS entry.
+  const filteredPeople = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    if (!q) return people;
+    return people.filter(p => {
+      const fullName = `${p.first_name || ""} ${p.last_name || ""}`.toLowerCase();
+      return fullName.includes(q) || (p.email || "").toLowerCase().includes(q);
+    });
+  }, [people, search]);
+
   const buckets = useMemo(() => {
     const out = Object.fromEntries(DEPT_GROUPS.map(g => [g.label, []]));
-    for (const p of people) {
+    for (const p of filteredPeople) {
       const key = p.department && DEPT_GROUPS.some(g => g.label === p.department) ? p.department : "—";
       out[key].push(p);
     }
     return out;
-  }, [people]);
+  }, [filteredPeople]);
+
+  // While searching, auto-open every department that has a match so results
+  // are visible without the user having to expand each group by hand.
+  useEffect(() => {
+    if (!search.trim()) return;
+    setExpanded(prev => {
+      const next = { ...prev };
+      for (const group of DEPT_GROUPS) {
+        if ((buckets[group.label] || []).length > 0) next[group.label] = true;
+      }
+      return next;
+    });
+  }, [search, buckets]);
 
   const toggleGroup = (label) => {
     // Any toggle (opening or closing) starts a height transition, so the
@@ -2417,13 +2440,28 @@ function PeopleSection() {
   return (
     <div className="space-y-1">
       {/* Toolbar */}
-      <div className="flex items-center justify-between mb-4">
-        <div className="flex items-center gap-2">
+      <div className="flex items-center justify-between mb-4 gap-3 flex-wrap">
+        <div className="flex items-center gap-3">
           {!loading && (
-            <span className="text-[10px] font-black text-[#768994]">
-              {people.length} people
+            <span className="text-[10px] font-black text-[#768994] shrink-0">
+              {search.trim() ? `${filteredPeople.length} of ${people.length}` : people.length} people
             </span>
           )}
+          {/* Search — same input treatment as SimpleListSection's list search */}
+          <div className="relative w-56">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-[#768994]" />
+            <input
+              value={search}
+              onChange={e => setSearch(e.target.value)}
+              placeholder="Search people…"
+              className="w-full pl-9 pr-8 py-2 text-sm border border-[#dce4ec] rounded-xl outline-none focus:border-[#12a0e1] focus:ring-2 focus:ring-[#12a0e1]/20 bg-white"
+            />
+            {search && (
+              <button onClick={() => setSearch("")} className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-300 hover:text-slate-500">
+                <X className="w-3.5 h-3.5" />
+              </button>
+            )}
+          </div>
         </div>
         <div className="flex items-center gap-3">
           {syncMsg && <span className="text-[11px] font-medium text-[#768994]">{syncMsg}</span>}
@@ -2442,6 +2480,10 @@ function PeopleSection() {
       ) : people.length === 0 ? (
         <div className="py-16 text-center text-[#768994] text-sm">
           No people yet — click "Sync from Wrike" to pull everyone in the workspace.
+        </div>
+      ) : filteredPeople.length === 0 ? (
+        <div className="py-16 text-center text-[#768994] text-sm">
+          No one matches "{search}".
         </div>
       ) : (
         <div className="space-y-3">

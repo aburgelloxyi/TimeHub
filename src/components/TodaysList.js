@@ -596,7 +596,7 @@ export default function TodaysList({ wrikeData, triggerToast: _triggerToast, isA
               </div>
             </div>
           </div>
-          <div className="flex gap-6 px-5 pb-4 overflow-x-auto">
+          <div className="flex gap-6 px-5 pb-4 overflow-x-auto scrollbar-thin-dark">
             {campaigns.length === 0 ? (
               <p className="text-xs text-white/40 italic pb-1">Nothing on the slate for {timeframe.toLowerCase()}.</p>
             ) : campaigns.map((campaign) => (
@@ -647,7 +647,7 @@ export default function TodaysList({ wrikeData, triggerToast: _triggerToast, isA
                 />
               </button>
               {showFilesPanel && !attachmentsLoading && (
-                <div className="flex gap-6 px-4 pb-3 pt-0.5 overflow-x-auto">
+                <div className="flex gap-6 px-4 pb-3 pt-0.5 overflow-x-auto scrollbar-thin">
                   {Object.values(taskAttachments).map(({ task, attachments }) => (
                     <div key={task.id} className="shrink-0 flex flex-col gap-1.5">
                       <div>
@@ -747,7 +747,7 @@ export default function TodaysList({ wrikeData, triggerToast: _triggerToast, isA
                 </button>
 
                 {/* Lane body — tasks flow horizontally like clips on a track */}
-                <div className={`flex-1 min-w-0 flex items-stretch gap-2 overflow-x-auto overflow-y-hidden ${isCollapsed ? "px-3 py-1.5" : "p-3"}`}>
+                <div className={`flex-1 min-w-0 flex items-stretch gap-2 overflow-x-auto overflow-y-hidden scrollbar-thin ${isCollapsed ? "px-3 py-1.5" : "p-3"}`}>
                   {isCollapsed ? (
                     <div className="flex items-center gap-1.5">
                       {tasks.slice(0, 12).map((t) => (

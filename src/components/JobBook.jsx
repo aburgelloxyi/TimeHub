@@ -69,7 +69,7 @@ export default function JobBook() {
                   {tab === id && (
                     <motion.span
                       layoutId="jobbook-tab-pill"
-                      className={`absolute inset-0 bg-gradient-to-br ${PAGE_GRADIENTS.jobbook} rounded-lg shadow-md`}
+                      className={`absolute inset-0 bg-gradient-to-br ${PAGE_GRADIENTS.jobbook} border border-white/20 rounded-lg shadow-md`}
                       transition={{ type: "spring", stiffness: 500, damping: 32 }}
                     />
                   )}

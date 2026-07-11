@@ -6,7 +6,12 @@ import { ChevronRight } from "lucide-react";
 // wherever a page needs "pick one of a few things" navigation (Administration)
 // instead of a tab bar or a card grid — same shape everywhere a manager might
 // need to navigate, regardless of how comfortable they are with software.
-export default function HubRow({ section, onClick, badge, first }) {
+//
+// `open` is optional and switches the chevron from "this navigates
+// somewhere" (slides right on hover) to "this expands in place" (rotates
+// 90deg when open) — used when a row toggles an accordion instead of
+// changing the page. Omit it entirely for real navigation.
+export default function HubRow({ section, onClick, badge, first, open }) {
   const { label, desc, icon: Icon, gradient } = section;
   return (
     <button
@@ -42,7 +47,13 @@ export default function HubRow({ section, onClick, badge, first }) {
 
       <div className="relative z-10 flex items-center gap-3 shrink-0">
         {badge}
-        <ChevronRight className="w-5 h-5 text-[#768994] group-hover:text-white group-focus:text-white group-hover:translate-x-1 transition-all duration-300" />
+        {open === undefined ? (
+          <ChevronRight className="w-5 h-5 text-[#768994] group-hover:text-white group-focus:text-white group-hover:translate-x-1 transition-all duration-300" />
+        ) : (
+          <ChevronRight
+            className={`w-5 h-5 text-[#768994] group-hover:text-white group-focus:text-white transition-transform duration-300 ${open ? "rotate-90" : ""}`}
+          />
+        )}
       </div>
     </button>
   );

@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback, useMemo } from "react";
+import { motion, AnimatePresence } from "framer-motion";
 import {
   Briefcase, Film, Users, Tag, AlignLeft, Building2,
   Plus, Pencil, Trash2, X, Check, Search,
@@ -2032,7 +2033,7 @@ export function JobsFeedSection() {
 }
 
 // ── Administration hub (level 0) ────────────────────────────────────────────
-function AdminHub({ onOpenGroup }) {
+function AdminHub({ expandedGroup, onToggleGroup, onOpenItem }) {
   const [feedEntries, setFeedEntries] = useState([]);
   const [feedLoading, setFeedLoading] = useState(true);
 
@@ -2071,13 +2072,55 @@ function AdminHub({ onOpenGroup }) {
   return (
     <div className="space-y-6">
 
-      {/* The three destinations — one decision at a time, same HubRow
-          language as Profile Hub, instead of an 11-wide tab bar or a card
-          grid. Drilling into a group shows its items the same way. */}
+      {/* The three destinations — clicking one unfolds its items right there
+          in place (an accordion), rather than navigating to a separate
+          screen. Only one open at a time, so the list never grows past
+          "3 rows, or 3 rows plus a handful of items" — nothing to scroll
+          past to get back to the other two. */}
       <div className="bg-white rounded-3xl border border-[#dce4ec] shadow-sm overflow-hidden">
-        {NAV_GROUPS.map((group) => (
-          <HubRow key={group.id} section={group} onClick={() => onOpenGroup(group.id)} />
-        ))}
+        {NAV_GROUPS.map((group) => {
+          const isOpen = expandedGroup === group.id;
+          return (
+            <div key={group.id}>
+              <HubRow section={group} onClick={() => onToggleGroup(group.id)} open={isOpen} />
+              <AnimatePresence initial={false}>
+                {isOpen && (
+                  <motion.div
+                    initial={{ height: 0, opacity: 0 }}
+                    animate={{ height: "auto", opacity: 1 }}
+                    exit={{ height: 0, opacity: 0 }}
+                    transition={{ duration: 0.25, ease: [0.25, 0.1, 0.25, 1] }}
+                    className="overflow-hidden bg-slate-50 border-b border-[#dce4ec]"
+                  >
+                    {group.items.map((item) => (
+                      <button
+                        key={item.id}
+                        onClick={() => onOpenItem(item.id)}
+                        className="group/item w-full flex items-center gap-4 pl-9 pr-5 sm:pl-12 sm:pr-7 py-4 text-left border-t border-[#dce4ec] first:border-t-0 hover:bg-white transition-colors focus:outline-none focus-visible:ring-4 focus-visible:ring-inset focus-visible:ring-[#12a0e1]/30"
+                      >
+                        <div className={`shrink-0 w-9 h-9 rounded-xl bg-gradient-to-br ${group.gradient} flex items-center justify-center text-white`}>
+                          <item.icon className="w-4 h-4" />
+                        </div>
+                        <div className="min-w-0 flex-1">
+                          <p className="text-sm sm:text-base font-display font-bold text-[#122027] tracking-tight leading-none">
+                            {item.label}
+                          </p>
+                          <p className="text-xs text-[#768994] mt-1 truncate">{item.desc}</p>
+                        </div>
+                        {item.soon && (
+                          <span className="text-[9px] font-black uppercase tracking-widest text-[#768994] bg-slate-100 px-2 py-1 rounded-full shrink-0">
+                            Coming soon
+                          </span>
+                        )}
+                        <ChevronRight className="w-4 h-4 text-[#768994] group-hover/item:translate-x-1 transition-transform duration-300 shrink-0" />
+                      </button>
+                    ))}
+                  </motion.div>
+                )}
+              </AnimatePresence>
+            </div>
+          );
+        })}
       </div>
 
       {/* Recent activity — most-recent logged tasks (the full Jobs Feed lives
@@ -2359,13 +2402,33 @@ function ComingSoon({ icon: Icon, title, body, note }) {
   );
 }
 
+// Push/pop panel slide — drilling in slides the new panel in from the
+// right (direction 1), going back slides the previous panel in from the
+// left (direction -1). Same shape as the page-swap fade in App.jsx, just
+// with a horizontal offset since this is a nested navigation stack, not a
+// full page change.
+const HUB_SLIDE_VARIANTS = {
+  initial: (dir) => ({ x: dir > 0 ? 28 : -28, opacity: 0 }),
+  animate: { x: 0, opacity: 1, transition: { duration: 0.22, ease: [0.25, 0.1, 0.25, 1] } },
+  exit: (dir) => ({ x: dir > 0 ? -28 : 28, opacity: 0, transition: { duration: 0.16, ease: [0.25, 0.1, 0.25, 1] } }),
+};
+
 export default function Management({ wrikeUserId, department }) {
-  // Two-level drill-down, mirroring Profile Hub: activeGroup picks one of
-  // the three destinations, activeTab picks one item inside it. Both null
-  // means "show the hub" — there's never more than one row of choices on
-  // screen at once.
-  const [activeGroup, setActiveGroup] = useState(null);
+  // expandedGroup is purely a display toggle — which group's items are
+  // unfolded inline on the hub, an accordion, not a navigation state.
+  // activeTab is the real navigation: null means "still on the hub"
+  // (accordion open or not), a value means "showing that item's content".
+  const [expandedGroup, setExpandedGroup] = useState(null);
   const [activeTab, setActiveTab] = useState(null);
+  // Tracks which way the content panel should slide: forward opening an
+  // item, backward returning to the hub.
+  const [navDirection, setNavDirection] = useState(1);
+
+  const toggleGroup = (id) => setExpandedGroup((g) => (g === id ? null : id));
+  const openItem = (id) => { setNavDirection(1); setActiveTab(id); };
+  // The accordion stays exactly as it was — going back doesn't collapse
+  // the group you were just looking at.
+  const backToHub = () => { setNavDirection(-1); setActiveTab(null); };
 
   // Administration is a first-class page for PMs; the hardcoded allowlist
   // remains as an admin override for everyone else.
@@ -2393,7 +2456,6 @@ export default function Management({ wrikeUserId, department }) {
   }
 
   const nav = activeTab ? findNavItem(activeTab) : null;
-  const group = nav ? nav.group : activeGroup ? NAV_GROUPS.find((g) => g.id === activeGroup) : null;
 
   return (
     <div className="min-h-screen bg-slate-100 text-[#122027] font-sans pb-16">
@@ -2415,89 +2477,73 @@ export default function Management({ wrikeUserId, department }) {
         )}
       </PageHeader>
 
-      <div className="max-w-[1800px] mx-auto px-4 sm:px-6 pt-6 space-y-6">
-        {/* Level 0: the hub — three destinations, nothing else to choose. */}
-        {!group && <AdminHub onOpenGroup={setActiveGroup} />}
+      <div className="max-w-[1800px] mx-auto px-4 sm:px-6 pt-6 pb-6 overflow-hidden">
+        {/* The hub (with its accordion) and an open item's content are the
+            only two panels that ever swap — the accordion itself doesn't
+            trigger this, it's a height animation inside the hub panel.
+            overflow-hidden on the parent clips the 28px travel so nothing
+            peeks past the edge mid-transition. */}
+        <AnimatePresence mode="wait" custom={navDirection} initial={false}>
+          <motion.div
+            key={nav ? `item:${nav.item.id}` : "hub"}
+            custom={navDirection}
+            variants={HUB_SLIDE_VARIANTS}
+            initial="initial"
+            animate="animate"
+            exit="exit"
+          >
+            {!nav && (
+              <AdminHub
+                expandedGroup={expandedGroup}
+                onToggleGroup={toggleGroup}
+                onOpenItem={openItem}
+              />
+            )}
 
-        {/* Level 1: a group's items */}
-        {group && !nav && (
-          <div>
-            <div className="flex items-center gap-3 mb-4">
-              <button
-                onClick={() => setActiveGroup(null)}
-                className="flex items-center gap-1.5 text-xs font-bold text-[#768994] hover:text-[#122027] bg-white border border-[#dce4ec] hover:border-slate-300 rounded-xl px-3 py-2 shadow-sm transition-all"
-              >
-                <ChevronLeft className="w-4 h-4" /> Administration
-              </button>
-              <div className="flex items-center gap-2.5 min-w-0">
-                <div className={`w-8 h-8 rounded-xl bg-gradient-to-br ${group.gradient} flex items-center justify-center text-white shadow-sm shrink-0`}>
-                  <group.icon className="w-4 h-4" />
+            {/* The item's actual content */}
+            {nav && (
+              <div>
+                <div className="flex items-center gap-3 mb-4">
+                  <button
+                    onClick={backToHub}
+                    className="flex items-center gap-1.5 text-xs font-bold text-[#768994] hover:text-[#122027] bg-white border border-[#dce4ec] hover:border-slate-300 rounded-xl px-3 py-2 shadow-sm transition-all"
+                  >
+                    <ChevronLeft className="w-4 h-4" /> Administration
+                  </button>
+                  <div className="flex items-center gap-2.5 min-w-0">
+                    <div className={`w-8 h-8 rounded-xl bg-gradient-to-br ${nav.group.gradient} flex items-center justify-center text-white shadow-sm shrink-0`}>
+                      <nav.item.icon className="w-4 h-4" />
+                    </div>
+                    <h2 className="font-display text-xl font-bold text-[#122027] tracking-tight truncate">{nav.item.label}</h2>
+                  </div>
                 </div>
-                <h2 className="font-display text-xl font-bold text-[#122027] tracking-tight truncate">{group.label}</h2>
-              </div>
-            </div>
 
-            <div className="bg-white rounded-3xl border border-[#dce4ec] shadow-sm overflow-hidden">
-              {group.items.map((item) => (
-                <HubRow
-                  key={item.id}
-                  section={item}
-                  onClick={() => setActiveTab(item.id)}
-                  badge={
-                    item.soon ? (
-                      <span className="text-[9px] font-black uppercase tracking-widest text-[#768994] group-hover:text-white/80 bg-slate-100 group-hover:bg-white/15 px-2 py-1 rounded-full transition-colors duration-300">
-                        Coming soon
-                      </span>
-                    ) : null
-                  }
-                />
-              ))}
-            </div>
-          </div>
-        )}
-
-        {/* Level 2: the item's actual content */}
-        {nav && (
-          <div>
-            <div className="flex items-center gap-3 mb-4">
-              <button
-                onClick={() => setActiveTab(null)}
-                className="flex items-center gap-1.5 text-xs font-bold text-[#768994] hover:text-[#122027] bg-white border border-[#dce4ec] hover:border-slate-300 rounded-xl px-3 py-2 shadow-sm transition-all"
-              >
-                <ChevronLeft className="w-4 h-4" /> {group.label}
-              </button>
-              <div className="flex items-center gap-2.5 min-w-0">
-                <div className={`w-8 h-8 rounded-xl bg-gradient-to-br ${group.gradient} flex items-center justify-center text-white shadow-sm shrink-0`}>
-                  <nav.item.icon className="w-4 h-4" />
+                <div className="bg-white border border-[#dce4ec] rounded-2xl p-6 shadow-sm">
+                  {/* Project/Time is the logged-time-per-job feed — same
+                      component Job Book uses (JobsFeedSection), not a separate
+                      report. */}
+                  {activeTab === "project-time" && <JobsFeedSection />}
+                  {activeTab === "timesheet-completion" && (
+                    <ComingSoon
+                      icon={ClipboardList}
+                      title="Staff Timesheet Completion"
+                      body="A live list of which staff haven't submitted their timesheet for a given week, so it's obvious at a glance who still needs to."
+                      note="Buildable from submitted tasks vs the staff roster — flagged as the next report to build."
+                    />
+                  )}
+                  {activeTab === "people"     && <PeopleSection />}
+                  {activeTab === "films"      && <SimpleListSection table="films" labelField="title" label="Films" placeholder="Film title…" />}
+                  {activeTab === "clients"    && <SimpleListSection table="clients" labelField="name" label="Clients" quickFilters={STUDIO_GROUPS} quickFilterLabel="Filter by studio" />}
+                  {activeTab === "categories" && <SimpleListSection table="job_categories" labelField="name" label="Item Categories" groups={CATEGORY_GROUPS} />}
+                  {activeTab === "descs"      && <SimpleListSection table="project_descriptions" labelField="description" label="Project Type Descriptions" isLong quickFilters={DESC_QUICK_FILTERS} quickFilterLabel="Filter by territory" groups={DESCRIPTION_GROUPS} />}
+                  {activeTab === "positions"  && <SimpleListSection table="positions" labelField="title" label="Positions" placeholder="e.g. Creative Director…" />}
+                  {activeTab === "translations" && <SimpleListSection table="translation_countries" labelField="name" label="Translation Countries" placeholder="e.g. France…" />}
+                  {activeTab === "departments"  && <SimpleListSection table="job_departments" labelField="name" label="Departments" placeholder="e.g. Print…" />}
                 </div>
-                <h2 className="font-display text-xl font-bold text-[#122027] tracking-tight truncate">{nav.item.label}</h2>
               </div>
-            </div>
-
-            <div className="bg-white border border-[#dce4ec] rounded-2xl p-6 shadow-sm">
-              {/* Project/Time is the logged-time-per-job feed — same
-                  component Job Book uses (JobsFeedSection), not a separate
-                  report. */}
-              {activeTab === "project-time" && <JobsFeedSection />}
-              {activeTab === "timesheet-completion" && (
-                <ComingSoon
-                  icon={ClipboardList}
-                  title="Staff Timesheet Completion"
-                  body="A live list of which staff haven't submitted their timesheet for a given week, so it's obvious at a glance who still needs to."
-                  note="Buildable from submitted tasks vs the staff roster — flagged as the next report to build."
-                />
-              )}
-              {activeTab === "people"     && <PeopleSection />}
-              {activeTab === "films"      && <SimpleListSection table="films" labelField="title" label="Films" placeholder="Film title…" />}
-              {activeTab === "clients"    && <SimpleListSection table="clients" labelField="name" label="Clients" quickFilters={STUDIO_GROUPS} quickFilterLabel="Filter by studio" />}
-              {activeTab === "categories" && <SimpleListSection table="job_categories" labelField="name" label="Item Categories" groups={CATEGORY_GROUPS} />}
-              {activeTab === "descs"      && <SimpleListSection table="project_descriptions" labelField="description" label="Project Type Descriptions" isLong quickFilters={DESC_QUICK_FILTERS} quickFilterLabel="Filter by territory" groups={DESCRIPTION_GROUPS} />}
-              {activeTab === "positions"  && <SimpleListSection table="positions" labelField="title" label="Positions" placeholder="e.g. Creative Director…" />}
-              {activeTab === "translations" && <SimpleListSection table="translation_countries" labelField="name" label="Translation Countries" placeholder="e.g. France…" />}
-              {activeTab === "departments"  && <SimpleListSection table="job_departments" labelField="name" label="Departments" placeholder="e.g. Print…" />}
-            </div>
-          </div>
-        )}
+            )}
+          </motion.div>
+        </AnimatePresence>
       </div>
     </div>
   );

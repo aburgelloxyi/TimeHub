@@ -2400,38 +2400,45 @@ function PeopleSection() {
     const initials = `${p.first_name?.[0] || ""}${p.last_name?.[0] || ""}`.toUpperCase() || "?";
     const fullName = [p.first_name, p.last_name].filter(Boolean).join(" ") || "Unknown";
     return (
-      <div className="flex items-center gap-3 bg-white border border-[#dce4ec] rounded-2xl p-3.5 hover:border-slate-300 hover:shadow-sm transition-all">
+      <div className="flex items-stretch bg-white border border-[#dce4ec] rounded-2xl overflow-hidden hover:border-slate-300 hover:shadow-sm transition-all">
+        {/* Flush to the card's own edges (top/bottom/left), full height —
+            clipped to the card's rounded-2xl by the parent's overflow-hidden
+            rather than rounding the image itself, so it reads as one card
+            with a portrait on the left, not a small avatar floating in
+            padding. */}
         {p.avatar_url ? (
-          <img src={p.avatar_url} alt={fullName} className="w-12 h-12 rounded-2xl object-cover shrink-0" />
+          <img src={p.avatar_url} alt={fullName} className="w-20 shrink-0 object-cover" />
         ) : (
-          <div className="w-12 h-12 rounded-2xl bg-gradient-to-br from-[#12a0e1] to-[#1cc1a5] text-white flex items-center justify-center font-display font-bold shrink-0">
+          <div className="w-20 shrink-0 bg-gradient-to-br from-[#12a0e1] to-[#1cc1a5] text-white flex items-center justify-center font-display font-bold text-lg">
             {initials}
           </div>
         )}
-        <div className="flex-1 min-w-0">
-          <p className="font-display text-base font-bold text-[#122027] tracking-tight truncate">{fullName}</p>
-          <p className="text-xs text-[#768994] truncate">{p.email || p.wrike_user_id}</p>
-        </div>
-        {/* Same searchable dropdown Job Book uses for its pickers, instead
-            of a bare native <select> — the app's one dropdown style. "No
-            department"/"No position" are plain entries in the option list
-            (StrictSelect is selection-only, no separate clear affordance),
-            translated back to null on the way out. */}
-        <div className="flex flex-col gap-1.5 shrink-0 w-36 sm:w-40">
-          <StrictSelect
-            value={p.department || "No department"}
-            onChange={(v) => updateField(p.wrike_user_id, { department: v === "No department" ? null : v })}
-            options={["No department", ...departments]}
-          />
-          <StrictSelect
-            value={positions.find(pos => pos.id === p.position_id)?.title || "No position"}
-            onChange={(v) => {
-              if (v === "No position") { updateField(p.wrike_user_id, { position_id: null }); return; }
-              const pos = positions.find(pos => pos.title === v);
-              updateField(p.wrike_user_id, { position_id: pos?.id ?? null });
-            }}
-            options={["No position", ...positions.map(pos => pos.title)]}
-          />
+        <div className="flex-1 min-w-0 flex items-center gap-3 p-3.5">
+          <div className="flex-1 min-w-0">
+            <p className="font-display text-base font-bold text-[#122027] tracking-tight truncate">{fullName}</p>
+            <p className="text-xs text-[#768994] truncate">{p.email || p.wrike_user_id}</p>
+          </div>
+          {/* Same searchable dropdown Job Book uses for its pickers, instead
+              of a bare native <select> — the app's one dropdown style. "No
+              department"/"No position" are plain entries in the option list
+              (StrictSelect is selection-only, no separate clear affordance),
+              translated back to null on the way out. */}
+          <div className="flex flex-col gap-1.5 shrink-0 w-36 sm:w-40">
+            <StrictSelect
+              value={p.department || "No department"}
+              onChange={(v) => updateField(p.wrike_user_id, { department: v === "No department" ? null : v })}
+              options={["No department", ...departments]}
+            />
+            <StrictSelect
+              value={positions.find(pos => pos.id === p.position_id)?.title || "No position"}
+              onChange={(v) => {
+                if (v === "No position") { updateField(p.wrike_user_id, { position_id: null }); return; }
+                const pos = positions.find(pos => pos.title === v);
+                updateField(p.wrike_user_id, { position_id: pos?.id ?? null });
+              }}
+              options={["No position", ...positions.map(pos => pos.title)]}
+            />
+          </div>
         </div>
       </div>
     );

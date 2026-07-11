@@ -1,8 +1,8 @@
 import {
-  Clock,
+  Activity,
   LayoutList,
   Layout,
-  Database,
+  Timer,
   User,
   Shield,
   Briefcase,
@@ -19,7 +19,7 @@ export const PAGES = {
     id: "timesheet",
     label: "Timesheeter",
     desc: "Track today's time",
-    icon: Clock,
+    icon: Activity,
     gradient: PAGE_GRADIENTS.timesheet,
   },
   todayslist: {
@@ -40,7 +40,7 @@ export const PAGES = {
     id: "legacy",
     label: "Timesheets",
     desc: "Company timesheet database",
-    icon: Database,
+    icon: Timer,
     gradient: PAGE_GRADIENTS.legacy,
   },
   profile: {

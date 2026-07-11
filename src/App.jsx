@@ -8,7 +8,8 @@ import React, {
 import { motion, AnimatePresence, MotionConfig } from "framer-motion";
 import {
   Home as HomeIcon,
-  Clock,
+  Activity,
+  Timer,
   LayoutList,
   Layout,
   Server,
@@ -17,7 +18,6 @@ import {
   Zap,
   Command,
   Search,
-  Database,
   FileDown,
   Trash2,
   RefreshCw,
@@ -75,7 +75,7 @@ const PAGE_VARIANTS = {
 // ids the URL hash is allowed to select on load/refresh.
 const VALID_PAGES = [
   "home", "timesheet", "canvas", "wriketest", "legacy", "profile",
-  "management", "todayslist",
+  "management", "jobbook", "todayslist",
 ];
 
 const pageFromHash = () => {
@@ -278,7 +278,7 @@ export default function App() {
       title: "Timesheeter",
       desc: "Open the time tracker",
       type: "Navigation",
-      icon: Clock,
+      icon: Activity,
       hint: "1",
     },
     {
@@ -310,7 +310,7 @@ export default function App() {
       title: PAGES.legacy.label,
       desc: PAGES.legacy.desc,
       type: "Navigation",
-      icon: Database,
+      icon: Timer,
       hint: "5",
     },
     {
@@ -608,7 +608,7 @@ export default function App() {
       {isAdmin && (
         <button
           onClick={() => setShowAdmin(true)}
-          className="fixed bottom-6 left-6 z-[9997] flex items-center gap-2 bg-[#122027] hover:bg-[#1a2f3a] text-white text-xs font-black px-3 py-2.5 rounded-xl shadow-lg transition-all"
+          className="fixed bottom-6 left-24 z-[9997] flex items-center gap-2 bg-[#122027] hover:bg-[#1a2f3a] text-white text-xs font-black px-3 py-2.5 rounded-xl shadow-lg transition-all"
         >
           <Shield className="w-3.5 h-3.5" /> Admin
         </button>
@@ -623,7 +623,7 @@ export default function App() {
           and pt-3 (not mt-3) so the margin can't collapse through the app
           root and expose the document canvas as a dark strip */}
       {!hasToken && activePage !== "profile" && activePage !== "home" && (
-        <div className="pl-16 mx-auto max-w-[1400px] px-4 sm:px-6 pt-3">
+        <div className="pl-20 mx-auto max-w-[1400px] px-4 sm:px-6 pt-3">
           <div className="bg-amber-50 border border-amber-200 rounded-2xl px-4 py-3 flex items-center gap-3">
             <Key className="w-4 h-4 text-amber-600 shrink-0" />
             <p className="text-xs font-bold text-amber-800 flex-1">
@@ -767,7 +767,7 @@ export default function App() {
           its own data independently (useMotionBoardTasks) rather than from
           globalWrikeData below; wrikeData is only passed through for the
           task detail modal's lookups. */}
-      <div className={`pl-16 ${activePage === "todayslist" ? "block" : "hidden"}`}>
+      <div className={`pl-20 ${activePage === "todayslist" ? "block" : "hidden"}`}>
         <TodaysList
           wrikeData={globalWrikeData}
           triggerToast={triggerToast}
@@ -800,7 +800,7 @@ export default function App() {
             initial="initial"
             animate="animate"
             exit="exit"
-            className={activePage === "home" ? "" : "pl-16"}
+            className={activePage === "home" ? "" : "pl-20"}
           >
             {activePage === "home" && (
               <Home

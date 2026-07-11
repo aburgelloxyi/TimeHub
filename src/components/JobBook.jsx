@@ -68,50 +68,26 @@ export default function JobBook() {
             active one stays permanently filled with the page's own
             gradient (not just on hover) so it still reads as "you are
             here" once the pointer moves away. */}
-        {/* No overflow-hidden here anymore — an outward glow needs room to
-            escape past a button's own box, which this wrapper would
-            otherwise clip on every side (its height/width exactly track
-            the row of buttons, so even the middle door's glow would get
-            cut top and bottom). The rounded-t-2xl shape is preserved by
-            giving the first/last buttons their own matching TOP corner
-            only — the bottom stays square now, since it sits flush
-            against the content panel below instead of having its own
-            rounded bottom + a gap. */}
-        <div ref={navRef} className="grid grid-cols-1 sm:grid-cols-3 gap-px bg-[#dce4ec] border border-[#dce4ec] border-b-0 rounded-t-2xl shadow-sm">
-          {TABS.map(({ id, label, desc, icon: Icon }, i) => {
+        {/* rounded-t-2xl (not rounded-2xl) since this sits flush against
+            the content panel below — only the outer two buttons need
+            their own matching top corner, the bottom stays square. */}
+        <div ref={navRef} className="grid grid-cols-1 sm:grid-cols-3 gap-px bg-[#dce4ec] border border-[#dce4ec] border-b-0 rounded-t-2xl overflow-hidden shadow-sm">
+          {TABS.map(({ id, label, desc, icon: Icon }) => {
             const isActive = tab === id;
-            const edgeRounding = i === 0 ? "rounded-tl-2xl" : i === TABS.length - 1 ? "rounded-tr-2xl" : "";
             return (
               <button
                 key={id}
                 onClick={() => setTab(id)}
-                // No overflow-hidden on the button itself either — an
-                // element clips its OWN box-shadow when it has
-                // overflow:hidden, not just child content, so the glow
-                // would still get cut even with the wrapper fixed. The
-                // sweep div (below) gets its own clipped inner wrapper
-                // instead, matching this button's corner rounding.
-                // Two layers, not three — dropped the widest/softest outer
-                // layer entirely (that was the main source of diffusion),
-                // and the rim is now a solid, fully-opaque emerald rather
-                // than a bright-but-translucent teal, so it reads first as
-                // a border with only a sliver of glow riding along it.
-                className={`group relative flex flex-col items-start gap-3 p-6 text-left transition-[background-color,box-shadow] duration-300 ${edgeRounding} ${
-                  isActive
-                    ? `bg-gradient-to-br ${PAGE_GRADIENTS.jobbook} shadow-[0_0_0_1.5px_rgba(16,185,129,1),0_0_4px_0px_rgba(45,212,191,0.9)]`
-                    : "bg-white"
+                className={`group relative flex flex-col items-start gap-3 p-6 text-left overflow-hidden transition-colors duration-300 ${
+                  isActive ? `bg-gradient-to-br ${PAGE_GRADIENTS.jobbook}` : "bg-white"
                 }`}
               >
                 {/* Hover sweep only for the inactive doors — the active one
-                    already carries the fill permanently. Own overflow-hidden
-                    + matching corner rounding, since the button above it
-                    can no longer clip its own children. */}
+                    already carries the fill permanently. */}
                 {!isActive && (
-                  <div className={`absolute inset-0 overflow-hidden ${edgeRounding}`}>
-                    <div
-                      className={`absolute inset-0 bg-gradient-to-br ${PAGE_GRADIENTS.jobbook} origin-left scale-x-0 group-hover:scale-x-100 transition-transform duration-300 ease-out`}
-                    />
-                  </div>
+                  <div
+                    className={`absolute inset-0 bg-gradient-to-br ${PAGE_GRADIENTS.jobbook} origin-left scale-x-0 group-hover:scale-x-100 transition-transform duration-300 ease-out`}
+                  />
                 )}
 
                 <div

@@ -5,6 +5,7 @@ import {
   RefreshCw, Shield, AlertTriangle, ChevronLeft, ChevronRight,
   ArrowUpAZ, ArrowDownAZ, LayoutDashboard, TrendingUp, CheckCircle2, UserCog, Activity,
   FolderPlus, Folder, FolderOpen, Sparkles, Loader2,
+  FileBarChart, ClipboardList, Globe, Layers,
 } from "lucide-react";
 import { supabase } from "../lib/supabaseClient";
 import { SEED_CLIENTS, SEED_PROJECT_DESCRIPTIONS } from "../data/seedData";
@@ -27,24 +28,28 @@ export const MANAGEMENT_IDS = [
 const OFFICES = ["LDN", "LA"];
 const PRINT_DIGITAL = ["Digital", "Print", "Both"];
 
+// Jobs (Setup / Book / Feed) deliberately live on the standalone Job Book
+// page now (JobBook.jsx) — Administration keeps Reports, Staff Accounts, and
+// the reference-data lists, matching the PMs' mental model.
 const TABS = [
-  { id: "overview",  label: "Overview",            icon: LayoutDashboard },
-  { id: "jobsSetup", label: "Jobs Setup",          icon: FolderPlus },
-  { id: "jobs",      label: "Job Book",            icon: Briefcase },
-  { id: "feed",      label: "Jobs Feed",           icon: Activity  },
-  { id: "people",    label: "People",              icon: Users     },
-  { id: "positions", label: "Positions",           icon: UserCog   },
-  { id: "films",     label: "Films",               icon: Film      },
-  { id: "clients",   label: "Clients",             icon: Building2 },
-  { id: "categories",label: "Item Categories",     icon: Tag       },
-  { id: "descs",     label: "Project Descriptions",icon: AlignLeft },
+  { id: "overview",             label: "Overview",              icon: LayoutDashboard },
+  { id: "project-time",         label: "Project/Time",          icon: FileBarChart },
+  { id: "timesheet-completion", label: "Timesheet Completion",  icon: ClipboardList },
+  { id: "people",               label: "People",                icon: Users     },
+  { id: "positions",            label: "Positions",             icon: UserCog   },
+  { id: "films",                label: "Films",                 icon: Film      },
+  { id: "clients",              label: "Clients",               icon: Building2 },
+  { id: "descs",                label: "Project Descriptions",  icon: AlignLeft },
+  { id: "categories",           label: "Item Categories",       icon: Tag       },
+  { id: "translations",         label: "Translation Countries", icon: Globe     },
+  { id: "departments",          label: "Departments",           icon: Layers    },
 ];
 
 const TAB_GROUPS = [
   { ids: ["overview"] },
-  { ids: ["jobsSetup", "jobs", "feed"],      label: "Jobs"      },
-  { ids: ["people", "positions"], label: "Team"    },
-  { ids: ["films", "clients", "categories", "descs"], label: "Reference" },
+  { ids: ["project-time", "timesheet-completion"], label: "Reports" },
+  { ids: ["people", "positions"], label: "Staff Accounts" },
+  { ids: ["films", "clients", "descs", "categories", "translations", "departments"], label: "Supporting Content" },
 ];
 
 // ── Project Description quick-filter chips ────────────────────────────────────
@@ -1996,15 +2001,16 @@ function OverviewSection({ setActiveTab }) {
 
   useEffect(() => {
     Promise.all([
-      supabase.from("jobs").select("id", { count: "exact", head: true }),
       supabase.from("profiles").select("wrike_user_id", { count: "exact", head: true }),
       supabase.from("films").select("id", { count: "exact", head: true }),
       supabase.from("clients").select("id", { count: "exact", head: true }),
       supabase.from("job_categories").select("id", { count: "exact", head: true }),
       supabase.from("project_descriptions").select("id", { count: "exact", head: true }),
       supabase.from("positions").select("id", { count: "exact", head: true }),
-    ]).then(([jobs, people, films, clients, cats, descs, positions]) => {
-      setCounts({ jobs: jobs.count ?? 0, people: people.count ?? 0, films: films.count ?? 0, clients: clients.count ?? 0, categories: cats.count ?? 0, descriptions: descs.count ?? 0, positions: positions.count ?? 0 });
+      supabase.from("translation_countries").select("id", { count: "exact", head: true }),
+      supabase.from("job_departments").select("id", { count: "exact", head: true }),
+    ]).then(([people, films, clients, cats, descs, positions, translations, departments]) => {
+      setCounts({ people: people.count ?? 0, films: films.count ?? 0, clients: clients.count ?? 0, categories: cats.count ?? 0, descriptions: descs.count ?? 0, positions: positions.count ?? 0, translations: translations.count ?? 0, departments: departments.count ?? 0 });
       setLoading(false);
     });
   }, []);
@@ -2043,26 +2049,28 @@ function OverviewSection({ setActiveTab }) {
 
   const CARD_GROUPS = [
     {
-      label: "Jobs",
+      label: "Reports",
       cards: [
-        { id: "jobs", label: "Job Book",  icon: Briefcase, color: "from-[#122027] to-[#12a0e1]", light: "bg-[#12a0e1]/10 text-[#12a0e1] border-[#12a0e1]/20", count: counts.jobs },
-        { id: "feed", label: "Jobs Feed", icon: Activity,  color: "from-[#0e86be] to-[#12a0e1]", light: "bg-[#12a0e1]/10 text-[#12a0e1] border-[#12a0e1]/20", count: null },
+        { id: "project-time",         label: "Project/Time",         icon: FileBarChart,  color: "from-[#122027] to-[#12a0e1]", light: "bg-[#12a0e1]/10 text-[#12a0e1] border-[#12a0e1]/20", count: null, soon: true },
+        { id: "timesheet-completion", label: "Timesheet Completion", icon: ClipboardList, color: "from-[#0e86be] to-[#12a0e1]", light: "bg-[#12a0e1]/10 text-[#12a0e1] border-[#12a0e1]/20", count: null, soon: true },
       ],
     },
     {
-      label: "Team",
+      label: "Staff Accounts",
       cards: [
         { id: "people",    label: "People",    icon: Users,   color: "from-teal-500 to-[#1cc1a5]", light: "bg-teal-50 text-teal-700 border-teal-200", count: counts.people },
         { id: "positions", label: "Positions", icon: UserCog, color: "from-rose-500 to-pink-600",  light: "bg-rose-50 text-rose-700 border-rose-200",  count: counts.positions },
       ],
     },
     {
-      label: "Reference",
+      label: "Supporting Content",
       cards: [
-        { id: "films",      label: "Films",           icon: Film,      color: "from-violet-500 to-purple-600", light: "bg-violet-50 text-violet-700 border-violet-200",    count: counts.films },
-        { id: "clients",    label: "Clients",         icon: Building2, color: "from-blue-500 to-cyan-600",     light: "bg-blue-50 text-blue-700 border-blue-200",          count: counts.clients },
-        { id: "categories", label: "Item Categories", icon: Tag,       color: "from-amber-500 to-orange-500",  light: "bg-amber-50 text-amber-700 border-amber-200",       count: counts.categories },
-        { id: "descs",      label: "Descriptions",    icon: AlignLeft, color: "from-emerald-500 to-teal-600",  light: "bg-emerald-50 text-emerald-700 border-emerald-200", count: counts.descriptions },
+        { id: "films",        label: "Films",           icon: Film,      color: "from-violet-500 to-purple-600", light: "bg-violet-50 text-violet-700 border-violet-200",    count: counts.films },
+        { id: "clients",      label: "Clients",         icon: Building2, color: "from-blue-500 to-cyan-600",     light: "bg-blue-50 text-blue-700 border-blue-200",          count: counts.clients },
+        { id: "descs",        label: "Descriptions",    icon: AlignLeft, color: "from-emerald-500 to-teal-600",  light: "bg-emerald-50 text-emerald-700 border-emerald-200", count: counts.descriptions },
+        { id: "categories",   label: "Item Categories", icon: Tag,       color: "from-amber-500 to-orange-500",  light: "bg-amber-50 text-amber-700 border-amber-200",       count: counts.categories },
+        { id: "translations", label: "Translation Countries", icon: Globe, color: "from-sky-500 to-blue-600",   light: "bg-sky-50 text-sky-700 border-sky-200",             count: counts.translations },
+        { id: "departments",  label: "Departments",     icon: Layers,    color: "from-slate-500 to-slate-700",   light: "bg-slate-100 text-slate-600 border-slate-200",      count: counts.departments },
       ],
     },
   ];
@@ -2076,7 +2084,9 @@ function OverviewSection({ setActiveTab }) {
           <Icon className="w-5 h-5 text-white" />
         </div>
         <p className="text-[10px] font-black uppercase tracking-widest text-[#768994] mb-1">{card.label}</p>
-        {card.count === null ? (
+        {card.soon ? (
+          <p className="text-sm font-bold text-[#768994] mt-1">Coming soon</p>
+        ) : card.count === null ? (
           <p className="text-sm font-bold text-[#768994] mt-1">Live feed</p>
         ) : loading ? (
           <div className="h-8 w-12 bg-slate-100 rounded animate-pulse" />
@@ -2084,7 +2094,7 @@ function OverviewSection({ setActiveTab }) {
           <p className="text-3xl font-black text-[#122027]">{(card.count ?? 0).toLocaleString()}</p>
         )}
         <p className={`text-[10px] font-bold mt-2 px-2 py-0.5 rounded-full border inline-flex items-center gap-1 ${card.light}`}>
-          Open →
+          {card.soon ? "Preview →" : "Open →"}
         </p>
       </button>
     );
@@ -2095,9 +2105,9 @@ function OverviewSection({ setActiveTab }) {
 
       {/* Grouped nav cards */}
       <div className="space-y-5">
-        {/* Jobs + Team side by side */}
-        <div className="flex gap-8">
-          {["Jobs", "Team"].map(groupLabel => {
+        {/* Reports + Staff Accounts side by side */}
+        <div className="flex flex-col lg:flex-row gap-8">
+          {["Reports", "Staff Accounts"].map(groupLabel => {
             const group = CARD_GROUPS.find(g => g.label === groupLabel);
             return (
               <div key={groupLabel} className="flex-1">
@@ -2110,16 +2120,17 @@ function OverviewSection({ setActiveTab }) {
           })}
         </div>
 
-        {/* Reference full row */}
+        {/* Supporting Content full row */}
         <div>
-          <p className="text-[9px] font-black uppercase tracking-widest text-[#b0bec8] mb-3 px-1">Reference</p>
-          <div className="grid grid-cols-4 gap-4">
-            {CARD_GROUPS.find(g => g.label === "Reference").cards.map(card => <NavCard key={card.id} card={card} />)}
+          <p className="text-[9px] font-black uppercase tracking-widest text-[#b0bec8] mb-3 px-1">Supporting Content</p>
+          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-4">
+            {CARD_GROUPS.find(g => g.label === "Supporting Content").cards.map(card => <NavCard key={card.id} card={card} />)}
           </div>
         </div>
       </div>
 
-      {/* Jobs Feed preview */}
+      {/* Recent activity — most-recent logged tasks (the full Jobs Feed lives
+          on the Job Book page now). */}
       <div className="bg-[#f8fafc] border border-[#dce4ec] rounded-2xl overflow-hidden">
         <div className="flex items-center justify-between px-5 py-4 border-b border-[#dce4ec]">
           <div className="flex items-center gap-2.5">
@@ -2128,13 +2139,9 @@ function OverviewSection({ setActiveTab }) {
             </div>
             <div>
               <p className="text-[10px] font-black uppercase tracking-widest text-[#768994]">Live</p>
-              <p className="text-sm font-black text-[#122027] leading-none">Jobs Feed</p>
+              <p className="text-sm font-black text-[#122027] leading-none">Recent Activity</p>
             </div>
           </div>
-          <button onClick={() => setActiveTab("feed")}
-            className="text-[11px] font-black text-[#12a0e1] hover:text-[#0e86be] transition-colors px-3 py-1.5 rounded-lg hover:bg-[#12a0e1]/10">
-            View all →
-          </button>
         </div>
         <div className="overflow-x-auto">
           <table className="w-full text-[11px]">
@@ -2374,6 +2381,26 @@ function PeopleSection() {
 }
 
 // ── Main Management Page ───────────────────────────────────────────────────────
+// Placeholder for report tabs whose data model isn't built yet, so the IA is
+// visible and honest about what's coming rather than silently missing.
+function ComingSoon({ icon: Icon, title, body, note }) {
+  return (
+    <div className="flex flex-col items-center text-center py-16 px-6">
+      <div className="w-14 h-14 rounded-2xl bg-gradient-to-br from-[#122027] to-[#12a0e1] flex items-center justify-center shadow-lg mb-5">
+        {Icon && <Icon className="w-7 h-7 text-white" />}
+      </div>
+      <span className="text-[10px] font-black uppercase tracking-widest text-[#12a0e1] mb-1">Coming soon</span>
+      <h3 className="font-display text-2xl font-bold text-[#122027] tracking-tight">{title}</h3>
+      {body && <p className="text-sm text-[#768994] mt-2 max-w-md leading-relaxed">{body}</p>}
+      {note && (
+        <p className="text-xs text-[#768994] mt-4 max-w-md bg-slate-50 border border-[#dce4ec] rounded-xl px-4 py-3 leading-relaxed">
+          {note}
+        </p>
+      )}
+    </div>
+  );
+}
+
 export default function Management({ wrikeUserId, department }) {
   const [activeTab, setActiveTab] = useState("overview");
 
@@ -2425,11 +2452,11 @@ export default function Management({ wrikeUserId, department }) {
       </PageHeader>
 
       <div className="max-w-[1800px] mx-auto px-4 sm:px-6 pt-6 space-y-6">
-        {/* Tab navigation */}
-        <div className="flex items-center">
+        {/* Tab navigation — wraps rather than overflowing now that Supporting
+            Content carries six lists. */}
+        <div className="flex flex-wrap items-center gap-y-2">
           {TAB_GROUPS.map((group, gi) => {
             const groupTabs = group.ids.map(id => TABS.find(t => t.id === id)).filter(Boolean);
-            const isReference = group.label === "Reference";
             return (
               <React.Fragment key={gi}>
                 {gi > 0 && (
@@ -2437,7 +2464,7 @@ export default function Management({ wrikeUserId, department }) {
                     <div className="w-px h-4 bg-[#dce4ec]" />
                   </div>
                 )}
-                <div className={`flex items-center gap-1 ${isReference ? "ml-auto" : ""}`}>
+                <div className="flex flex-wrap items-center gap-1">
                   {groupTabs.map(tab => {
                     const Icon = tab.icon;
                     const active = activeTab === tab.id;
@@ -2469,15 +2496,30 @@ export default function Management({ wrikeUserId, department }) {
           </div>
 
           {activeTab === "overview"   && <OverviewSection setActiveTab={setActiveTab} />}
-          {activeTab === "jobsSetup"  && <JobsSetupSection setActiveTab={setActiveTab} />}
-          {activeTab === "jobs"       && <JobBookSection setActiveTab={setActiveTab} />}
-          {activeTab === "feed"       && <JobsFeedSection />}
+          {activeTab === "project-time" && (
+            <ComingSoon
+              icon={FileBarChart}
+              title="Project / Time Report"
+              body="The billed project-and-time report — filterable by week, client, film, department, staff and office, with per-line hourly rates and totals."
+              note="Needs an hourly-rate model first (rates per person or position) — that data doesn't live in the new database yet. Rebuild scoped separately."
+            />
+          )}
+          {activeTab === "timesheet-completion" && (
+            <ComingSoon
+              icon={ClipboardList}
+              title="Staff Timesheet Completion"
+              body="Who hasn't submitted their timesheet for a given week — the chase-list Tracy and Sue use every Friday."
+              note="Buildable from submitted tasks vs the staff roster — flagged as the next report to build."
+            />
+          )}
           {activeTab === "people"     && <PeopleSection />}
           {activeTab === "films"      && <SimpleListSection table="films" labelField="title" label="Films" placeholder="Film title…" />}
           {activeTab === "clients"    && <SimpleListSection table="clients" labelField="name" label="Clients" quickFilters={STUDIO_GROUPS} quickFilterLabel="Filter by studio" />}
           {activeTab === "categories" && <SimpleListSection table="job_categories" labelField="name" label="Item Categories" groups={CATEGORY_GROUPS} />}
           {activeTab === "descs"      && <SimpleListSection table="project_descriptions" labelField="description" label="Project Descriptions" isLong quickFilters={DESC_QUICK_FILTERS} quickFilterLabel="Filter by territory" groups={DESCRIPTION_GROUPS} />}
           {activeTab === "positions"  && <SimpleListSection table="positions" labelField="title" label="Positions" placeholder="e.g. Creative Director…" />}
+          {activeTab === "translations" && <SimpleListSection table="translation_countries" labelField="name" label="Translation Countries" placeholder="e.g. France…" />}
+          {activeTab === "departments"  && <SimpleListSection table="job_departments" labelField="name" label="Departments" placeholder="e.g. Print…" />}
         </div>
       </div>
     </div>

@@ -75,8 +75,17 @@ export default function JobBook() {
               <button
                 key={id}
                 onClick={() => setTab(id)}
-                className={`group relative flex flex-col items-start gap-3 p-6 text-left overflow-hidden transition-colors duration-300 ${
-                  isActive ? `bg-gradient-to-br ${PAGE_GRADIENTS.jobbook}` : "bg-white"
+                // Inset glow, not a regular box-shadow — the grid wrapper
+                // has overflow-hidden (to clip the 3 columns to its own
+                // rounded corners), which would clip a normal outward-
+                // blurring glow on whichever door happens to sit at an
+                // edge. An inset shadow stays inside the button's own box
+                // by definition, so it's immune to that regardless of
+                // which door is active.
+                className={`group relative flex flex-col items-start gap-3 p-6 text-left overflow-hidden transition-[background-color,box-shadow] duration-300 ${
+                  isActive
+                    ? `bg-gradient-to-br ${PAGE_GRADIENTS.jobbook} shadow-[inset_0_0_0_1px_rgba(255,255,255,0.45),inset_0_0_24px_-4px_rgba(45,212,191,0.85)]`
+                    : "bg-white"
                 }`}
               >
                 {/* Hover sweep only for the inactive doors — the active one

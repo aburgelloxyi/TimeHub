@@ -1,4 +1,6 @@
-import React, { useState, useEffect, useMemo, useCallback } from "react";
+import React, { useState, useEffect, useMemo, useCallback, useRef } from "react";
+import gsap from "gsap";
+import { useGSAP } from "@gsap/react";
 import {
   User,
   Clock,
@@ -54,6 +56,10 @@ const PIE_COLORS = [
   "#10b981",
 ];
 
+// Each hub section owns an identity gradient (used by the row sweep, the icon
+// chip, and the drill-in header). Tuned one step darker than the old drawer
+// so white display-size labels hold ≥3:1 on the left edge when the sweep
+// fills — same contrast rule Home and Motion Board follow.
 const SECTIONS = [
   {
     id: "jobs",
@@ -75,30 +81,37 @@ const SECTIONS = [
     label: "Overview",
     icon: Activity,
     desc: "Recent activity & territories",
-    gradient: "from-sky-400 to-blue-500",
+    gradient: "from-sky-500 to-blue-600",
   },
   {
     id: "analytics",
     label: "Analytics",
     icon: BarChart2,
     desc: "Time breakdowns & charts",
-    gradient: "from-amber-400 to-orange-500",
+    gradient: "from-amber-500 to-orange-600",
   },
   {
     id: "completed",
     label: "Completed",
     icon: CheckCircle,
     desc: "Jobs you've delivered",
-    gradient: "from-teal-400 to-emerald-500",
+    gradient: "from-teal-500 to-emerald-600",
   },
   {
     id: "settings",
     label: "Settings",
     icon: Settings,
     desc: "Wrike connection & preferences",
-    gradient: "from-slate-400 to-slate-600",
+    gradient: "from-slate-500 to-slate-700",
   },
 ];
+
+// Full hub-row entrance plays once per app session; later returns to the hub
+// render settled (same pacing contract as Home and Motion Board).
+let profileEntrancePlayed = false;
+
+const prefersReducedMotion = () =>
+  window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -160,6 +173,54 @@ function Empty({ icon: Icon, message }) {
       <Icon className="w-8 h-8 text-slate-200 mb-2" />
       <p className="text-sm font-bold">{message}</p>
     </div>
+  );
+}
+
+// ── Hub row ───────────────────────────────────────────────────────────────────
+// Home's menu vocabulary, recursed into the profile: a full-width row whose
+// identity gradient sweeps in from the left on hover/focus (ink flips to
+// white), a Bricolage display label, and an optional live badge on the right.
+// The label sits in an overflow-hidden mask so the entrance rises it into
+// place with no opacity fade on the type (see the useGSAP block in Profile).
+function HubRow({ section, onClick, badge, first }) {
+  const { label, desc, icon: Icon, gradient } = section;
+  return (
+    <button
+      onClick={onClick}
+      className="group relative w-full flex items-center gap-4 sm:gap-5 px-5 sm:px-7 py-5 text-left border-b border-[#dce4ec] last:border-b-0 focus:outline-none focus-visible:ring-4 focus-visible:ring-inset focus-visible:ring-white/70"
+    >
+      <div
+        className={`absolute inset-0 bg-gradient-to-r ${gradient} origin-left scale-x-0 group-hover:scale-x-100 group-focus:scale-x-100 transition-transform duration-300 ease-out`}
+      />
+
+      {/* Icon chip: gradient-filled at rest, translucent-white once the row
+          it sits on has itself gone gradient. */}
+      <div
+        className={`relative z-10 shrink-0 w-11 h-11 rounded-2xl bg-gradient-to-br ${gradient} group-hover:bg-none group-hover:bg-white/20 group-focus:bg-none group-focus:bg-white/20 flex items-center justify-center text-white transition-colors duration-300`}
+      >
+        <Icon className="w-5 h-5" />
+      </div>
+
+      <div className="relative z-10 min-w-0 flex-1 overflow-hidden">
+        <div data-hub-rise>
+          <p
+            className={`font-display font-bold tracking-tight leading-none text-[#122027] group-hover:text-white group-focus:text-white transition-colors duration-300 ${
+              first ? "text-2xl sm:text-3xl" : "text-xl sm:text-2xl"
+            }`}
+          >
+            {label}
+          </p>
+          <p className="text-xs sm:text-sm text-[#768994] group-hover:text-white/80 group-focus:text-white/80 mt-1 truncate transition-colors duration-300">
+            {desc}
+          </p>
+        </div>
+      </div>
+
+      <div className="relative z-10 flex items-center gap-3 shrink-0">
+        {badge}
+        <ChevronRight className="w-5 h-5 text-[#768994] group-hover:text-white group-focus:text-white group-hover:translate-x-1 transition-all duration-300" />
+      </div>
+    </button>
   );
 }
 
@@ -1221,6 +1282,28 @@ export default function Profile({ wrikeData, onTokenChange, activeSection: activ
     0
   );
 
+  // Masked-rise entrance for the hub rows — same as Home's menu, played once
+  // per session so drilling in and back out doesn't re-perform it.
+  const hubRef = useRef(null);
+  useGSAP(
+    () => {
+      if (activeSection || !hubRef.current || prefersReducedMotion()) return;
+      const rises = gsap.utils.toArray("[data-hub-rise]", hubRef.current);
+      if (!rises.length) return;
+      if (!profileEntrancePlayed) {
+        profileEntrancePlayed = true;
+        gsap.set(rises, { yPercent: 120 });
+        gsap.to(rises, {
+          yPercent: 0,
+          duration: 0.6,
+          ease: "expo.out",
+          stagger: 0.055,
+        });
+      }
+    },
+    { scope: hubRef, dependencies: [activeSection] }
+  );
+
   return (
     <div className="min-h-screen bg-slate-100 text-[#122027] font-sans pb-16">
       {toast && (
@@ -1233,26 +1316,41 @@ export default function Profile({ wrikeData, onTokenChange, activeSection: activ
           </div>
         </div>
       )}
-      <PageHeader pageId="profile" icon={User} title={displayName} subtitle={profile?.email} maxWidthClass="max-w-[1400px]">
-        {wrikeUser?.id && (
-          <span className="text-[10px] font-black text-white/90 bg-white/15 border border-white/20 px-2.5 py-1 rounded-full uppercase tracking-wider">
-            Wrike · {wrikeUser.id.slice(0, 8)}…
+      <PageHeader
+        pageId="profile"
+        icon={User}
+        title={displayName}
+        subtitle={[profile?.department, profile?.email].filter(Boolean).join(" · ") || undefined}
+        maxWidthClass="max-w-[1400px]"
+      >
+        {/* Connection state as a single quiet chip — a green dot when linked,
+            a tappable amber prompt when not. */}
+        {wrikeUser?.id ? (
+          <span className="flex items-center gap-1.5 text-[10px] font-black text-white/90 bg-white/15 border border-white/20 px-2.5 py-1.5 rounded-full uppercase tracking-wider">
+            <span className="w-1.5 h-1.5 rounded-full bg-[#1cc1a5]" /> Connected
           </span>
+        ) : (
+          <button
+            onClick={() => setActiveSection("settings")}
+            className="flex items-center gap-1.5 text-[10px] font-black text-white bg-white/15 hover:bg-white/25 border border-white/20 px-2.5 py-1.5 rounded-full uppercase tracking-wider transition-colors"
+          >
+            <Key className="w-3 h-3" /> Connect Wrike
+          </button>
         )}
-        {profile?.updated_at && (
-          <span className="text-[10px] font-black text-white bg-white/15 border border-white/20 px-2.5 py-1 rounded-full uppercase tracking-wider flex items-center gap-1">
-            <span className="w-1.5 h-1.5 rounded-full bg-[#1cc1a5]" /> Active
-          </span>
-        )}
-        <div className="flex gap-4">
+
+        {/* Call-sheet totals — large Bricolage figures, matching Motion
+            Board's header treatment. */}
+        <div className="flex items-center gap-5 sm:gap-7">
           {[
-            { label: "Tasks", value: tasks.length },
+            { label: "Logged", value: tasks.length },
             { label: "Time", value: formatDurationText(totalSeconds) },
             { label: "All-time", value: userStats.fetched ? userStats.allTime : "—" },
           ].map(({ label, value }) => (
-            <div key={label} className="text-center">
-              <div className="text-xl font-black text-white">{value}</div>
-              <div className="text-[10px] font-black text-white/70 uppercase tracking-wider mt-0.5">
+            <div key={label} className="text-right">
+              <div className="font-display text-2xl sm:text-3xl font-bold text-white leading-none">
+                {value}
+              </div>
+              <div className="text-[9px] font-black text-white/70 uppercase tracking-widest mt-1">
                 {label}
               </div>
             </div>
@@ -1285,9 +1383,12 @@ export default function Profile({ wrikeData, onTokenChange, activeSection: activ
           </div>
         )}
 
-        {/* ── App drawer (home) ─────────────────────────────────────────── */}
+        {/* ── Hub (rows) ────────────────────────────────────────────────────
+            Home's row language recursed into the profile: one stacked list,
+            each section a full-width row with a gradient sweep on hover and a
+            masked-rise entrance. */}
         {!activeSection && (
-          <div>
+          <div ref={hubRef}>
             <div className="flex items-center gap-2 mb-4 px-1">
               <Layers className="w-4 h-4 text-[#12a0e1]" />
               <h2 className="text-sm font-black text-[#122027] uppercase tracking-widest">
@@ -1295,48 +1396,24 @@ export default function Profile({ wrikeData, onTokenChange, activeSection: activ
               </h2>
             </div>
 
-            <div className="grid grid-cols-2 lg:grid-cols-3 gap-3 sm:gap-4">
-              {SECTIONS.map(({ id, label, icon: Icon, desc, gradient, featured }) => (
-                <button
-                  key={id}
-                  onClick={() => setActiveSection(id)}
-                  className={`group relative text-left border rounded-3xl shadow-sm hover:shadow-xl hover:-translate-y-1 transition-all duration-200 overflow-hidden ${
-                    featured
-                      ? `col-span-2 lg:col-span-3 p-7 border-transparent bg-gradient-to-br ${gradient}`
-                      : "p-5 bg-white border-[#dce4ec]"
-                  }`}
-                >
-                  {/* Soft gradient wash (non-featured cards only — featured is already gradient-filled) */}
-                  {!featured && (
-                    <div
-                      className={`absolute inset-0 bg-gradient-to-br ${gradient} opacity-0 group-hover:opacity-[0.06] transition-opacity`}
-                    />
-                  )}
-                  <div className={`relative flex ${featured ? "items-center gap-6" : "flex-col gap-3"}`}>
-                    <div
-                      className={`shrink-0 rounded-2xl flex items-center justify-center shadow-lg ${
-                        featured ? "w-20 h-20 bg-white/20 text-white" : `w-12 h-12 bg-gradient-to-br ${gradient} text-white`
-                      }`}
-                    >
-                      <Icon className={featured ? "w-10 h-10" : "w-6 h-6"} />
-                    </div>
-                    <div className="min-w-0 flex-1">
-                      <p className={`font-black ${featured ? "text-2xl text-white" : "text-sm text-[#122027]"}`}>
-                        {label}
-                      </p>
-                      <p className={`mt-0.5 ${featured ? "text-sm text-white/80" : "text-[11px] leading-snug text-[#768994]"}`}>
-                        {desc}
-                      </p>
-                    </div>
-                    <ChevronRight
-                      className={`shrink-0 transition-all ${
-                        featured
-                          ? "w-7 h-7 text-white/70 group-hover:text-white group-hover:translate-x-0.5"
-                          : "w-4 h-4 absolute top-0 right-0 text-slate-300 group-hover:text-[#12a0e1] group-hover:translate-x-0.5"
-                      }`}
-                    />
-                  </div>
-                </button>
+            <div className="bg-white rounded-3xl border border-[#dce4ec] shadow-sm overflow-hidden">
+              {SECTIONS.map((section) => (
+                <HubRow
+                  key={section.id}
+                  section={section}
+                  first={section.featured}
+                  onClick={() => setActiveSection(section.id)}
+                  badge={
+                    section.id === "settings" ? (
+                      <span
+                        title={hasToken ? "Wrike connected" : "Wrike not connected"}
+                        className={`w-2 h-2 rounded-full shrink-0 ${
+                          hasToken ? "bg-emerald-500 group-hover:bg-white" : "bg-amber-400 group-hover:bg-white"
+                        } transition-colors duration-300`}
+                      />
+                    ) : null
+                  }
+                />
               ))}
             </div>
           </div>
@@ -1358,7 +1435,7 @@ export default function Profile({ wrikeData, onTokenChange, activeSection: activ
                   <div className={`w-8 h-8 rounded-xl bg-gradient-to-br ${activeMeta.gradient} flex items-center justify-center text-white shadow-sm shrink-0`}>
                     <activeMeta.icon className="w-4 h-4" />
                   </div>
-                  <h2 className="text-lg font-black text-[#122027] tracking-tight truncate">
+                  <h2 className="font-display text-xl font-bold text-[#122027] tracking-tight truncate">
                     {activeMeta.label}
                   </h2>
                 </div>

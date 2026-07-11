@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useMemo, useRef } from "react";
+﻿import React, { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { createPortal } from "react-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import {
@@ -2006,7 +2006,7 @@ export function JobsFeedSection() {
     // Leading BOM — Excel doesn't sniff UTF-8 for a local CSV file without
     // one and falls back to Windows-1252, which mangles the em-dash
     // placeholder (and anything else non-ASCII) into "â€"".
-    const csv = "﻿" + [headers, ...rows]
+    const csv = "\uFEFF" + [headers, ...rows]
       .map(r => r.map(c => `"${String(c).replace(/"/g, '""')}"`).join(","))
       .join("\n");
     const url = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8;" }));
@@ -2407,9 +2407,9 @@ function PeopleSection() {
             with a portrait on the left, not a small avatar floating in
             padding. */}
         {p.avatar_url ? (
-          <img src={p.avatar_url} alt={fullName} className="w-20 shrink-0 object-cover" />
+          <img src={p.avatar_url} alt={fullName} className="w-28 sm:w-32 shrink-0 object-cover" />
         ) : (
-          <div className="w-20 shrink-0 bg-gradient-to-br from-[#12a0e1] to-[#1cc1a5] text-white flex items-center justify-center font-display font-bold text-lg">
+          <div className="w-28 sm:w-32 shrink-0 bg-gradient-to-br from-[#12a0e1] to-[#1cc1a5] text-white flex items-center justify-center font-display font-bold text-lg">
             {initials}
           </div>
         )}

@@ -393,7 +393,10 @@ function JobsSection({ wrikeUser, filter, wrikeData, onLogTime, triggerToast, jo
   // alongside its parent until the next full fetch reconciles it.
   useEffect(() => {
     if (!wrikeUser?.id) return;
-    const fields = encodeURIComponent("[description,superTaskIds]");
+    // superTaskIds is only needed by fetchTasks' own isChild subtask-dedup
+    // (skipped here, see comment above) — Wrike's get-by-id endpoint 400s on
+    // it, unlike the list/search endpoint fetchTasks uses it on above.
+    const fields = encodeURIComponent("[description]");
 
     const handleWebhookTaskIds = async (ids) => {
       if (!ids.length) return;

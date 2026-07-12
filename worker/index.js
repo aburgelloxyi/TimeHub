@@ -445,34 +445,62 @@ async function handleProxy(request, url, env) {
   let row = await getTokenRowBySession(env, session);
   if (!row) return json({ error: "not_connected" }, { status: 401 });
 
+  const restPath = url.pathname.replace(/^\/api\/wrike/, "");
+
+  // Buffer any request body once — a request stream can only be read a single
+  // time, and we may need to replay the call after a token refresh below.
+  const bodyBuffer = ["GET", "HEAD"].includes(request.method)
+    ? undefined
+    : await request.arrayBuffer();
+
+  const callWrike = () => {
+    const fwdHeaders = new Headers(request.headers);
+    fwdHeaders.delete("Cookie");
+    fwdHeaders.delete("Host");
+    fwdHeaders.set("Authorization", `Bearer ${row.access_token}`);
+    const init = { method: request.method, headers: fwdHeaders };
+    if (bodyBuffer !== undefined) init.body = bodyBuffer;
+    return fetch(`https://${row.api_host}/api/v4${restPath}${url.search}`, init);
+  };
+
+  const refreshToken = async () => {
+    const refreshed = await refreshAccessToken(env, row.refresh_token);
+    row = await updateTokenRow(env, row.wrike_user_id, {
+      access_token: refreshed.access_token,
+      refresh_token: refreshed.refresh_token || row.refresh_token,
+      api_host: refreshed.host || row.api_host,
+      expires_at: new Date(Date.now() + Number(refreshed.expires_in || 3600) * 1000).toISOString(),
+      updated_at: new Date().toISOString(),
+    });
+  };
+
+  // Proactive refresh when the token is about to expire by the clock.
   if (new Date(row.expires_at).getTime() - Date.now() < 60_000) {
     try {
-      const refreshed = await refreshAccessToken(env, row.refresh_token);
-      row = await updateTokenRow(env, row.wrike_user_id, {
-        access_token: refreshed.access_token,
-        refresh_token: refreshed.refresh_token || row.refresh_token,
-        api_host: refreshed.host || row.api_host,
-        expires_at: new Date(Date.now() + Number(refreshed.expires_in || 3600) * 1000).toISOString(),
-        updated_at: new Date().toISOString(),
-      });
+      await refreshToken();
     } catch (err) {
       console.error(err);
       return json({ error: "token_refresh_failed" }, { status: 401 });
     }
   }
 
-  const restPath = url.pathname.replace(/^\/api\/wrike/, "");
-  const targetUrl = `https://${row.api_host}/api/v4${restPath}${url.search}`;
+  let wrikeRes = await callWrike();
 
-  const fwdHeaders = new Headers(request.headers);
-  fwdHeaders.delete("Cookie");
-  fwdHeaders.delete("Host");
-  fwdHeaders.set("Authorization", `Bearer ${row.access_token}`);
+  // Reactive refresh: Wrike can invalidate a token *before* its clock-expiry
+  // (the user re-auths elsewhere, a webhook re-registration rotates it). A 401
+  // means the stored access token is dead even though we thought it valid —
+  // refresh once and retry, so a single prematurely-invalidated token doesn't
+  // 401 every call until it happens to reach its expiry timestamp. If the
+  // refresh token itself is dead, the retry 401s too and the user must re-auth.
+  if (wrikeRes.status === 401) {
+    try {
+      await refreshToken();
+      wrikeRes = await callWrike();
+    } catch (err) {
+      console.error("[proxy] refresh-on-401 failed", err);
+    }
+  }
 
-  const init = { method: request.method, headers: fwdHeaders };
-  if (!["GET", "HEAD"].includes(request.method)) init.body = request.body;
-
-  const wrikeRes = await fetch(targetUrl, init);
   const resHeaders = new Headers(wrikeRes.headers);
   resHeaders.delete("Set-Cookie");
   return new Response(wrikeRes.body, { status: wrikeRes.status, headers: resHeaders });

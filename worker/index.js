@@ -322,8 +322,33 @@ async function handleWebhookRegister(request, url, env) {
   const row = await getTokenRowBySession(env, session);
   if (!row) return json({ error: "not_connected" }, { status: 401 });
 
-  const secret = crypto.randomUUID().replace(/-/g, "") + crypto.randomUUID().replace(/-/g, "");
   const hookUrl = `${url.origin}/api/wrike/webhook`;
+  const authHeader = { Authorization: `Bearer ${row.access_token}` };
+
+  // Delete any webhooks already pointing at this Worker before creating a new
+  // one. Each register generates a fresh secret, but wrike_webhook_config can
+  // only hold one — so every previously-created webhook keeps firing signed
+  // with a secret we no longer have, failing signature verification (401) and
+  // inserting nothing while a valid delivery hides among the rejects. Clearing
+  // them first guarantees exactly one live webhook whose secret matches config.
+  try {
+    const listRes = await fetch(`https://${row.api_host}/api/v4/webhooks`, { headers: authHeader });
+    if (listRes.ok) {
+      const existing = (await listRes.json()).data || [];
+      await Promise.all(
+        existing
+          .filter((w) => w.hookUrl === hookUrl)
+          .map((w) =>
+            fetch(`https://${row.api_host}/api/v4/webhooks/${w.id}`, { method: "DELETE", headers: authHeader })
+              .catch((err) => console.error("webhook delete failed", w.id, err))
+          )
+      );
+    }
+  } catch (err) {
+    console.error("webhook cleanup failed (continuing to create)", err);
+  }
+
+  const secret = crypto.randomUUID().replace(/-/g, "") + crypto.randomUUID().replace(/-/g, "");
 
   // Wrike validates hookUrl synchronously as part of webhook creation — it
   // calls back to /api/wrike/webhook and expects a signed handshake response
@@ -333,10 +358,7 @@ async function handleWebhookRegister(request, url, env) {
   const body = new URLSearchParams({ hookUrl, secret });
   const res = await fetch(`https://${row.api_host}/api/v4/webhooks`, {
     method: "POST",
-    headers: {
-      Authorization: `Bearer ${row.access_token}`,
-      "Content-Type": "application/x-www-form-urlencoded",
-    },
+    headers: { ...authHeader, "Content-Type": "application/x-www-form-urlencoded" },
     body,
   });
   if (!res.ok) {

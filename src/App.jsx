@@ -114,6 +114,17 @@ export default function App() {
     }
   }, [activePage]);
 
+  // Home is deliberately built to own exactly one viewport with no scroll
+  // (h-dvh + overflow-hidden, see Home.jsx) — the app-wide 110% zoom
+  // (tailwind.css) breaks that invariant, since fixed-px content that used
+  // to fit the viewport exactly no longer does once the effective CSS-pixel
+  // budget shrinks. Every other page is fine growing past one screen and
+  // scrolling; Home specifically isn't supposed to, so it opts out via this
+  // class instead of the zoom being dialled back for everyone.
+  useEffect(() => {
+    document.documentElement.classList.toggle("home-page", activePage === "home");
+  }, [activePage]);
+
   // Manual hash edits / back-forward within the hash still land on a valid
   // page instead of a blank state.
   useEffect(() => {

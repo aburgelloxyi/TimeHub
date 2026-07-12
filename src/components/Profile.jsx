@@ -113,6 +113,51 @@ let profileEntrancePlayed = false;
 const prefersReducedMotion = () =>
   window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 
+// Cascade-in entrance for a list of items inside a drilled-into section
+// (Active Jobs / Completed / History) — each item animates itself the
+// instant it mounts, via its own ref callback, rather than a container-level
+// effect that queries for children after the fact. That container-query
+// version had two real bugs: it raced the container's effect against the
+// data actually arriving in the DOM (visible as "flash of static content,
+// then animate — hit or miss" depending on which won), and it played twice
+// under React StrictMode's dev-only double-effect-invocation. Ref callbacks
+// sidestep both — React only ever calls one on a genuine mount/unmount of
+// that exact node, never speculatively and never twice.
+//
+// Callbacks are memoised per item id (in a Map that lives for the lifetime
+// of the enclosing section) so an unrelated re-render of the parent — e.g.
+// opening a task's detail modal, which changes JobsSection's own state —
+// can't hand a *new* inline function to an *unchanged* DOM node and thereby
+// replay the animation on every click. Only an item that's genuinely new to
+// the DOM (first view, or newly revealed by a filter/refresh swap) animates;
+// one that was already sitting there just keeps its already-settled state.
+function useCascadeRefs() {
+  const cache = useRef(new Map());
+  return useCallback((id, index) => {
+    if (cache.current.has(id)) return cache.current.get(id);
+    const ref = (node) => {
+      if (!node || prefersReducedMotion()) return;
+      gsap.fromTo(
+        node,
+        { y: 10, opacity: 0 },
+        {
+          y: 0,
+          opacity: 1,
+          duration: 0.28,
+          ease: "power2.out",
+          delay: index * 0.025,
+          // Once settled, hand the properties back to CSS entirely — a
+          // matrix-dimmed WrikeTaskCard has its own opacity-70 class, which
+          // GSAP's inline opacity:1 would otherwise permanently shadow.
+          clearProps: "opacity,transform",
+        }
+      );
+    };
+    cache.current.set(id, ref);
+    return ref;
+  }, []);
+}
+
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
 function fmtDate(iso) {
@@ -184,7 +229,7 @@ function Empty({ icon: Icon, message }) {
 // place with no opacity fade on the type (see the useGSAP block in Profile).
 // ── Wrike task card — mirrors the RecentJobsModal style ───────────────────────
 
-function WrikeTaskCard({ task, filter, onClick }) {
+function WrikeTaskCard({ task, filter, onClick, cascadeRef }) {
   const statusName = task.customStatusName || task.status;
   const borderColor = getBorderColorClass(statusName);
   const isMatrix = task.title?.toUpperCase().includes("MATRIX");
@@ -194,8 +239,9 @@ function WrikeTaskCard({ task, filter, onClick }) {
 
   return (
     <div
+      ref={cascadeRef}
       onClick={onClick}
-      className={`p-4 border-y border-r border-l-4 rounded-2xl transition-all ${borderColor} ${
+      className={`p-4 border-y border-r border-l-4 rounded-2xl transition-[background-color,box-shadow] ${borderColor} ${
         isMatrix
           ? "border-y-[#dce4ec] border-r-[#dce4ec] bg-slate-200/50 opacity-70"
           : "border-y-[#dce4ec] border-r-[#dce4ec] bg-slate-50"
@@ -239,6 +285,7 @@ function JobsSection({ wrikeUser, filter, wrikeData, onLogTime, triggerToast, jo
   const [loading, setLoading] = useState(false);
   const [fetched, setFetched] = useState(false);
   const [selectedTask, setSelectedTask] = useState(null);
+  const getCascadeRef = useCascadeRefs();
 
   const fetchTasks = useCallback(async () => {
     if (!wrikeUser?.id) return;
@@ -399,9 +446,12 @@ function JobsSection({ wrikeUser, filter, wrikeData, onLogTime, triggerToast, jo
     );
 
   return (
-    <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <span className="text-[10px] font-black text-[#768994] bg-slate-100 px-2.5 py-1 rounded-full uppercase tracking-wider">
+    <div className="space-y-3">
+      {/* Toolbar sits directly on the page background, unboxed — same
+          placement as People's search+count row above its own stacked
+          department cards, rather than nested inside a shared card. */}
+      <div className="flex items-center justify-between px-1">
+        <span className="text-[10px] font-black text-[#768994] bg-white border border-[#dce4ec] px-2.5 py-1 rounded-full uppercase tracking-wider">
           {sorted.length} {filter === "completed" ? "delivered" : "active"}
         </span>
         <button
@@ -412,21 +462,25 @@ function JobsSection({ wrikeUser, filter, wrikeData, onLogTime, triggerToast, jo
         </button>
       </div>
 
+      {/* Each campaign is its own bordered/shadowed white card — the same
+          separation PeopleSection gives each department group — instead of
+          all campaigns sharing one flat, unbroken column. */}
       {sortedCampaigns.map((campaign) => (
-        <div key={campaign}>
-          <div className="flex items-center gap-2 text-xs font-black text-[#12a0e1] uppercase tracking-widest mb-3 border-b border-[#dce4ec] pb-2">
+        <div key={campaign} className="bg-white rounded-2xl border border-[#dce4ec] shadow-sm overflow-hidden">
+          <div className="flex items-center gap-2 text-xs font-black text-[#12a0e1] uppercase tracking-widest px-4 py-3 border-b border-[#dce4ec] bg-slate-50/60">
             <Film className="w-3.5 h-3.5" /> {campaign}
-            <span className="ml-auto bg-slate-100 text-[#768994] px-2 py-0.5 rounded text-[10px] normal-case tracking-normal font-bold">
+            <span className="ml-auto bg-white text-[#768994] px-2 py-0.5 rounded-full text-[10px] normal-case tracking-normal font-bold border border-[#dce4ec]">
               {grouped[campaign].length}{" "}
               {grouped[campaign].length === 1 ? "job" : "jobs"}
             </span>
           </div>
-          <div className="space-y-2.5">
-            {grouped[campaign].map((task) => (
+          <div className="p-3 space-y-2.5">
+            {grouped[campaign].map((task, i) => (
               <WrikeTaskCard
                 key={task.id}
                 task={task}
                 filter={filter}
+                cascadeRef={getCascadeRef(task.id, i)}
                 onClick={() => setSelectedTask({ ...task, tag: task.customStatusName || task.tag || task.status })}
               />
             ))}
@@ -773,10 +827,22 @@ const DEFAULT_DAY = {
   pill: "bg-slate-100 text-slate-600",
 };
 
+// Tasks' `date` was historically saved as either "dd/mm/yyyy" (via
+// toLocaleDateString) or ISO "yyyy-mm-dd" — normalise to ISO so different
+// calendar days can be told apart (and sorted) correctly. Returns null for
+// anything unparseable rather than guessing.
+function toIsoDate(d) {
+  if (!d) return null;
+  if (/^\d{4}-\d{2}-\d{2}$/.test(d)) return d;
+  const m = d.match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
+  return m ? `${m[3]}-${m[2]}-${m[1]}` : null;
+}
+
 function HistorySection({ tasks }) {
   const [dayFilter, setDayFilter] = useState("all");
   const days = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"];
   const totalSecs = (t) => (t.rawSeconds ?? 0) + (t.additionalSeconds ?? 0);
+  const getCascadeRef = useCascadeRefs();
 
   const filtered = useMemo(
     () =>
@@ -787,19 +853,21 @@ function HistorySection({ tasks }) {
     [tasks, dayFilter]
   );
 
-  // Group by day of week, in Mon→Fri order
-  const DAY_ORDER = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"];
+  // Group by actual calendar date, not just the weekday name — grouping by
+  // "Monday" alone merged every Monday the user has ever logged (any week,
+  // any month) into a single bucket. Groups are keyed by ISO date and sorted
+  // most-recent-first; entries with no parseable date fall into "Unknown"
+  // at the end rather than being silently merged into a real day.
   const grouped = useMemo(() => {
     const map = {};
     filtered.forEach((t) => {
-      const key = t.dayOfWeek || "Unknown";
+      const key = toIsoDate(t.date) || "Unknown";
       if (!map[key]) map[key] = [];
       map[key].push(t);
     });
-    // Sort days Mon→Fri, unknowns at end
     const order = [
-      ...DAY_ORDER.filter((d) => map[d]).reverse(),
-      ...Object.keys(map).filter((d) => !DAY_ORDER.includes(d)),
+      ...Object.keys(map).filter((k) => k !== "Unknown").sort((a, b) => (a < b ? 1 : -1)),
+      ...(map.Unknown ? ["Unknown"] : []),
     ];
     return { map, order };
   }, [filtered]);
@@ -841,35 +909,50 @@ function HistorySection({ tasks }) {
           {grouped.order.map((dayKey) => {
             const rows = grouped.map[dayKey];
             const groupTotal = rows.reduce((s, t) => s + totalSecs(t), 0);
+            // dayKey is now an ISO date (or "Unknown") so different weeks'
+            // Mondays no longer collide — derive the weekday name/colour
+            // from the group's own rows and label the header with the
+            // actual date, so which week each group belongs to is explicit.
+            const weekdayName = rows[0]?.dayOfWeek || "Unknown";
+            const dc = DAY_COLORS[weekdayName] || DEFAULT_DAY;
+            const dateLabel =
+              dayKey !== "Unknown"
+                ? new Date(`${dayKey}T00:00:00`).toLocaleDateString(undefined, {
+                    day: "numeric",
+                    month: "short",
+                    year: "numeric",
+                  })
+                : null;
             return (
               <div key={dayKey}>
                 {/* Day group header */}
-                {(() => {
-                  const dc = DAY_COLORS[dayKey] || DEFAULT_DAY;
-                  return (
-                    <div
-                      className={`flex items-center gap-2 text-xs font-black uppercase tracking-widest mb-3 border-b border-[#dce4ec] pb-2 ${dc.text}`}
-                    >
-                      <span
-                        className={`px-2 py-0.5 rounded-md text-[10px] ${dc.pill}`}
-                      >
-                        {dayKey}
-                      </span>
-                      <span className="ml-auto bg-slate-100 text-[#768994] px-2 py-0.5 rounded text-[10px] normal-case tracking-normal font-bold shrink-0">
-                        {formatDurationText(groupTotal)} · {rows.length}{" "}
-                        {rows.length === 1 ? "row" : "rows"}
-                      </span>
-                    </div>
-                  );
-                })()}
+                <div
+                  className={`flex items-center gap-2 text-xs font-black uppercase tracking-widest mb-3 border-b border-[#dce4ec] pb-2 ${dc.text}`}
+                >
+                  <span
+                    className={`px-2 py-0.5 rounded-md text-[10px] ${dc.pill}`}
+                  >
+                    {weekdayName}
+                  </span>
+                  {dateLabel && (
+                    <span className="text-[10px] font-bold text-[#768994] normal-case tracking-normal">
+                      {dateLabel}
+                    </span>
+                  )}
+                  <span className="ml-auto bg-slate-100 text-[#768994] px-2 py-0.5 rounded text-[10px] normal-case tracking-normal font-bold shrink-0">
+                    {formatDurationText(groupTotal)} · {rows.length}{" "}
+                    {rows.length === 1 ? "row" : "rows"}
+                  </span>
+                </div>
 
                 {/* Subtask rows — left-bordered like tracker history */}
                 <div className="space-y-2">
-                  {rows.map((t) => {
+                  {rows.map((t, i) => {
                     const dc = DAY_COLORS[t.dayOfWeek] || DEFAULT_DAY;
                     return (
                       <div
                         key={t.id}
+                        ref={getCascadeRef(t.id, i)}
                         className={`border-y border-r border-l-4 ${dc.border} border-y-[#dce4ec] border-r-[#dce4ec] rounded-2xl ${dc.bg} p-4 flex items-center gap-4`}
                       >
                         {/* Date stamp */}
@@ -1240,24 +1323,29 @@ export default function Profile({ wrikeData, onTokenChange, activeSection: activ
     0
   );
 
-  // Masked-rise entrance for the hub rows — same as Home's menu, played once
-  // per session so drilling in and back out doesn't re-perform it.
+  // Masked-rise entrance for the hub rows — same as Home's menu: the full
+  // ceremony plays once per session, and every visit after that (drilling
+  // back out, or leaving Profile entirely and returning) gets a shorter,
+  // quieter rise rather than nothing at all. `profileEntrancePlayed` is a
+  // module-level flag (not React state), so it survives Profile unmounting
+  // when you navigate away — without this "else" branch matching Home's,
+  // every visit after the very first would only run the flag-guarded
+  // gsap.set/to for the FIRST one and then silently do nothing forever after.
   const hubRef = useRef(null);
   useGSAP(
     () => {
       if (activeSection || !hubRef.current || prefersReducedMotion()) return;
       const rises = gsap.utils.toArray("[data-hub-rise]", hubRef.current);
       if (!rises.length) return;
-      if (!profileEntrancePlayed) {
-        profileEntrancePlayed = true;
-        gsap.set(rises, { yPercent: 120 });
-        gsap.to(rises, {
-          yPercent: 0,
-          duration: 0.6,
-          ease: "expo.out",
-          stagger: 0.055,
-        });
-      }
+      const first = !profileEntrancePlayed;
+      profileEntrancePlayed = true;
+      gsap.set(rises, { yPercent: first ? 120 : 45 });
+      gsap.to(rises, {
+        yPercent: 0,
+        duration: first ? 0.6 : 0.3,
+        ease: "expo.out",
+        stagger: first ? 0.055 : 0.025,
+      });
     },
     { scope: hubRef, dependencies: [activeSection] }
   );
@@ -1342,38 +1430,57 @@ export default function Profile({ wrikeData, onTokenChange, activeSection: activ
         )}
 
         {/* ── Hub (rows) ────────────────────────────────────────────────────
-            Home's row language recursed into the profile: one stacked list,
-            each section a full-width row with a gradient sweep on hover and a
-            masked-rise entrance. */}
+            Home's row language recursed into the profile. Active Jobs (the
+            "featured" section — day-to-day live workload) gets its own
+            separated card, same as People pulls each department group and
+            Administration pulls each tool into its own bordered card,
+            instead of blending into the rest of the stacked list below. */}
         {!activeSection && (
-          <div ref={hubRef}>
-            <div className="flex items-center gap-2 mb-4 px-1">
-              <Layers className="w-4 h-4 text-[#12a0e1]" />
-              <h2 className="text-sm font-black text-[#122027] uppercase tracking-widest">
-                Your Hub
-              </h2>
-            </div>
+          <div ref={hubRef} className="space-y-4">
+            {(() => {
+              const featuredSection = SECTIONS.find((s) => s.featured);
+              const restSections = SECTIONS.filter((s) => !s.featured);
+              return (
+                <>
+                  <div className="flex items-center gap-2 px-1">
+                    <Layers className="w-4 h-4 text-[#12a0e1]" />
+                    <h2 className="text-sm font-black text-[#122027] uppercase tracking-widest">
+                      Your Hub
+                    </h2>
+                  </div>
 
-            <div className="bg-white rounded-3xl border border-[#dce4ec] shadow-sm overflow-hidden">
-              {SECTIONS.map((section) => (
-                <HubRow
-                  key={section.id}
-                  section={section}
-                  first={section.featured}
-                  onClick={() => setActiveSection(section.id)}
-                  badge={
-                    section.id === "settings" ? (
-                      <span
-                        title={hasToken ? "Wrike connected" : "Wrike not connected"}
-                        className={`w-2 h-2 rounded-full shrink-0 ${
-                          hasToken ? "bg-emerald-500 group-hover:bg-white" : "bg-amber-400 group-hover:bg-white"
-                        } transition-colors duration-300`}
+                  {featuredSection && (
+                    <div className="bg-white rounded-3xl border border-[#dce4ec] shadow-sm overflow-hidden">
+                      <HubRow
+                        section={featuredSection}
+                        first
+                        onClick={() => setActiveSection(featuredSection.id)}
                       />
-                    ) : null
-                  }
-                />
-              ))}
-            </div>
+                    </div>
+                  )}
+
+                  <div className="bg-white rounded-3xl border border-[#dce4ec] shadow-sm overflow-hidden">
+                    {restSections.map((section) => (
+                      <HubRow
+                        key={section.id}
+                        section={section}
+                        onClick={() => setActiveSection(section.id)}
+                        badge={
+                          section.id === "settings" ? (
+                            <span
+                              title={hasToken ? "Wrike connected" : "Wrike not connected"}
+                              className={`w-2 h-2 rounded-full shrink-0 ${
+                                hasToken ? "bg-emerald-500 group-hover:bg-white" : "bg-amber-400 group-hover:bg-white"
+                              } transition-colors duration-300`}
+                            />
+                          ) : null
+                        }
+                      />
+                    ))}
+                  </div>
+                </>
+              );
+            })()}
           </div>
         )}
 
@@ -1405,6 +1512,26 @@ export default function Profile({ wrikeData, onTokenChange, activeSection: activ
                 <RefreshCw className="w-6 h-6 animate-spin text-[#12a0e1]" />
                 <p className="text-sm font-bold text-[#768994]">Loading your data…</p>
               </div>
+            ) : activeSection === "jobs" ? (
+              // Active Jobs supplies its own separated, per-campaign cards
+              // (see JobsSection) rather than sharing the generic card the
+              // other drill-ins use — same "cards on the page, not a card
+              // inside a card" treatment as People's department groups.
+              <JobsSection
+                wrikeUser={wrikeUser}
+                filter="active"
+                wrikeData={wrikeData}
+                onLogTime={addTask}
+                triggerToast={triggerToast}
+              />
+            ) : activeSection === "completed" ? (
+              <JobsSection
+                wrikeUser={wrikeUser}
+                filter="completed"
+                wrikeData={wrikeData}
+                onLogTime={addTask}
+                triggerToast={triggerToast}
+              />
             ) : (
               <div className="bg-white border border-[#dce4ec] rounded-2xl p-6 shadow-sm">
                 {activeSection === "overview" && (
@@ -1417,24 +1544,6 @@ export default function Profile({ wrikeData, onTokenChange, activeSection: activ
                 )}
                 {activeSection === "history" && <HistorySection tasks={tasks} />}
                 {activeSection === "analytics" && <AnalyticsSection tasks={tasks} />}
-                {activeSection === "jobs" && (
-                  <JobsSection
-                    wrikeUser={wrikeUser}
-                    filter="active"
-                    wrikeData={wrikeData}
-                    onLogTime={addTask}
-                    triggerToast={triggerToast}
-                  />
-                )}
-                {activeSection === "completed" && (
-                  <JobsSection
-                    wrikeUser={wrikeUser}
-                    filter="completed"
-                    wrikeData={wrikeData}
-                    onLogTime={addTask}
-                    triggerToast={triggerToast}
-                  />
-                )}
                 {activeSection === "settings" && (
                   <SettingsSection
                     onSave={(val) => {

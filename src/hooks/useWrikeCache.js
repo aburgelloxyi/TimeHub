@@ -45,6 +45,13 @@ const CACHE_FORMAT_KEY = "xyi_cache_format";
 // without it every dev reload downloaded the Supabase cache twice.
 let bootStarted = false;
 
+// A task's permalink is always https://www.wrike.com/open.htm?id=<id>, so
+// storing it is ~1.4 MB of pure redundancy across 25k rows that every cold
+// start then re-downloads. Strip it from the *stored* copy only — the
+// in-memory object and the local IndexedDB mirror keep it, and the one
+// consumer that read it without an id fallback (Canvas) now reconstructs it.
+const stripForStorage = ({ permalink, ...rest }) => rest;
+
 // ---------------------------------------------------------------------------
 // Fetch folders, contacts, workflows from Wrike
 // ---------------------------------------------------------------------------
@@ -545,7 +552,7 @@ export function useWrikeCache() {
         const rows = filtered.map((t) => ({
           id: t.id,
           wrike_user_id: userId,
-          task_data: t,
+          task_data: stripForStorage(t),
           updated_date: t.updatedDate ?? null,
         }));
         const BATCH = 500;
@@ -692,7 +699,7 @@ export function useWrikeCache() {
       const rows = enriched.map((t) => ({
         id: t.id,
         wrike_user_id: wrikeUserId,
-        task_data: t,
+        task_data: stripForStorage(t),
         updated_date: t.updatedDate ?? null,
       }));
       await supabase.from("wrike_tasks_cache").upsert(rows, { onConflict: "id" });

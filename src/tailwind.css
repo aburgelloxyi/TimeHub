@@ -31,6 +31,16 @@
   html {
     zoom: 1.1;
   }
+
+  /* Home opts out — it's deliberately built to own exactly one viewport
+     with no scroll (h-dvh + overflow-hidden, see Home.jsx's own comments),
+     and the 110% zoom shrinks the effective CSS-pixel viewport enough that
+     Home's fixed-px rows no longer fit inside it, producing a scrollbar on
+     a page that's specifically designed to never have one. Toggled by
+     App.jsx whenever activePage === "home". */
+  html.home-page {
+    zoom: 1;
+  }
 }
 
 /* Thin, quiet horizontal scrollbar for content tracks (Motion Board's lanes,

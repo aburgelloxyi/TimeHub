@@ -960,8 +960,13 @@ export default function LegacyTimesheet({ wrikeData, isAdmin = false }) {
       currentTasks = await fetchMissingTasks(currentTasks, logs);
 
       // Fetch existing timelog IDs across ALL sources so we don't duplicate
-      // entries that were already pulled in Tracker (or vice versa)
-      const existingTimelogIds = await fetchExistingTimelogIds(wrikeUserId, "legacy");
+      // entries that were already pulled in Tracker (or vice versa). Passing
+      // no source is deliberate: Tracker's own pull already scans all sources,
+      // so scoping Legacy to source="legacy" here was the asymmetry that let a
+      // timelog already pulled by Tracker get re-added as a duplicate Legacy
+      // row. The helper splits comma-joined ids, so Legacy's aggregated
+      // "id1,id2,id3" rows are matched at the individual-id level too.
+      const existingTimelogIds = await fetchExistingTimelogIds(wrikeUserId);
 
       const newRows = [];
       const dayNames = [
@@ -1062,6 +1067,12 @@ export default function LegacyTimesheet({ wrikeData, isAdmin = false }) {
           const known1 = jobLookup?.getJob?.(guessed.jobNumber);
           if (known1?.film_title) filmTitle = known1.film_title;
           if (known1?.client) client = known1.client;
+          // Upgrade a bare "XY025716" to Job Book's canonical
+          // "Film : XY025716, Description" string so pulled rows read
+          // consistently with those that carried the full string from Wrike.
+          if (known1?.job_number?.includes(" : ") && !(guessed.jobNumber || "").includes(" : ")) {
+            guessed.jobNumber = known1.job_number;
+          }
           jobLookup?.ensureJob?.(guessed.jobNumber, { filmTitle, client });
 
           newRows.push({

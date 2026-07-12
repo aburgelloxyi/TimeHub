@@ -161,6 +161,13 @@ export const guessFieldsFromTask = (linkedTask, jobOptions = [], extraText = "",
     const known = getJob(guessedJob);
     if (known?.film_title) filmTitle = known.film_title;
     if (known?.client) client = known.client;
+    // Upgrade a bare "XY025716" to Job Book's canonical
+    // "Film : XY025716, Description" string so pulled rows read consistently
+    // with those that carried the full string from Wrike. This also lets the
+    // caller's comma-split derive a project description it otherwise couldn't.
+    if (known?.job_number?.includes(" : ") && !guessedJob.includes(" : ")) {
+      guessedJob = known.job_number;
+    }
   }
 
   return {

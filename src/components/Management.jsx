@@ -15,6 +15,7 @@ import { DEFAULT_JOBS, CATEGORIES } from "../constants";
 import { fullName as cleanFullName, cleanNamePart } from "../lib/formatName";
 import PageHeader from "./shared/PageHeader";
 import HubRow from "./shared/HubRow";
+import DateField from "./shared/DateField";
 
 // Film titles extracted from DEFAULT_JOBS (everything before " : XY")
 const SEED_FILMS = [...new Set(
@@ -668,53 +669,115 @@ function FieldLabel({ text, required }) {
   );
 }
 
-// Searchable combobox with optional gradient filter chips.
-// onBlur closes immediately (no setTimeout) because item selection uses onMouseDown,
-// which fires before blur — so the selection is already committed when blur runs.
-function ComboField({ label, value, onChange, options, placeholder, required, filters = [] }) {
+// ── Combobox grouping helpers ─────────────────────────────────────────────────
+// Filtering used to live in loud gradient chips above each field, which clashed
+// with the form. Instead we fold it into the dropdown: options group under
+// sticky headers (same idiom as Tracker/Legacy's SearchableSelect), so scanning
+// by territory/studio/type is a property of the list, not extra chrome.
+const afterDash = (s) => { const i = s.indexOf(" - "); return i >= 0 ? s.slice(i + 3) : s; };
+// "Digital - Production" → "Digital"; "AUS - Foo" → "AUS"; else a bucket.
+const prefixGroup = (s) => {
+  const i = s.indexOf(" - ");
+  if (i >= 0) return s.slice(0, i);
+  return s.startsWith("XYi") ? "XYi" : "Other";
+};
+
+// Project descriptions lead with a territory token but separate it with a SPACE
+// as often as a dash ("UK Titles", "AUS - DOOH", "XYi Internal"), so split on the
+// leading token itself rather than a fixed " - " delimiter.
+const DESC_PREFIXES = ["AUS", "UK", "DOM", "INT", "IRE", "XYi"];
+const descGroup = (s) => {
+  for (const p of DESC_PREFIXES) if (new RegExp(`^${p}[\\s\\-]`, "i").test(s)) return p;
+  return "Other";
+};
+const descLabel = (s) => {
+  for (const p of DESC_PREFIXES) {
+    const m = s.match(new RegExp(`^${p}[\\s\\-]+`, "i"));
+    if (m) return s.slice(m[0].length);
+  }
+  return s;
+};
+const STUDIO_KEYS = ["Universal", "Paramount", "Sony", "Disney", "Warner"];
+const studioGroup = (s) => {
+  const u = s.toLowerCase();
+  for (const k of STUDIO_KEYS) if (u.includes(k.toLowerCase())) return k;
+  return u.includes("xyi") ? "XYi" : "Other";
+};
+
+// Group orders double as the dropdown's quick-filter chips — most-used buckets
+// first so the common picks (Universal/Paramount, Digital/Print) are one tap in.
+const CLIENT_GROUP_ORDER = ["Universal", "Paramount", "Sony", "Disney", "Warner", "XYi"];
+// Exactly the two busiest desks per studio — "<Studio> Pictures International"
+// then "…UK" — floated to the top of their group. Anchored to the end so
+// "NBCUniversal International Ltd" and "Universal Pictures BAFTA - UK" don't match.
+const CLIENT_PIN_RANK = (name) => {
+  if (/ Pictures International$/i.test(name)) return 0;
+  if (/ Pictures UK$/i.test(name) || /^Paramount UK$/i.test(name)) return 1;
+  return 999;
+};
+const DESC_GROUP_ORDER = ["AUS", "UK", "DOM", "INT", "IRE", "XYi"];
+const CAT_GROUP_ORDER = ["Digital", "Print", "XYi"];
+
+// Searchable combobox. Free text is allowed (type a new value); selection uses
+// onMouseDown so it commits before the input's onBlur closes the list.
+//   groupBy      — bucket the dropdown under sticky headers
+//   formatOption — shorten each row's label (e.g. drop the prefix it sits under)
+//   groupOrder   — priority order for groups (Digital/Print before the rest);
+//                  also drives the quick-filter chip bar at the top of the list,
+//                  so the common buckets are one tap away without loud chips
+//                  cluttering the form body.
+function ComboField({ label, value, onChange, options, placeholder, required, groupBy = null, formatOption = null, groupOrder = null, pinRankFn = null }) {
   const [q, setQ] = useState(value);
   const [open, setOpen] = useState(false);
-  const [activeFilter, setActiveFilter] = useState(null);
+  const [activeGroup, setActiveGroup] = useState(null);
 
   // Sync display value when parent sets it externally (e.g. opening edit modal)
   useEffect(() => { setQ(value ?? ""); }, [value]);
 
   const hits = useMemo(() => {
-    let list = activeFilter ? options.filter(o => activeFilter.match(o)) : options;
+    let list = options;
     if (q) list = list.filter(o => o.toLowerCase().includes(q.toLowerCase()));
-    return list.slice(0, 60);
-  }, [options, q, activeFilter]);
+    // Filter to the picked group BEFORE capping — otherwise a group that sorts
+    // late in the alphabet (UK, XYi) can be entirely cut by the slice and the
+    // chip would show nothing even though matches exist.
+    if (activeGroup && groupBy) list = list.filter(o => (groupBy(o) || "Other") === activeGroup);
+    return list.slice(0, 200);
+  }, [options, q, activeGroup, groupBy]);
+
+  const groups = useMemo(() => {
+    if (!groupBy) return null;
+    const m = new Map();
+    for (const o of hits) {
+      const g = groupBy(o) || "Other";
+      if (!m.has(g)) m.set(g, []);
+      m.get(g).push(o);
+    }
+    let entries = [...m.entries()];
+    // Float pinned entries to the top of their group; the rest keep their order.
+    if (pinRankFn) entries.forEach(([, items]) => items.sort((a, b) => pinRankFn(a) - pinRankFn(b)));
+    if (groupOrder) {
+      const rank = (g) => { const i = groupOrder.indexOf(g); return i === -1 ? groupOrder.length + 1 : i; };
+      entries.sort((a, b) => rank(a[0]) - rank(b[0]) || a[0].localeCompare(b[0]));
+    }
+    return entries;
+  }, [hits, groupBy, groupOrder, pinRankFn]);
+
+  const disp = (o) => (formatOption ? formatOption(o) : o);
+  const isPinned = (o) => !!pinRankFn && pinRankFn(o) < 999;
+  const pick = (o) => { onChange(o); setQ(o); setOpen(false); setActiveGroup(null); };
+  const rowCls = (o) => {
+    const sel = o === value;
+    const pinned = isPinned(o);
+    return `flex items-center text-left px-3 py-2 text-xs rounded-lg transition-colors ${
+      sel ? "bg-[#10b981]/15 text-[#0f766e] font-bold"
+        : pinned ? "bg-[#f0fbf7] text-[#0f766e] font-semibold hover:bg-[#e4f7ef]"
+          : "text-[#33454f] hover:bg-slate-50"
+    }`;
+  };
 
   return (
     <div>
       <FieldLabel text={label} required={required} />
-      {filters.length > 0 && (
-        <div className="flex flex-wrap gap-1.5 mb-2">
-          {filters.map(f => {
-            const count = options.filter(o => f.match(o)).length;
-            if (count === 0) return null;
-            const isActive = activeFilter?.label === f.label;
-            return (
-              <button key={f.label} type="button"
-                onMouseDown={e => { e.preventDefault(); setActiveFilter(isActive ? null : f); setOpen(true); }}
-                className={`group/fc relative px-3 py-1 rounded-xl text-[11px] font-bold border overflow-hidden transition-all ${
-                  isActive ? "border-transparent text-white shadow-sm" : "border-[#dce4ec] text-[#768994] hover:border-transparent hover:text-white"
-                }`}>
-                <div className={`absolute inset-0 bg-gradient-to-br ${f.gradient} transition-opacity duration-200 ${
-                  isActive ? "opacity-100" : "opacity-20 group-hover/fc:opacity-100"
-                }`} />
-                <span className="relative z-10">{f.label}</span>
-              </button>
-            );
-          })}
-          {activeFilter && (
-            <button type="button" onMouseDown={e => { e.preventDefault(); setActiveFilter(null); }}
-              className="flex items-center gap-0.5 px-1.5 py-1 text-[10px] font-bold text-slate-400 hover:text-rose-500 transition-colors">
-              <X className="w-3 h-3" /> Clear
-            </button>
-          )}
-        </div>
-      )}
       <div className="relative">
         <input value={q}
           onChange={e => { setQ(e.target.value); onChange(e.target.value); setOpen(true); }}
@@ -723,16 +786,52 @@ function ComboField({ label, value, onChange, options, placeholder, required, fi
           placeholder={placeholder || "Search or type…"}
           className={MODAL_INPUT} />
         {open && hits.length > 0 && (
-          <div className="absolute z-[100] left-0 right-0 mt-1.5 bg-white border border-[#dce4ec] rounded-2xl shadow-2xl max-h-52 overflow-y-auto">
-            {hits.map(o => (
-              <button key={o} type="button"
-                onMouseDown={e => { e.preventDefault(); onChange(o); setQ(o); setOpen(false); }}
-                className={`w-full text-left px-4 py-2.5 text-sm border-b border-[#dce4ec]/60 last:border-0 transition-colors ${
-                  o === value ? "bg-[#12a0e1]/10 text-[#12a0e1] font-bold" : "text-[#122027] hover:bg-slate-50"
-                }`}>
-                {o}
-              </button>
-            ))}
+          <div className="absolute z-[100] left-0 right-0 mt-1.5 bg-white border border-[#dce4ec] rounded-2xl shadow-2xl max-h-72 overflow-y-auto">
+            {groupOrder && (
+              <div className="flex flex-wrap gap-1.5 p-2 border-b border-[#eef2f6] sticky top-0 bg-white z-20">
+                {groupOrder.map(g => {
+                  const on = activeGroup === g;
+                  return (
+                    <button key={g} type="button"
+                      onMouseDown={e => { e.preventDefault(); setActiveGroup(on ? null : g); }}
+                      className={`px-2.5 py-1 rounded-lg text-[11px] font-bold border transition-colors ${
+                        on ? "bg-[#10b981] border-[#10b981] text-white"
+                          : "bg-white border-[#dce4ec] text-[#768994] hover:border-[#10b981] hover:text-[#0d9488]"
+                      }`}>{g}</button>
+                  );
+                })}
+                {activeGroup && (
+                  <button type="button" onMouseDown={e => { e.preventDefault(); setActiveGroup(null); }}
+                    className="px-1.5 py-1 text-[10px] font-bold text-slate-400 hover:text-rose-500 transition-colors">Clear</button>
+                )}
+              </div>
+            )}
+            <div className="p-1.5">
+              {groups ? groups.map(([g, items]) => (
+                <div key={g} className="mb-1.5 last:mb-0">
+                  <div className="px-2.5 py-1 text-[10px] font-black uppercase tracking-widest text-[#0d9488] bg-[#f4faf8] rounded-lg">{g}</div>
+                  <div className="grid grid-cols-2 gap-1 mt-1">
+                    {items.map(o => (
+                      <button key={o} type="button" onMouseDown={e => { e.preventDefault(); pick(o); }}
+                        className={rowCls(o)} title={o}>
+                        {isPinned(o) && <span className="w-1.5 h-1.5 rounded-full bg-[#10b981] shrink-0 mr-2" />}
+                        <span className="truncate">{disp(o)}</span>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )) : (
+                <div className="grid grid-cols-2 gap-1">
+                  {hits.map(o => (
+                    <button key={o} type="button" onMouseDown={e => { e.preventDefault(); pick(o); }}
+                      className={rowCls(o)} title={o}>
+                      {isPinned(o) && <span className="w-1.5 h-1.5 rounded-full bg-[#10b981] shrink-0 mr-2" />}
+                      <span className="truncate">{disp(o)}</span>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
           </div>
         )}
       </div>
@@ -930,15 +1029,17 @@ function JobForm({ job, clients, films, categories, descs, onSave, onCancel, sav
     estimated_cost: job?.estimated_cost ?? "",
     completed_date: job?.completed_date ? job.completed_date.slice(0, 10) : "",
     job_done: job?.job_done || false,
-    status: job?.status || "Inactive",
+    status: job?.status || (isEdit ? "Inactive" : "Active"),
     notes: job?.notes || "",
   });
 
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
+  // Create tucks billing/admin fields behind a disclosure; edit shows them open.
+  const [showAdmin, setShowAdmin] = useState(isEdit);
   const bodyClass = layout === "modal" ? "overflow-y-auto flex-1 px-6 py-5 space-y-6" : "space-y-6";
   const footerClass = layout === "modal"
-    ? "px-6 py-4 border-t border-[#dce4ec] flex justify-end gap-2 shrink-0"
-    : "pt-5 border-t border-[#dce4ec] flex justify-end gap-2";
+    ? "px-6 py-4 border-t border-[#dce4ec] flex items-center justify-end gap-2 shrink-0"
+    : "mt-3 pt-6 border-t border-[#dce4ec] flex items-center justify-end gap-2";
 
   // Live preview: "Film Title : XY025999, Project Description" — updates as you type
   const livePreview = useMemo(() => {
@@ -959,6 +1060,8 @@ function JobForm({ job, clients, films, categories, descs, onSave, onCancel, sav
   return (
     <>
       <div className={bodyClass}>
+        {/* Hero — the assembling job label is the one thing this form exists to
+            produce, so it leads instead of sitting muted at the top. */}
         <div>
           <FieldLabel text="Job Number" required />
           {isEdit ? (
@@ -967,104 +1070,159 @@ function JobForm({ job, clients, films, categories, descs, onSave, onCancel, sav
               className={`${MODAL_INPUT} font-mono`} />
           ) : (
             <>
-              <div className={`${MODAL_INPUT} font-mono bg-slate-50 flex items-center min-h-[42px]`}>
-                {nextCode ? livePreview : "Allocating next job number…"}
+              <div className="bg-[#f4faf8] border border-[#d5ebe4] rounded-2xl px-4 py-3.5 min-h-[54px] flex items-center flex-wrap gap-x-1.5 gap-y-1 leading-snug">
+                <span className={`text-base font-bold ${form.film_title.trim() ? "text-[#122027]" : "text-[#b0bec5]"}`}>
+                  {form.film_title.trim() || "Film title"}
+                </span>
+                <span className="text-[#b0bec5] font-bold">:</span>
+                <span className="font-mono text-sm font-bold text-[#0f766e] bg-[#dcf3ec] px-2 py-0.5 rounded-md">
+                  {nextCode || "XY…"}
+                </span>
+                <span className="text-[#b0bec5] font-bold">,</span>
+                <span className={`text-sm font-medium ${form.project_description.trim() ? "text-[#33454f]" : "text-[#b0bec5]"}`}>
+                  {form.project_description.trim() || "project description"}
+                </span>
               </div>
               <p className="text-[10px] text-[#768994] mt-1.5">
-                Auto-allocated — updates live as you fill in the film and project description below.
+                Auto-allocated — the label builds itself from the film and project description below.
               </p>
             </>
           )}
         </div>
 
+        {/* Essentials — film, client, description, category, start date compose
+            the label above and are the minimum to file the job. */}
         <div className="grid grid-cols-2 gap-5">
-          <div>
-            <FieldLabel text="Start Date" required />
-            <input type="date" value={form.start_date} onChange={e => set("start_date", e.target.value)}
-              className={MODAL_INPUT} />
-          </div>
-          <PillField label="Office" value={form.office} onChange={v => set("office", v)} options={OFFICES} />
-        </div>
-
-        <div className="grid grid-cols-2 gap-5">
+          <ComboField label="Film Title" value={form.film_title} onChange={v => set("film_title", v)}
+            options={films} placeholder="Search films, or type something else (e.g. Studio Management)…" />
           <ComboField label="Client" required value={form.client} onChange={v => set("client", v)}
-            options={clients} placeholder="Search clients…" filters={CLIENT_FILTERS} />
-          <PillField label="Print / Digital" value={form.print_digital} onChange={v => set("print_digital", v)}
-            options={PRINT_DIGITAL} colorMap={PD_COLOR_MAP} />
+            options={clients} placeholder="Search clients…"
+            groupBy={studioGroup} groupOrder={CLIENT_GROUP_ORDER} pinRankFn={CLIENT_PIN_RANK} />
         </div>
-
-        <ComboField label="Film Title" value={form.film_title} onChange={v => set("film_title", v)}
-          options={films} placeholder="Search films, or type something else (e.g. Studio Management)…" />
 
         <ComboField label="Project Description" value={form.project_description}
           onChange={v => set("project_description", v)}
           options={descs} placeholder="Search descriptions or type a new one…"
-          filters={DESC_FILTERS} />
-
-        <ComboField label="Item Category" value={form.job_work_category}
-          onChange={v => set("job_work_category", v)}
-          options={categories} placeholder="Search categories…"
-          filters={CAT_FILTERS} />
+          groupBy={descGroup} formatOption={descLabel} groupOrder={DESC_GROUP_ORDER} />
 
         <div className="grid grid-cols-2 gap-5">
-          <ComboField label="Ordered By" value={form.ordered_by} onChange={v => set("ordered_by", v)}
-            options={orderedByOpts} placeholder="Name or type new…" />
-          <ComboField label="Billed To" value={form.billed_to} onChange={v => set("billed_to", v)}
-            options={billedToOpts} placeholder="Company or name…" />
+          <ComboField label="Item Category" value={form.job_work_category}
+            onChange={v => set("job_work_category", v)}
+            options={categories} placeholder="Search categories…"
+            groupBy={prefixGroup} formatOption={afterDash} groupOrder={CAT_GROUP_ORDER} />
+          <div>
+            <FieldLabel text="Start Date" required />
+            <DateField value={form.start_date} onChange={v => set("start_date", v)} allowClear={false} placeholder="Pick a start date…" />
+          </div>
         </div>
 
-        <div>
-          <p className="text-[10px] font-black uppercase tracking-widest text-[#768994] mb-3">Costs</p>
-          <div className="grid grid-cols-3 gap-4">
-            {[["Fixed", "fixed_cost"], ["3rd Party", "third_party_cost"], ["Estimated", "estimated_cost"]].map(([lbl, field]) => (
-              <div key={field}>
-                <FieldLabel text={lbl} />
-                <div className="relative">
-                  <span className="absolute left-3.5 top-1/2 -translate-y-1/2 text-[#768994] text-sm font-bold select-none">£</span>
-                  <input type="number" step="0.01" min="0" value={form[field]}
-                    onChange={e => set(field, e.target.value)} placeholder="0.00"
-                    className={`${MODAL_INPUT} pl-8`} />
+        {/* Billing & admin — everything optional at creation, one disclosure. */}
+        <div className="border border-[#dce4ec] rounded-2xl overflow-hidden">
+          <button type="button" onClick={() => setShowAdmin(s => !s)}
+            className="w-full flex items-center justify-between gap-3 px-4 py-3 bg-[#fbfdff] hover:bg-slate-50 transition-colors">
+            <span className="flex items-center gap-2.5 min-w-0">
+              <ChevronRight className={`w-4 h-4 text-[#768994] shrink-0 transition-transform ${showAdmin ? "rotate-90" : ""}`} />
+              <span className="text-xs font-bold text-[#33454f]">Billing &amp; admin</span>
+              {!showAdmin && (
+                <span className="hidden sm:inline text-[10px] font-bold text-[#768994] bg-slate-100 px-2 py-0.5 rounded-full truncate">
+                  Office · Print/Digital · Ordered by · Costs · Notes
+                </span>
+              )}
+            </span>
+            <span className="text-[11px] font-bold text-[#0d9488] shrink-0">Optional</span>
+          </button>
+          {showAdmin && (
+            <div className="px-4 py-5 space-y-6 border-t border-[#dce4ec]">
+              <div className="grid grid-cols-2 gap-5">
+                <PillField label="Office" value={form.office} onChange={v => set("office", v)} options={OFFICES} />
+                <PillField label="Print / Digital" value={form.print_digital} onChange={v => set("print_digital", v)}
+                  options={PRINT_DIGITAL} colorMap={PD_COLOR_MAP} />
+              </div>
+
+              <div className="grid grid-cols-2 gap-5">
+                <ComboField label="Ordered By" value={form.ordered_by} onChange={v => set("ordered_by", v)}
+                  options={orderedByOpts} placeholder="Name or type new…" />
+                <ComboField label="Billed To" value={form.billed_to} onChange={v => set("billed_to", v)}
+                  options={billedToOpts} placeholder="Company or name…" />
+              </div>
+
+              <div>
+                <p className="text-[10px] font-black uppercase tracking-widest text-[#768994] mb-3">Costs</p>
+                <div className="grid grid-cols-3 gap-4">
+                  {[["Fixed", "fixed_cost"], ["3rd Party", "third_party_cost"], ["Estimated", "estimated_cost"]].map(([lbl, field]) => (
+                    <div key={field}>
+                      <FieldLabel text={lbl} />
+                      <div className="relative">
+                        <span className="absolute left-3.5 top-1/2 -translate-y-1/2 text-[#768994] text-sm font-bold select-none">£</span>
+                        <input type="number" step="0.01" min="0" value={form[field]}
+                          onChange={e => set(field, e.target.value)} placeholder="0.00"
+                          className={`${MODAL_INPUT} pl-8`} />
+                      </div>
+                    </div>
+                  ))}
                 </div>
               </div>
-            ))}
-          </div>
-        </div>
 
-        <PillField label="Status" value={form.status} onChange={v => set("status", v)}
-          options={JOB_STATUSES} colorMap={STATUS_COLOR_MAP} />
-
-        <div className="grid grid-cols-2 gap-5">
-          <div>
-            <FieldLabel text="Completed Date" />
-            <input type="date" value={form.completed_date} onChange={e => set("completed_date", e.target.value)}
-              className={MODAL_INPUT} />
-          </div>
-          <div className="flex items-end">
-            <button type="button" onClick={() => set("job_done", !form.job_done)}
-              className={`flex items-center gap-2.5 w-full px-4 py-2.5 rounded-2xl border font-bold text-sm transition-all ${
-                form.job_done
-                  ? "bg-[#1cc1a5]/10 border-[#1cc1a5] text-[#1cc1a5]"
-                  : "bg-white border-[#dce4ec] text-[#768994] hover:border-[#1cc1a5]/50"
-              }`}>
-              <div className={`w-5 h-5 rounded-lg border-2 flex items-center justify-center shrink-0 transition-colors ${
-                form.job_done ? "bg-[#1cc1a5] border-[#1cc1a5]" : "border-[#dce4ec]"
-              }`}>
-                {form.job_done && <Check className="w-3 h-3 text-white" />}
+              <div>
+                <FieldLabel text="Notes" />
+                <textarea value={form.notes} onChange={e => set("notes", e.target.value)}
+                  rows={3} placeholder="Any additional notes…"
+                  className={`${MODAL_INPUT} resize-none`} />
               </div>
-              Job Done
-            </button>
-          </div>
+            </div>
+          )}
         </div>
 
-        <div>
-          <FieldLabel text="Notes" />
-          <textarea value={form.notes} onChange={e => set("notes", e.target.value)}
-            rows={3} placeholder="Any additional notes…"
-            className={`${MODAL_INPUT} resize-none`} />
-        </div>
+        {/* Lifecycle — edit only. A job you're creating now is never "done", and
+            its create-time Inactive/Active choice lives in the footer instead. */}
+        {isEdit && (
+          <div className="space-y-6">
+            <PillField label="Status" value={form.status} onChange={v => set("status", v)}
+              options={JOB_STATUSES} colorMap={STATUS_COLOR_MAP} />
+
+            <div className="grid grid-cols-2 gap-5">
+              <div>
+                <FieldLabel text="Completed Date" />
+                <DateField value={form.completed_date} onChange={v => set("completed_date", v)} placeholder="Not completed yet…" />
+              </div>
+              <div className="flex items-end">
+                <button type="button" onClick={() => set("job_done", !form.job_done)}
+                  className={`flex items-center gap-2.5 w-full px-4 py-2.5 rounded-2xl border font-bold text-sm transition-all ${
+                    form.job_done
+                      ? "bg-[#1cc1a5]/10 border-[#1cc1a5] text-[#1cc1a5]"
+                      : "bg-white border-[#dce4ec] text-[#768994] hover:border-[#1cc1a5]/50"
+                  }`}>
+                  <div className={`w-5 h-5 rounded-lg border-2 flex items-center justify-center shrink-0 transition-colors ${
+                    form.job_done ? "bg-[#1cc1a5] border-[#1cc1a5]" : "border-[#dce4ec]"
+                  }`}>
+                    {form.job_done && <Check className="w-3 h-3 text-white" />}
+                  </div>
+                  Job Done
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
 
       <div className={footerClass}>
+        {/* Create-time status lives here, opposite the actions — present without
+            re-cluttering the field stack. Closed only makes sense once editing. */}
+        {!isEdit && (
+          <div className="mr-auto">
+            <p className="text-[9px] font-black uppercase tracking-widest text-[#768994] mb-1.5">Status</p>
+            <div className="inline-flex border border-[#dce4ec] rounded-xl overflow-hidden">
+              {["Inactive", "Active"].map(s => (
+                <button key={s} type="button" onClick={() => set("status", s)}
+                  className={`px-4 py-1.5 text-xs font-bold transition-colors ${
+                    form.status === s ? "bg-[#10b981] text-white" : "bg-white text-[#768994] hover:text-[#122027]"
+                  }`}>
+                  {s}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
         {onCancel && (
           <button onClick={onCancel}
             className="px-5 py-2.5 text-sm font-bold text-[#768994] hover:text-[#122027] bg-white border border-[#dce4ec] rounded-2xl transition-all">
@@ -1072,7 +1230,9 @@ function JobForm({ job, clients, films, categories, descs, onSave, onCancel, sav
           </button>
         )}
         <button onClick={handleSave} disabled={saving || !canSave}
-          className="flex items-center gap-2 px-6 py-2.5 bg-[#12a0e1] hover:bg-[#0d8bc4] text-white text-sm font-bold rounded-2xl transition-all disabled:opacity-50 shadow-sm">
+          className={`flex items-center gap-2 px-6 py-2.5 text-white text-sm font-bold rounded-2xl transition-all disabled:opacity-50 shadow-sm ${
+            isEdit ? "bg-[#12a0e1] hover:bg-[#0d8bc4]" : "bg-[#10b981] hover:bg-[#0d9488]"
+          }`}>
           {saving ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Check className="w-3.5 h-3.5" />}
           {submitLabel || (isEdit ? "Save Changes" : "Create Job")}
         </button>
@@ -1147,7 +1307,7 @@ const FOLDER_TEMPLATES = {
   },
 };
 
-const STUDIO_OPTIONS = ["Paramount", "Sony", "Universal"];
+const STUDIO_OPTIONS = ["Paramount", "Universal"];
 // Studios we can currently fetch/test live from Wrike (have a master-template folder).
 // Paramount also ships a hardcoded fallback tree above; Universal is fetch-only.
 const TESTABLE_STUDIOS = new Set(["Paramount", "Universal"]);

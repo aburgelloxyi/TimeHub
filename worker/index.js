@@ -104,8 +104,14 @@ async function getTokenRowBySession(env, sessionToken) {
   return rows[0] || null;
 }
 
+// Keyed by session_token, NOT wrike_user_id — the same Wrike account can be
+// connected from several browsers/environments at once (e.g. localhost +
+// the deployed site), and each keeps its own row. Keying by wrike_user_id
+// used to make every new connect overwrite (upsert) or every disconnect/
+// refresh wipe (delete/patch) *every* environment's session sharing that
+// account, causing a 401 cascade in whichever one didn't just touch it.
 async function upsertTokenRow(env, row) {
-  const res = await sbFetch(env, `/wrike_oauth_tokens?on_conflict=wrike_user_id`, {
+  const res = await sbFetch(env, `/wrike_oauth_tokens?on_conflict=session_token`, {
     method: "POST",
     headers: { Prefer: "resolution=merge-duplicates,return=representation" },
     body: JSON.stringify(row),
@@ -114,8 +120,8 @@ async function upsertTokenRow(env, row) {
   return (await res.json())[0];
 }
 
-async function updateTokenRow(env, wrikeUserId, patch) {
-  const res = await sbFetch(env, `/wrike_oauth_tokens?wrike_user_id=eq.${encodeURIComponent(wrikeUserId)}`, {
+async function updateTokenRow(env, sessionToken, patch) {
+  const res = await sbFetch(env, `/wrike_oauth_tokens?session_token=eq.${encodeURIComponent(sessionToken)}`, {
     method: "PATCH",
     headers: { Prefer: "return=representation" },
     body: JSON.stringify(patch),
@@ -124,8 +130,8 @@ async function updateTokenRow(env, wrikeUserId, patch) {
   return (await res.json())[0];
 }
 
-async function deleteTokenRow(env, wrikeUserId) {
-  await sbFetch(env, `/wrike_oauth_tokens?wrike_user_id=eq.${encodeURIComponent(wrikeUserId)}`, {
+async function deleteTokenRow(env, sessionToken) {
+  await sbFetch(env, `/wrike_oauth_tokens?session_token=eq.${encodeURIComponent(sessionToken)}`, {
     method: "DELETE",
   });
 }
@@ -303,7 +309,7 @@ async function handleDisconnect(request, env) {
   const session = cookies[SESSION_COOKIE];
   if (session) {
     const row = await getTokenRowBySession(env, session);
-    if (row) await deleteTokenRow(env, row.wrike_user_id);
+    if (row) await deleteTokenRow(env, row.session_token);
   }
   const res = json({ ok: true });
   res.headers.append("Set-Cookie", clearCookie(SESSION_COOKIE, "/"));
@@ -462,7 +468,7 @@ async function handleProxy(request, url, env) {
 
   const refreshToken = async () => {
     const refreshed = await refreshAccessToken(env, row.refresh_token);
-    row = await updateTokenRow(env, row.wrike_user_id, {
+    row = await updateTokenRow(env, row.session_token, {
       access_token: refreshed.access_token,
       refresh_token: refreshed.refresh_token || row.refresh_token,
       api_host: refreshed.host || row.api_host,

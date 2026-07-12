@@ -66,25 +66,37 @@ export const PAGES = {
   },
 };
 
+// Every valid profiles.department value (matches the Postgres check
+// constraint) — used by the admin "preview as department" switcher so it
+// never drifts out of sync with what the database actually allows.
+export const ALL_DEPARTMENTS = ["AM", "Digital", "Motion", "Operations", "PM", "Print"];
+
 // ── Who sees what ────────────────────────────────────────────────────────────
 // Keyed by profiles.department (check constraint: PM | Motion | Digital |
-// AM | Operations | Print). Departments without an entry yet fall back to
-// DEFAULT_PAGE_IDS — the historic five-page set — so nobody is locked out
-// before their department's set is defined.
+// AM | Operations | Print). Operations mirrors PM (job/management-focused,
+// no production board); AM and Digital mirror Motion/Print's own-board setup
+// (see boardLabelFor + TodaysList.js's usesDeptRoster) rather than falling
+// through to DEFAULT_PAGE_IDS, so every department now has an explicit,
+// intentional set instead of an unconfigured default.
 export const DEPARTMENT_PAGES = {
   Motion: ["timesheet", "todayslist", "canvas", "legacy", "profile"],
   Print: ["timesheet", "todayslist", "canvas", "legacy", "profile"],
+  AM: ["timesheet", "todayslist", "canvas", "legacy", "profile"],
+  Digital: ["timesheet", "todayslist", "canvas", "legacy", "profile"],
   PM: ["management", "jobbook", "legacy", "profile"],
+  Operations: ["management", "jobbook", "legacy", "profile"],
 };
 
 export const DEFAULT_PAGE_IDS = ["timesheet", "todayslist", "canvas", "legacy", "profile"];
 
 // The team board (todayslist) is one page whose identity follows the viewer's
-// department — Print staff see "Print Board" with their own roster, everyone
-// else sees the Motion board. Keeps a single page id/route while letting the
-// nav label (Home rows, Rail, command palette) and the board header adapt.
+// department — every non-Motion department sees its own "{Department} Board"
+// with its own profiles-tagged roster (see TodaysList.js's usesDeptRoster);
+// Motion keeps the plain "Motion Board" label and its hardcoded team. Keeps a
+// single page id/route while letting the nav label (Home rows, Rail, command
+// palette) and the board header adapt per department.
 export function boardLabelFor(department) {
-  return department === "Print" ? "Print Board" : "Motion Board";
+  return !department || department === "Motion" ? "Motion Board" : `${department} Board`;
 }
 
 export function pageIdsFor(department) {

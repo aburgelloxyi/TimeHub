@@ -36,6 +36,7 @@ import Rail from "./components/shared/Rail";
 import ThemeToggle from "./components/shared/ThemeToggle";
 import ToastHost from "./components/shared/ToastHost";
 import ConfirmHost from "./components/shared/ConfirmHost";
+import DepartmentPreviewBanner from "./components/shared/DepartmentPreviewBanner";
 import { notify } from "./lib/toast";
 import { confirmAction } from "./lib/confirm";
 import Home from "./components/Home";
@@ -640,6 +641,10 @@ export default function App() {
           <AdminModal onClose={() => setShowAdmin(false)} />
         </Suspense>
       )}
+
+      {/* ── Department preview indicator (self-hides when no preview is set,
+           see AdminModal's "Preview as" switcher) ─────────────────────────── */}
+      <DepartmentPreviewBanner />
 
       {/* Global no-token banner — home renders its own compact chip instead,
           and pt-3 (not mt-3) so the margin can't collapse through the app

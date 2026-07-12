@@ -324,18 +324,19 @@ function AttachmentThumb({ attachment, large = false, onPreview }) {
 export default function TodaysList({ wrikeData, triggerToast: _triggerToast, isActive = true, department }) {
   const triggerToast = _triggerToast ?? ((msg) => console.warn("Toast:", msg));
 
-  // Print (and any future non-Motion department) drives the board off its own
-  // profiles-tagged roster; Motion keeps its hardcoded team + Riccardo slate
-  // exactly as before. `board` is the single config the rest of the component
-  // reads — members, lane colours, how tasks map to people, and the slate.
-  const isPrint = department === "Print";
-  const deptTeam = useDepartmentTeam(department, isPrint);
+  // Every non-Motion department (Print, AM, Digital, ...) drives the board
+  // off its own profiles-tagged roster; Motion keeps its hardcoded team +
+  // Riccardo slate exactly as before. `board` is the single config the rest
+  // of the component reads — members, lane colours, how tasks map to people,
+  // and the slate.
+  const usesDeptRoster = !!department && department !== "Motion";
+  const deptTeam = useDepartmentTeam(department, usesDeptRoster);
   const board = useMemo(() => (
-    isPrint
+    usesDeptRoster
       ? {
           members: deptTeam.members,
           lanes: deptTeam.lanes,
-          subtitle: "Print Tasks Allocation",
+          subtitle: `${department} Tasks Allocation`,
           matchBy: "id",
           wrikeIdToMember: deptTeam.wrikeIdToMember,
           slateLead: null,
@@ -350,15 +351,18 @@ export default function TodaysList({ wrikeData, triggerToast: _triggerToast, isA
           slateLead: "Riccardo",
           slateName: "Riccardo's Slate",
         }
-  ), [isPrint, deptTeam]);
+  ), [usesDeptRoster, department, deptTeam]);
 
-  // Print scopes the board state cache under its own key so it never collides
-  // with the Motion board's saved assignments.
-  const storageKey = isPrint ? "print_board_state_v1" : "motion_board_state_v1";
+  // Each non-Motion department scopes its board state cache under its own
+  // key so saved assignments never collide across departments or with
+  // Motion's.
+  const storageKey = usesDeptRoster
+    ? `${department.toLowerCase()}_board_state_v1`
+    : "motion_board_state_v1";
 
-  // Motion resolves its team internally (undefined); Print feeds its roster's
-  // Wrike ids so the fetch only pulls that team's tasks.
-  const { boardTasks } = useMotionBoardTasks(isPrint ? deptTeam.teamWrikeIds : undefined);
+  // Motion resolves its team internally (undefined); every other department
+  // feeds its roster's Wrike ids so the fetch only pulls that team's tasks.
+  const { boardTasks } = useMotionBoardTasks(usesDeptRoster ? deptTeam.teamWrikeIds : undefined);
   const boardRef = useRef(null);
   const wasActiveRef = useRef(false);
 
@@ -639,8 +643,8 @@ export default function TodaysList({ wrikeData, triggerToast: _triggerToast, isA
             </div>
           )}
           <div className="text-right">
-            <div className="font-display text-2xl font-bold text-white leading-none">{isPrint ? overdueCount : motionCount}</div>
-            <div className="text-[9px] font-black uppercase tracking-widest text-white/70">{isPrint ? "overdue" : "motion"}</div>
+            <div className="font-display text-2xl font-bold text-white leading-none">{usesDeptRoster ? overdueCount : motionCount}</div>
+            <div className="text-[9px] font-black uppercase tracking-widest text-white/70">{usesDeptRoster ? "overdue" : "motion"}</div>
           </div>
         </div>
         <div className="hidden sm:block w-px h-8 bg-white/20 mr-1" />
@@ -782,8 +786,8 @@ export default function TodaysList({ wrikeData, triggerToast: _triggerToast, isA
         <div className="bg-white rounded-2xl border border-[#dce4ec] shadow-sm overflow-hidden">
           {board.members.length === 0 && (
             <p className="text-sm text-slate-400 italic px-6 py-8 text-center">
-              {isPrint
-                ? "No Print team members yet — tag people's department as “Print” in Administration › People."
+              {usesDeptRoster
+                ? `No ${department} team members yet — tag people's department as “${department}” in Administration › People.`
                 : "No team members."}
             </p>
           )}

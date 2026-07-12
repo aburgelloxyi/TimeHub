@@ -7,17 +7,19 @@ import {
   RefreshCw, Shield, AlertTriangle, ChevronLeft, ChevronRight,
   ArrowUpAZ, ArrowDownAZ, CheckCircle2, UserCog,
   FolderPlus, Folder, FolderOpen, Sparkles, Loader2,
-  FileBarChart, ClipboardList, Globe, Layers, Download,
+  FileBarChart, ClipboardList, Globe, Layers, Download, Network,
 } from "lucide-react";
 import { supabase } from "../lib/supabaseClient";
 import { confirmAction } from "../lib/confirm";
 import { notify } from "../lib/toast";
+import { isServiceAccount, DEPT_GROUPS } from "../lib/people";
 import { SEED_CLIENTS, SEED_PROJECT_DESCRIPTIONS } from "../data/seedData";
 import { DEFAULT_JOBS, CATEGORIES } from "../constants";
 import { fullName as cleanFullName, cleanNamePart } from "../lib/formatName";
 import PageHeader from "./shared/PageHeader";
 import HubRow from "./shared/HubRow";
 import DateField from "./shared/DateField";
+import OrgChart from "./OrgChart";
 
 // Film titles extracted from DEFAULT_JOBS (everything before " : XY")
 const SEED_FILMS = [...new Set(
@@ -79,6 +81,16 @@ const NAV_GROUPS = [
       { id: "departments", label: "Departments", icon: Layers, desc: "The department list used across the app" },
     ],
   },
+  {
+    id: "orgchart-group",
+    label: "Org Chart",
+    desc: "Company structure & reporting lines",
+    icon: Network,
+    gradient: "from-indigo-600 to-slate-800",
+    items: [
+      { id: "orgchart", label: "Org Chart", icon: Network, desc: "Who reports to whom, across the whole company" },
+    ],
+  },
 ];
 
 function findNavItem(id) {
@@ -99,24 +111,6 @@ const DESC_QUICK_FILTERS = [
   { label: "INT", keyword: "INT ", gradient: "from-violet-500 to-violet-700"   },
   { label: "IRE", keyword: "IRE ", gradient: "from-emerald-400 to-teal-600"    },
   { label: "XYi", keyword: "XYi ", gradient: "from-[#12a0e1] to-[#0872a0]"   },
-];
-
-// ── Department groups (for People tab) ────────────────────────────────────────
-// The assignable department NAMES now come from the editable job_departments
-// table (Supporting Content → Departments), fetched in PeopleSection — not
-// hardcoded here. DEPT_GROUPS below stays hardcoded on purpose: it's a
-// per-department visual identity (bucket colour/gradient) and a
-// developer-maintained decision, not something a PM adding a department
-// should auto-generate. Anyone in a department without an entry here lands
-// in the "—" catch-all bucket instead of being silently dropped.
-const DEPT_GROUPS = [
-  { label: "PM",         color: "bg-blue-50 text-blue-700 border-blue-200",           gradient: "from-blue-500 to-blue-700"         },
-  { label: "Motion",     color: "bg-violet-50 text-violet-700 border-violet-200",     gradient: "from-violet-500 to-violet-700"     },
-  { label: "Digital",    color: "bg-cyan-50 text-cyan-700 border-cyan-200",           gradient: "from-cyan-500 to-sky-600"          },
-  { label: "AM",         color: "bg-amber-50 text-amber-700 border-amber-200",        gradient: "from-amber-400 to-orange-500"      },
-  { label: "Operations", color: "bg-emerald-50 text-emerald-700 border-emerald-200",  gradient: "from-emerald-500 to-teal-600"      },
-  { label: "Print",      color: "bg-orange-50 text-orange-700 border-orange-200",     gradient: "from-orange-400 to-orange-600"     },
-  { label: "—",          color: "bg-slate-50 text-slate-500 border-slate-200",        gradient: "from-slate-400 to-slate-600"       },
 ];
 
 // ── Studio quick-filter groups (for Clients tab) ──────────────────────────────
@@ -2279,9 +2273,19 @@ function AdminHub({ expandedGroup, onToggleGroup, onOpenItem }) {
       <div className="space-y-4">
         {NAV_GROUPS.map((group) => {
           const isOpen = expandedGroup === group.id;
+          // A group with exactly one destination has nothing to unfold —
+          // an accordion revealing a single row you then click again is
+          // pure friction. Go straight there, and read as navigation (no
+          // `open` prop) rather than as an expand/collapse toggle.
+          const singleItem = group.items.length === 1;
           return (
             <div key={group.id} className="bg-white rounded-3xl border border-[#dce4ec] shadow-sm overflow-hidden">
-              <HubRow section={group} onClick={() => onToggleGroup(group.id)} open={isOpen} first />
+              <HubRow
+                section={group}
+                onClick={() => (singleItem ? onOpenItem(group.items[0].id) : onToggleGroup(group.id))}
+                open={singleItem ? undefined : isOpen}
+                first
+              />
               <AnimatePresence initial={false}>
                 {isOpen && (
                   <motion.div
@@ -2344,7 +2348,10 @@ function PeopleSection() {
       supabase.from("positions").select("*").order("title"),
       supabase.from("job_departments").select("name").order("name"),
     ]);
-    setPeople(profiles || []);
+    // Wrike's own service accounts (AM Team, Magic Wrike, All proofreaders)
+    // sync into profiles like any real contact but aren't people — never
+    // show them here.
+    setPeople((profiles || []).filter((p) => !isServiceAccount(p.wrike_user_id)));
     setPositions(pos || []);
     setDepartments((depts || []).map(d => d.name));
     setLoading(false);
@@ -2771,6 +2778,7 @@ export default function Management({ wrikeUserId, department }) {
                   {activeTab === "positions"  && <SimpleListSection table="positions" labelField="title" label="Positions" placeholder="e.g. Creative Director…" />}
                   {activeTab === "translations" && <SimpleListSection table="translation_countries" labelField="name" label="Translation Countries" placeholder="e.g. France…" />}
                   {activeTab === "departments"  && <SimpleListSection table="job_departments" labelField="name" label="Departments" placeholder="e.g. Print…" />}
+                  {activeTab === "orgchart"     && <OrgChart />}
                 </div>
               </div>
             )}

@@ -16,6 +16,17 @@ const STATE_COOKIE = "wrike_oauth_state";
 const SESSION_MAX_AGE = 60 * 60 * 24 * 180; // 180 days
 const STATE_MAX_AGE = 600; // 10 minutes
 
+// A page load fires several /api/wrike/* calls in parallel. If more than one
+// happens to see a near-expired/expired access token at once, each would
+// independently call Wrike's refresh endpoint with the SAME refresh_token —
+// and since Wrike rotates refresh tokens on use, only the first actually
+// succeeds; every other concurrent caller's refresh_token is already dead by
+// the time it lands, so it gets rejected (token_refresh_failed) even though a
+// valid new token now exists in the DB from the winning call. Keyed by
+// session_token, so concurrent requests share one in-flight refresh instead
+// of racing each other; cleared as soon as that refresh settles either way.
+const refreshInFlight = new Map();
+
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
@@ -493,14 +504,31 @@ async function handleProxy(request, url, env) {
   };
 
   const refreshToken = async () => {
-    const refreshed = await refreshAccessToken(env, row.refresh_token);
-    row = await updateTokenRow(env, row.session_token, {
-      access_token: refreshed.access_token,
-      refresh_token: refreshed.refresh_token || row.refresh_token,
-      api_host: refreshed.host || row.api_host,
-      expires_at: new Date(Date.now() + Number(refreshed.expires_in || 3600) * 1000).toISOString(),
-      updated_at: new Date().toISOString(),
-    });
+    const key = row.session_token;
+    if (!refreshInFlight.has(key)) {
+      refreshInFlight.set(
+        key,
+        (async () => {
+          try {
+            const refreshed = await refreshAccessToken(env, row.refresh_token);
+            return await updateTokenRow(env, key, {
+              access_token: refreshed.access_token,
+              refresh_token: refreshed.refresh_token || row.refresh_token,
+              api_host: refreshed.host || row.api_host,
+              expires_at: new Date(Date.now() + Number(refreshed.expires_in || 3600) * 1000).toISOString(),
+              updated_at: new Date().toISOString(),
+            });
+          } finally {
+            refreshInFlight.delete(key);
+          }
+        })()
+      );
+    }
+    // Every concurrent caller — the one that started this refresh and any
+    // that arrived while it was in flight — awaits the SAME promise and gets
+    // the SAME resulting row, instead of each spending its own (possibly
+    // already-rotated-out) refresh_token.
+    row = await refreshInFlight.get(key);
   };
 
   // Proactive refresh when the token is about to expire by the clock.

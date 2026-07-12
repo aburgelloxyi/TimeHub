@@ -148,10 +148,18 @@ async function upsertWebhookConfig(env, { webhookId, secret }) {
 }
 
 async function insertWebhookEvent(env, { taskId, eventType, occurredAt }) {
-  await sbFetch(env, `/wrike_webhook_events`, {
+  const res = await sbFetch(env, `/wrike_webhook_events`, {
     method: "POST",
+    // return=minimal: this is a fire-and-forget insert, we don't need the row
+    // echoed back — asking for the representation just adds a SELECT that can
+    // fail on its own.
+    headers: { Prefer: "return=minimal" },
     body: JSON.stringify({ task_id: taskId, event_type: eventType, occurred_at: occurredAt }),
   });
+  if (!res.ok) {
+    console.error(`[webhook] insert failed ${res.status}:`, await res.text().catch(() => ""));
+  }
+  return res;
 }
 
 // ── HMAC helpers (Wrike webhook signature verification) ─────────────────────

@@ -336,8 +336,27 @@ async function handleWebhookRegister(request, url, env) {
   const row = await getTokenRowBySession(env, session);
   if (!row) return json({ error: "not_connected" }, { status: 401 });
 
+  // Wrike validates hookUrl synchronously by calling back to it during
+  // creation — a localhost/private-network origin can never be reached from
+  // Wrike's servers, so this can never succeed from a dev environment. Reject
+  // it up front with a clear reason instead of a generic 502 after Wrike
+  // rejects it (which — see below — used to also corrupt the shared config).
+  if (["localhost", "127.0.0.1", "0.0.0.0"].includes(url.hostname) || url.hostname.endsWith(".local")) {
+    return json({
+      error: "unreachable_origin",
+      detail: "Live sync must be enabled from the deployed site — Wrike can't reach a localhost URL to deliver webhooks.",
+    }, { status: 400 });
+  }
+
   const hookUrl = `${url.origin}/api/wrike/webhook`;
   const authHeader = { Authorization: `Bearer ${row.access_token}` };
+
+  // Preserve whatever config is live right now. If Wrike rejects the new
+  // webhook below, we restore this instead of leaving the shared config
+  // half-written — a blank webhookId plus a secret that no longer matches
+  // whatever webhook Wrike is still actually delivering with, which silently
+  // 401s (and drops) every future delivery until someone notices the outage.
+  const previousConfig = await getWebhookConfig(env);
 
   // Delete any webhooks already pointing at this Worker before creating a new
   // one. Each register generates a fresh secret, but wrike_webhook_config can
@@ -378,11 +397,19 @@ async function handleWebhookRegister(request, url, env) {
   if (!res.ok) {
     const text = await res.text().catch(() => "");
     console.error("wrike webhook create failed", res.status, text);
+    if (previousConfig) {
+      await upsertWebhookConfig(env, { webhookId: previousConfig.webhook_id, secret: previousConfig.secret });
+    }
     return json({ error: "wrike_webhook_create_failed", detail: text }, { status: 502 });
   }
   const data = await res.json();
   const webhookId = data.data?.[0]?.id;
-  if (!webhookId) return json({ error: "no_webhook_id_returned" }, { status: 502 });
+  if (!webhookId) {
+    if (previousConfig) {
+      await upsertWebhookConfig(env, { webhookId: previousConfig.webhook_id, secret: previousConfig.secret });
+    }
+    return json({ error: "no_webhook_id_returned" }, { status: 502 });
+  }
 
   await upsertWebhookConfig(env, { webhookId, secret });
   return json({ ok: true, webhookId });

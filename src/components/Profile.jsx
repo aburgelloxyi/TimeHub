@@ -29,6 +29,7 @@ import HubRow from "./shared/HubRow";
 import { useTasks } from "../hooks/useTasks";
 import { useWrikeUser } from "../hooks/useWrikeUser";
 import { startWrikeOAuth, disconnectWrike, fetchWrikeOAuthStatus } from "../lib/wrikeApi";
+import { subscribeToWrikeTaskEvents } from "../lib/wrikeWebhookSubscription";
 import TaskDetailModal from "./TaskDetailModal";
 import { formatDurationText } from "../utils/timeHelpers";
 import { getTagStyle, getBorderColorClass } from "../utils/tagStyles";
@@ -287,6 +288,46 @@ function JobsSection({ wrikeUser, filter, wrikeData, onLogTime, triggerToast, jo
   const [selectedTask, setSelectedTask] = useState(null);
   const getCascadeRef = useCascadeRefs();
 
+  // Extracted out of fetchTasks (which used to close over statusNameMap
+  // directly) so the webhook patch effect below can produce an identically-
+  // shaped task from a single incoming id, not just from a full batch fetch.
+  const enrichJob = useCallback((t, statusNameMap) => {
+    const customStatusName = t.customStatusId
+      ? statusNameMap[t.customStatusId] || t.status
+      : t.status;
+    const isDone =
+      t.status === "Completed" ||
+      /^(delivered|completed|done|published)$/i.test(customStatusName);
+    const html = (t.description || "").replace(/<[^>]*>/g, " ");
+    const filmFreq = {};
+    for (const path of html.match(/\/Volumes\/[^\s]+/gi) || []) {
+      const parts = path.split("/");
+      const digIdx = parts.findIndex((p) => p.toUpperCase() === "DIGITAL");
+      if (digIdx > 0 && parts[digIdx - 1]) {
+        const name = decodeURIComponent(parts[digIdx - 1])
+          .replace(/[_\-]/g, " ")
+          .trim();
+        filmFreq[name] = (filmFreq[name] || 0) + 1;
+      }
+    }
+    let projectName = Object.keys(filmFreq).length
+      ? Object.entries(filmFreq).sort((a, b) => b[1] - a[1])[0][0]
+      : "";
+    if (!projectName) {
+      const m = t.title.match(
+        /^(?:Edit|Design|Animation|Motion|Finish|Grade|Sound|Audio|VFX|Colourist|DI)\s*[-–]\s*(.+?)(?:\s*[-–]\s*.+)?$/i
+      );
+      if (m) projectName = m[1].trim();
+    }
+    if (!projectName)
+      projectName = t.title.split(/[_\-]/)[0].trim() || "Other Projects";
+    return { ...t, customStatusName, isDone, projectName };
+  }, []);
+
+  // Last-built status-id → name map, reused by the webhook patch below so an
+  // incoming single-task event doesn't need to refetch /api/wrike/workflows.
+  const statusNameMapRef = useRef({});
+
   const fetchTasks = useCallback(async () => {
     if (!wrikeUser?.id) return;
 
@@ -315,49 +356,19 @@ function JobsSection({ wrikeUser, filter, wrikeData, onLogTime, triggerToast, jo
           statusNameMap[cs.id] = cs.name;
         })
       );
+      statusNameMapRef.current = statusNameMap;
 
       const allRaw = [...(aJson.data || []), ...(cJson.data || [])];
       const assignedIds = new Set(allRaw.map((t) => t.id));
       const isChild = (t) =>
         (t.superTaskIds || []).some((pid) => assignedIds.has(pid));
 
-      const enrich = (t) => {
-        const customStatusName = t.customStatusId
-          ? statusNameMap[t.customStatusId] || t.status
-          : t.status;
-        const isDone =
-          t.status === "Completed" ||
-          /^(delivered|completed|done|published)$/i.test(customStatusName);
-        const html = (t.description || "").replace(/<[^>]*>/g, " ");
-        const filmFreq = {};
-        for (const path of html.match(/\/Volumes\/[^\s]+/gi) || []) {
-          const parts = path.split("/");
-          const digIdx = parts.findIndex((p) => p.toUpperCase() === "DIGITAL");
-          if (digIdx > 0 && parts[digIdx - 1]) {
-            const name = decodeURIComponent(parts[digIdx - 1])
-              .replace(/[_\-]/g, " ")
-              .trim();
-            filmFreq[name] = (filmFreq[name] || 0) + 1;
-          }
-        }
-        let projectName = Object.keys(filmFreq).length
-          ? Object.entries(filmFreq).sort((a, b) => b[1] - a[1])[0][0]
-          : "";
-        if (!projectName) {
-          const m = t.title.match(
-            /^(?:Edit|Design|Animation|Motion|Finish|Grade|Sound|Audio|VFX|Colourist|DI)\s*[-–]\s*(.+?)(?:\s*[-–]\s*.+)?$/i
-          );
-          if (m) projectName = m[1].trim();
-        }
-        if (!projectName)
-          projectName = t.title.split(/[_\-]/)[0].trim() || "Other Projects";
-        return { ...t, customStatusName, isDone, projectName };
-      };
-
-      const active = (aJson.data || []).filter((t) => !isChild(t)).map(enrich);
+      const active = (aJson.data || [])
+        .filter((t) => !isChild(t))
+        .map((t) => enrichJob(t, statusNameMap));
       const completed = (cJson.data || [])
         .filter((t) => !isChild(t))
-        .map(enrich)
+        .map((t) => enrichJob(t, statusNameMap))
         .filter((t) => t.isDone);
       const seen = new Set(active.map((t) => t.id));
       setTasks([...active, ...completed.filter((t) => !seen.has(t.id))]);
@@ -367,11 +378,50 @@ function JobsSection({ wrikeUser, filter, wrikeData, onLogTime, triggerToast, jo
     } finally {
       setLoading(false);
     }
-  }, [wrikeUser?.id]);
+  }, [wrikeUser?.id, enrichJob]);
 
   useEffect(() => {
     fetchTasks();
   }, [fetchTasks]);
+
+  // Near-instant updates: a webhook event only carries a changed task's id,
+  // so batches of ids (debounced, see wrikeWebhookSubscription.js) get
+  // refetched and merged in place here — cheap, since it's one small request
+  // per edit rather than the bulk refetch a manual Refresh does. Skips
+  // fetchTasks' isChild subtask-dedup (that needs the full assigned-task
+  // set to resolve); a subtask patched in this way may briefly appear
+  // alongside its parent until the next full fetch reconciles it.
+  useEffect(() => {
+    if (!wrikeUser?.id) return;
+    const fields = encodeURIComponent("[description,superTaskIds]");
+
+    const handleWebhookTaskIds = async (ids) => {
+      if (!ids.length) return;
+      let changed = [];
+      try {
+        const res = await fetch(`/api/wrike/tasks/${ids.join(",")}?fields=${fields}`);
+        if (res.ok) changed = (await res.json()).data || [];
+      } catch (e) {
+        console.warn("[JobsSection] webhook refetch failed", e);
+        return;
+      }
+      if (!changed.length) return;
+
+      setTasks((prev) => {
+        const map = new Map(prev.map((t) => [t.id, t]));
+        changed.forEach((t) => {
+          if (t.responsibleIds?.includes(wrikeUser.id)) {
+            map.set(t.id, enrichJob(t, statusNameMapRef.current));
+          } else {
+            map.delete(t.id); // reassigned away from me
+          }
+        });
+        return [...map.values()];
+      });
+    };
+
+    return subscribeToWrikeTaskEvents(handleWebhookTaskIds);
+  }, [wrikeUser?.id, enrichJob]);
 
   const filtered = useMemo(
     () => tasks.filter((t) => (filter === "completed" ? t.isDone : !t.isDone)),

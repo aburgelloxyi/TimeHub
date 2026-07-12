@@ -119,6 +119,33 @@ async function fetchWrikeTasks(sinceIso) {
   return rawTasks;
 }
 
+// Progressively smaller field lists to retry with. Wrike rejects the WHOLE
+// request with 400 "Fields parameter value 'X' not allowed" if ANY field in
+// fields= isn't visible to the connected account for that specific task —
+// seen for customFields on a task outside this account's custom-field
+// visibility scope (custom fields can be scoped per space/team in Wrike).
+// This is real per-task access control, not something a fixed field list can
+// predict — so a single such task must degrade gracefully (fewer fields)
+// rather than fail the whole fetch and vanish from whatever list needed it.
+const FIELDS_FALLBACKS = [
+  FIELDS_FILTER,
+  encodeURIComponent("[parentIds,responsibleIds,subTaskIds,description]"),
+  null, // bare Wrike defaults, no optional fields — always succeeds
+];
+
+async function fetchOneTask(id) {
+  for (const fields of FIELDS_FALLBACKS) {
+    const url = fields ? `/api/wrike/tasks/${id}?fields=${fields}` : `/api/wrike/tasks/${id}`;
+    try {
+      const r = await fetch(url);
+      if (r.ok) return (await r.json()).data?.[0] || null;
+    } catch (e) {
+      console.warn(`[WrikeCache] refetch ${id} error`, e);
+    }
+  }
+  return null;
+}
+
 // ---------------------------------------------------------------------------
 // Re-fetch specific tasks by ID *with* the fields param.
 // Wrike pagination drops optional fields (description, customFields) on pages
@@ -145,15 +172,12 @@ export async function fetchTasksByIds(ids) {
         const tasks = (await r.json()).data || [];
         out.push(...tasks);
       } else {
-        // Batch failed — fall back to individual fetches for this batch
+        // Batch failed — one task in it may have a field-visibility issue
+        // (see FIELDS_FALLBACKS above). Fall back per-id, tiering fields
+        // down per task instead of losing the whole batch to one bad task.
         for (const id of batch) {
-          try {
-            const r2 = await fetch(`/api/wrike/tasks/${id}?fields=${FIELDS_FILTER}`);
-            if (r2.ok) {
-              const task = (await r2.json()).data?.[0];
-              if (task) out.push(task);
-            }
-          } catch (e) { console.warn(`[WrikeCache] refetch ${id} error`, e); }
+          const task = await fetchOneTask(id);
+          if (task) out.push(task);
         }
       }
     } catch (e) {

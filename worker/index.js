@@ -530,6 +530,18 @@ async function handleProxy(request, url, env) {
     }
   }
 
+  if (!wrikeRes.ok) {
+    // The proxy used to pass failures through silently — every "why did this
+    // one request 400" investigation needed a browser Network-tab screenshot
+    // because wrangler tail showed nothing. Log Wrike's actual error body so
+    // future failures are visible from the Worker side too.
+    const text = await wrikeRes.text().catch(() => "");
+    console.error(`[proxy] Wrike ${wrikeRes.status} on ${request.method} ${restPath}${url.search}:`, text);
+    const resHeaders = new Headers(wrikeRes.headers);
+    resHeaders.delete("Set-Cookie");
+    return new Response(text, { status: wrikeRes.status, headers: resHeaders });
+  }
+
   const resHeaders = new Headers(wrikeRes.headers);
   resHeaders.delete("Set-Cookie");
   return new Response(wrikeRes.body, { status: wrikeRes.status, headers: resHeaders });

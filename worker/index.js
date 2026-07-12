@@ -422,7 +422,6 @@ async function handleWebhookEvent(request, env) {
   }
   if (!Array.isArray(events)) events = [events];
 
-  let inserted = 0;
   for (const evt of events) {
     if (!evt?.taskId) continue; // ignore folder/comment/attachment-only events
     await insertWebhookEvent(env, {
@@ -430,9 +429,7 @@ async function handleWebhookEvent(request, env) {
       eventType: evt.eventType || null,
       occurredAt: evt.lastUpdatedDate || new Date().toISOString(),
     });
-    inserted++;
   }
-  console.log(`[webhook] ${events.length} event(s), ${inserted} with taskId inserted`);
 
   return json({ ok: true });
 }

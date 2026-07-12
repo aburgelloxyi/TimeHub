@@ -234,7 +234,20 @@ export function filterToMotionTeam(tasks, folderDictionary, contactDictionary) {
 // ---------------------------------------------------------------------------
 export function enrichTasks(rawTasks, folderDictionary, contactDictionary, statusDictionary, childToParent = {}, extraMappings = {}) {
   return rawTasks.map((task) => {
-    const parsed = parseWrikeData(task.description);
+    // Only MATRIX tasks need the parsed description — that's where the tableHtml
+    // the Canvas renders lives. For every other task the derived notes/path text
+    // (notesText + extractedPathData) was ~9 MB of retained cache we barely use:
+    // project/studio names come from the folder tree below (getFilmName tree-
+    // climbs first; getStudioName never touches the description), and the
+    // job/territory guessing that DOES read the description fetches it per-task
+    // on the fly (useTaskActions / LegacyTimesheets), not from this cache. So we
+    // skip parsing and don't retain those bytes for non-MATRIX tasks. Tradeoff:
+    // global search no longer matches on notes/path text for non-MATRIX tasks,
+    // and film detection loses its description fallback (folder-tree only).
+    const isMatrix = task.title?.toUpperCase().includes("MATRIX");
+    const parsed = isMatrix
+      ? parseWrikeData(task.description)
+      : { tableHtml: "", notesText: "", extractedPathData: "" };
     delete task.description;
 
     return {

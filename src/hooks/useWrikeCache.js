@@ -124,16 +124,23 @@ async function fetchWrikeTasks(sinceIso) {
 // Wrike pagination drops optional fields (description, customFields) on pages
 // 2+, so tasks from later pages come back without their description — which is
 // where the MATRIX table + notes live. Fetching by ID guarantees we get them.
+//
+// Explicit fields= (not just relying on get-by-id defaults) — callers of this
+// function read parentIds and customFields off the result (the MATRIX repair
+// and the sync-time description backfill below), and every webhook-driven
+// caller (useWrikeCache's and useMotionBoardTasks' realtime patch) needs the
+// same enrichment inputs a full sync gets, so a live-patched task's project/
+// studio name and Motion-team relevance don't silently degrade versus one
+// that came from a full resync.
 // ---------------------------------------------------------------------------
 export async function fetchTasksByIds(ids) {
   const out = [];
-  // Batch up to 100 IDs per request — Wrike supports comma-separated IDs
-  // and returns description by default (no fields param needed).
+  // Batch up to 100 IDs per request — Wrike supports comma-separated IDs.
   const BATCH = 100;
   for (let i = 0; i < ids.length; i += BATCH) {
     const batch = ids.slice(i, i + BATCH);
     try {
-      const r = await fetch(`/api/wrike/tasks/${batch.join(",")}`);
+      const r = await fetch(`/api/wrike/tasks/${batch.join(",")}?fields=${FIELDS_FILTER}`);
       if (r.ok) {
         const tasks = (await r.json()).data || [];
         out.push(...tasks);
@@ -141,7 +148,7 @@ export async function fetchTasksByIds(ids) {
         // Batch failed — fall back to individual fetches for this batch
         for (const id of batch) {
           try {
-            const r2 = await fetch(`/api/wrike/tasks/${id}`);
+            const r2 = await fetch(`/api/wrike/tasks/${id}?fields=${FIELDS_FILTER}`);
             if (r2.ok) {
               const task = (await r2.json()).data?.[0];
               if (task) out.push(task);

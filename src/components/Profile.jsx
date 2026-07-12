@@ -28,6 +28,7 @@ import PageHeader from "./shared/PageHeader";
 import HubRow from "./shared/HubRow";
 import { useTasks } from "../hooks/useTasks";
 import { useWrikeUser } from "../hooks/useWrikeUser";
+import { fetchTasksByIds } from "../hooks/useWrikeCache";
 import { startWrikeOAuth, disconnectWrike, fetchWrikeOAuthStatus } from "../lib/wrikeApi";
 import { subscribeToWrikeTaskEvents } from "../lib/wrikeWebhookSubscription";
 import TaskDetailModal from "./TaskDetailModal";
@@ -393,21 +394,15 @@ function JobsSection({ wrikeUser, filter, wrikeData, onLogTime, triggerToast, jo
   // alongside its parent until the next full fetch reconciles it.
   useEffect(() => {
     if (!wrikeUser?.id) return;
-    // superTaskIds is only needed by fetchTasks' own isChild subtask-dedup
-    // (skipped here, see comment above) — Wrike's get-by-id endpoint 400s on
-    // it, unlike the list/search endpoint fetchTasks uses it on above.
-    const fields = encodeURIComponent("[description]");
 
+    // Reuse the same helper Motion Board's webhook patch uses (rather than a
+    // bespoke fields=[description] fetch here) — Wrike's get-by-id endpoint
+    // 400ed on that narrower field list even alone, but fetchTasksByIds'
+    // fuller set is proven working, and this keeps both webhook-patch paths
+    // getting identical, complete task data instead of two different subsets.
     const handleWebhookTaskIds = async (ids) => {
       if (!ids.length) return;
-      let changed = [];
-      try {
-        const res = await fetch(`/api/wrike/tasks/${ids.join(",")}?fields=${fields}`);
-        if (res.ok) changed = (await res.json()).data || [];
-      } catch (e) {
-        console.warn("[JobsSection] webhook refetch failed", e);
-        return;
-      }
+      const changed = await fetchTasksByIds(ids);
       if (!changed.length) return;
 
       setTasks((prev) => {

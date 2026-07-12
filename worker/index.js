@@ -387,6 +387,7 @@ async function handleWebhookRegister(request, url, env) {
   // calls back to /api/wrike/webhook and expects a signed handshake response
   // before the create call returns, so the secret must already be saved.
   await upsertWebhookConfig(env, { webhookId: "", secret });
+  console.log("[webhook-register] wrote secret prefix:", secret.slice(0, 8));
 
   const body = new URLSearchParams({ hookUrl, secret });
   const res = await fetch(`https://${row.api_host}/api/v4/webhooks`, {
@@ -426,6 +427,17 @@ async function handleWebhookEvent(request, env) {
   const hookSecretHeader = request.headers.get("X-Hook-Secret");
   const signatureHeader = request.headers.get("X-Hook-Signature") || "";
 
+  // Temporary diagnostics: log unconditionally, before either branch, so we
+  // see exactly what Wrike sent regardless of which path gets taken — the
+  // handshake-branch-only log missed this because the handshake callback
+  // isn't reaching that branch at all.
+  console.log(
+    "[webhook-event] hookSecret:", hookSecretHeader,
+    "signature:", signatureHeader,
+    "bodyLen:", rawBody.length,
+    "config secret prefix:", config.secret?.slice(0, 8)
+  );
+
   // Distinguish the one-time registration handshake from real event deliveries
   // by the SIGNATURE, not the secret header. Wrike sends X-Hook-Secret on
   // *every* delivery (real events include it alongside X-Hook-Signature), so
@@ -437,6 +449,11 @@ async function handleWebhookEvent(request, env) {
     // it back in the *same* header name (X-Hook-Secret) — per
     // developers.wrike.com/docs/webhooks.
     const signature = await hmacSha256Hex(config.secret, hookSecretHeader);
+    console.log(
+      "[webhook-handshake] read secret prefix:", config.secret?.slice(0, 8),
+      "challenge:", hookSecretHeader,
+      "response:", signature
+    );
     return new Response(null, { status: 200, headers: { "X-Hook-Secret": signature } });
   }
 

@@ -387,7 +387,6 @@ async function handleWebhookRegister(request, url, env) {
   // calls back to /api/wrike/webhook and expects a signed handshake response
   // before the create call returns, so the secret must already be saved.
   await upsertWebhookConfig(env, { webhookId: "", secret });
-  console.log("[webhook-register] wrote secret prefix:", secret.slice(0, 8));
 
   const body = new URLSearchParams({ hookUrl, secret });
   const res = await fetch(`https://${row.api_host}/api/v4/webhooks`, {
@@ -417,61 +416,44 @@ async function handleWebhookRegister(request, url, env) {
 }
 
 // Public endpoint Wrike calls directly (no session cookie). Handles both the
-// registration handshake (X-Hook-Secret) and real event deliveries
-// (X-Hook-Signature), per https://developers.wrike.com/docs/webhooks.
+// one-time secret-verification challenge Wrike sends when validating hookUrl
+// and real event deliveries. Per developers.wrike.com/webhooks, BOTH request
+// types carry X-Hook-Secret and X-Hook-Signature — header presence can't
+// distinguish them (a routing mistake this code made twice before landing
+// here). The real discriminator is the body: the verification challenge is
+// {"requestType":"WebHook secret verification"}; real deliveries are a JSON
+// array of event objects. Both are signature-verified the same way first.
 async function handleWebhookEvent(request, env) {
   const config = await getWebhookConfig(env);
   if (!config) return json({ error: "webhook_not_configured" }, { status: 404 });
 
   const rawBody = await request.text();
-  const hookSecretHeader = request.headers.get("X-Hook-Secret");
   const signatureHeader = request.headers.get("X-Hook-Signature") || "";
 
-  // Temporary diagnostics: log unconditionally, before either branch, so we
-  // see exactly what Wrike sent regardless of which path gets taken — the
-  // handshake-branch-only log missed this because the handshake callback
-  // isn't reaching that branch at all.
-  console.log(
-    "[webhook-event] hookSecret:", hookSecretHeader,
-    "signature:", signatureHeader,
-    "bodyLen:", rawBody.length,
-    "config secret prefix:", config.secret?.slice(0, 8)
-  );
-
-  // Distinguish the one-time registration handshake from real event deliveries
-  // by the SIGNATURE, not the secret header. Wrike sends X-Hook-Secret on
-  // *every* delivery (real events include it alongside X-Hook-Signature), so
-  // keying the handshake off "is X-Hook-Secret present" swallowed every real
-  // event into the handshake response and inserted nothing. The handshake is
-  // the request that has the secret header but NO body signature.
-  if (hookSecretHeader && !signatureHeader) {
-    // Prove we know the secret by signing the value Wrike sent us and echoing
-    // it back in the *same* header name (X-Hook-Secret) — per
-    // developers.wrike.com/docs/webhooks.
-    const signature = await hmacSha256Hex(config.secret, hookSecretHeader);
-    console.log(
-      "[webhook-handshake] read secret prefix:", config.secret?.slice(0, 8),
-      "challenge:", hookSecretHeader,
-      "response:", signature
-    );
-    return new Response(null, { status: 200, headers: { "X-Hook-Secret": signature } });
-  }
-
-  const expected = await hmacSha256Hex(config.secret, rawBody);
-  if (!timingSafeEqual(signatureHeader, expected)) {
+  const expectedBodySignature = await hmacSha256Hex(config.secret, rawBody);
+  if (!timingSafeEqual(signatureHeader, expectedBodySignature)) {
     // Signature mismatch — not from Wrike. Discard per Wrike's docs.
     console.error("[webhook] invalid signature — dropping delivery");
     return json({ error: "invalid_signature" }, { status: 401 });
   }
 
-  let events;
+  let parsedBody;
   try {
-    events = JSON.parse(rawBody);
+    parsedBody = JSON.parse(rawBody);
   } catch {
     return json({ error: "invalid_body" }, { status: 400 });
   }
-  if (!Array.isArray(events)) events = [events];
 
+  if (parsedBody && !Array.isArray(parsedBody) && parsedBody.requestType === "WebHook secret verification") {
+    const hookSecretHeader = request.headers.get("X-Hook-Secret");
+    if (!hookSecretHeader) return json({ error: "missing_hook_secret" }, { status: 400 });
+    // Prove we know the secret by signing the challenge Wrike sent us and
+    // echoing it back in the *same* header name (X-Hook-Secret).
+    const responseSignature = await hmacSha256Hex(config.secret, hookSecretHeader);
+    return new Response(null, { status: 200, headers: { "X-Hook-Secret": responseSignature } });
+  }
+
+  let events = Array.isArray(parsedBody) ? parsedBody : [parsedBody];
   for (const evt of events) {
     if (!evt?.taskId) continue; // ignore folder/comment/attachment-only events
     await insertWebhookEvent(env, {

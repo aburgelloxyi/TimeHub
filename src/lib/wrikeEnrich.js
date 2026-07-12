@@ -1,4 +1,16 @@
-import { FILM_MAPPINGS, MOTION_TEAM_NAME_MAP } from "../constants.js";
+import { FILM_MAPPINGS, MOTION_TEAM_NAME_MAP, TERRITORIES, REGION_ALIASES } from "../constants.js";
+
+// Every token the territory guesser can recognise (full names + aliases like
+// AE/AUS), uppercased — used below to decide which customFields values are
+// worth keeping in the cache. Mirrors guessFieldsFromTask's own sources so
+// the cache keeps exactly what that guesser could ever match on.
+const TERRITORY_TOKENS = new Set(
+  [...TERRITORIES, ...Object.keys(REGION_ALIASES)].map((t) => String(t).toUpperCase())
+);
+
+const isTerritoryValue = (v) =>
+  v.length <= 80 &&
+  v.split(/[,/;]+/).some((tok) => TERRITORY_TOKENS.has(tok.trim().toUpperCase()));
 
 // ---------------------------------------------------------------------------
 // Parse a Wrike task's HTML description into structured fields
@@ -250,8 +262,25 @@ export function enrichTasks(rawTasks, folderDictionary, contactDictionary, statu
       : { tableHtml: "", notesText: "", extractedPathData: "" };
     delete task.description;
 
+    // Wrike returns every populated custom field (~6.5/task, 35 distinct in
+    // this account, ~9 MB of cache). Cached tasks' customFields ARE read —
+    // TaskDetailModal's fullTask and the Tracker's taskMap both come from
+    // this cache — but their reader (guessFieldsFromTask) only ever pattern-
+    // matches three things in the values: the XY job code, /Volumes server
+    // paths, and territory names/aliases. Keep exactly those three shapes
+    // (verified against the live data: the one territory-bearing field held
+    // codes like AE/AUS; everything else dropped is rates, dates, Wrike user
+    // ids, statuses and comment HTML the app never reads).
+    const customFields = Array.isArray(task.customFields)
+      ? task.customFields.filter((cf) => {
+          const v = cf?.value || "";
+          return /XY\d{5,6}/i.test(v) || v.includes("/Volumes/") || isTerritoryValue(v);
+        })
+      : task.customFields;
+
     return {
       ...task,
+      customFields,
       extractedPathData: parsed.extractedPathData,
       tableHtml: parsed.tableHtml,
       notesText: parsed.notesText,

@@ -384,6 +384,11 @@ async function handleWebhookEvent(request, env) {
   const rawBody = await request.text();
   const hookSecretHeader = request.headers.get("X-Hook-Secret");
 
+  // Temporary diagnostics: surface the exact payload Wrike sends so we can see
+  // which field carries the task id (events were arriving 200-OK but inserting
+  // nothing, i.e. skipped by the taskId guard below).
+  console.log("[webhook] rawBody:", rawBody.slice(0, 1000));
+
   if (hookSecretHeader) {
     // Handshake: prove we know the secret by signing the value Wrike sent us
     // and echoing it back in the *same* header name (X-Hook-Secret, not
@@ -396,6 +401,7 @@ async function handleWebhookEvent(request, env) {
   const expected = await hmacSha256Hex(config.secret, rawBody);
   if (!timingSafeEqual(signatureHeader, expected)) {
     // Signature mismatch — not from Wrike. Discard per Wrike's docs.
+    console.error("[webhook] invalid signature — dropping delivery");
     return json({ error: "invalid_signature" }, { status: 401 });
   }
 
@@ -407,6 +413,7 @@ async function handleWebhookEvent(request, env) {
   }
   if (!Array.isArray(events)) events = [events];
 
+  let inserted = 0;
   for (const evt of events) {
     if (!evt?.taskId) continue; // ignore folder/comment/attachment-only events
     await insertWebhookEvent(env, {
@@ -414,7 +421,9 @@ async function handleWebhookEvent(request, env) {
       eventType: evt.eventType || null,
       occurredAt: evt.lastUpdatedDate || new Date().toISOString(),
     });
+    inserted++;
   }
+  console.log(`[webhook] ${events.length} event(s), ${inserted} with taskId inserted`);
 
   return json({ ok: true });
 }

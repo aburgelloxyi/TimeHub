@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from "react";
 import { Home } from "lucide-react";
 import { supabase } from "../../lib/supabaseClient";
-import { MANAGEMENT_IDS } from "../Management";
+import { MANAGEMENT_IDS } from "../../lib/access";
 import { PAGE_GRADIENTS } from "../../lib/pageGradients";
 import { PAGES, pageIdsFor, pageFor } from "../../lib/departments";
 import { useDepartment } from "../../hooks/useDepartment";

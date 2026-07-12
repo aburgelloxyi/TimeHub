@@ -1,5 +1,6 @@
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
+import { visualizer } from "rollup-plugin-visualizer";
 
 import { cloudflare } from "@cloudflare/vite-plugin";
 
@@ -13,7 +14,13 @@ export default defineConfig({
   server: process.env.PORT
     ? { port: Number(process.env.PORT), strictPort: true }
     : { port: 5173, strictPort: true },
-  plugins: [react(), cloudflare()],
+  plugins: [
+    react(),
+    cloudflare(),
+    // Build-only bundle report — open bundle-stats.html after `npm run build`
+    // to see what's actually inside each chunk (gzip sizes included).
+    visualizer({ filename: "bundle-stats.html", gzipSize: true }),
+  ],
   // Allow JSX inside plain .js files (your original components use this)
   esbuild: {
     loader: "jsx",

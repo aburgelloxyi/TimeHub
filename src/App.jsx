@@ -4,6 +4,8 @@ import React, {
   useRef,
   useMemo,
   useCallback,
+  lazy,
+  Suspense,
 } from "react";
 import { motion, AnimatePresence, MotionConfig } from "framer-motion";
 import {
@@ -33,23 +35,57 @@ import "./Timesheeter.css";
 import Rail from "./components/shared/Rail";
 import ThemeToggle from "./components/shared/ThemeToggle";
 import ToastHost from "./components/shared/ToastHost";
+import ConfirmHost from "./components/shared/ConfirmHost";
 import { notify } from "./lib/toast";
-import Tracker from "./components/tracker/Tracker";
-import TodaysList from "./components/TodaysList";
-import CampaignCanvas from "./components/Canvas";
-import WrikeTest from "./components/WrikeTest";
-import LegacyTimesheet from "./components/LegacyTimesheets";
-import { useWrikeCache } from "./hooks/useWrikeCache";
-import Profile from "./components/Profile";
-import AdminModal from "./components/AdminModal";
-import Management from "./components/Management";
-import JobBook from "./components/JobBook";
+import { confirmAction } from "./lib/confirm";
 import Home from "./components/Home";
-import { PAGES, pageIdsFor, boardLabelFor } from "./lib/departments";
+import { useWrikeCache } from "./hooks/useWrikeCache";
+import { PAGES, pagesFor, boardLabelFor } from "./lib/departments";
 import { useDepartment } from "./hooks/useDepartment";
-import { MANAGEMENT_IDS } from "./components/Management";
+import { MANAGEMENT_IDS } from "./lib/access";
 import { setWrikeUserId } from "./lib/supabaseClient";
 import { startWrikeOAuth } from "./lib/wrikeApi";
+
+// ── Route-level code splitting ───────────────────────────────────────────────
+// Every page except Home is its own chunk, so first paint only carries the
+// shell + Home — a Motion artist never downloads Administration (2.6k lines),
+// a PM never downloads the Canvas or pdfjs. Loaders live in a map keyed by
+// page id so the idle prefetch below can warm exactly the pages this
+// member's department can reach (same registry as the Rail/palette).
+const PAGE_LOADERS = {
+  timesheet: () => import("./components/tracker/Tracker"),
+  todayslist: () => import("./components/TodaysList"),
+  canvas: () => import("./components/Canvas"),
+  wriketest: () => import("./components/WrikeTest"),
+  legacy: () => import("./components/LegacyTimesheets"),
+  profile: () => import("./components/Profile"),
+  management: () => import("./components/Management"),
+  jobbook: () => import("./components/JobBook"),
+};
+const Tracker = lazy(PAGE_LOADERS.timesheet);
+const TodaysList = lazy(PAGE_LOADERS.todayslist);
+const CampaignCanvas = lazy(PAGE_LOADERS.canvas);
+const WrikeTest = lazy(PAGE_LOADERS.wriketest);
+const LegacyTimesheet = lazy(PAGE_LOADERS.legacy);
+const Profile = lazy(PAGE_LOADERS.profile);
+const Management = lazy(PAGE_LOADERS.management);
+const JobBook = lazy(PAGE_LOADERS.jobbook);
+const AdminModal = lazy(() => import("./components/AdminModal"));
+
+// Suspense fallback for a still-downloading page chunk. The spinner fades in
+// after a beat (CSS delay) so the common case — chunk already prefetched,
+// resolves within a frame or two — shows nothing at all instead of a flash.
+function PageLoading() {
+  return (
+    <div className="min-h-[60vh] flex items-center justify-center">
+      <div
+        className="w-6 h-6 rounded-full border-2 border-[#dce4ec] border-t-[#12a0e1] animate-spin opacity-0"
+        style={{ animation: "spin 0.8s linear infinite, fadeIn 0.2s ease 0.15s forwards" }}
+      />
+      <style>{`@keyframes fadeIn { to { opacity: 1; } }`}</style>
+    </div>
+  );
+}
 
 // Page swap animation. When the swap arrives via the home wash (custom =
 // true) both sides are no-ops: the wash overlay hides the handoff, so any
@@ -125,6 +161,14 @@ export default function App() {
     document.documentElement.classList.toggle("home-page", activePage === "home");
   }, [activePage]);
 
+  // Reset scroll on page swap — AnimatePresence swaps the content but the
+  // window scroll survives it, so navigating from deep in one page would
+  // land mid-way down the next. The wash overlay (when present) hides the
+  // jump entirely; on pill-nav swaps it happens under the exit fade.
+  useEffect(() => {
+    window.scrollTo(0, 0);
+  }, [activePage]);
+
   // Manual hash edits / back-forward within the hash still land on a valid
   // page instead of a blank state.
   useEffect(() => {
@@ -196,6 +240,31 @@ export default function App() {
   // Which pages this member's department can reach (drives the command
   // palette's nav entries; Home and the Rail read the same registry).
   const department = useDepartment();
+
+  // Warm this member's page chunks once the browser is idle, so the first
+  // click on a Home row resolves from cache instead of hitting the network
+  // mid-transition. import() dedupes, so re-runs (department resolving from
+  // null → real value) are free.
+  useEffect(() => {
+    const prefetch = () =>
+      pagesFor(department).forEach((p) => PAGE_LOADERS[p.id]?.());
+    if ("requestIdleCallback" in window) {
+      const handle = window.requestIdleCallback(prefetch, { timeout: 4000 });
+      return () => window.cancelIdleCallback(handle);
+    }
+    const t = setTimeout(prefetch, 2000);
+    return () => clearTimeout(t);
+  }, [department]);
+
+  // Motion Board mounts on first visit (not at startup — its chunk shouldn't
+  // load for members who never open it), then stays mounted so board state
+  // survives switching away, same as before the code split.
+  const [boardVisited, setBoardVisited] = useState(
+    () => pageFromHash() === "todayslist"
+  );
+  useEffect(() => {
+    if (activePage === "todayslist") setBoardVisited(true);
+  }, [activePage]);
 
   // Global toast — available to all pages (top-right pill via ToastHost)
   const triggerToast = useCallback(
@@ -276,131 +345,61 @@ export default function App() {
     Timer: "bg-amber-50 text-amber-600 border-amber-100",
   };
 
-  const PALETTE_ACTIONS = [
-    {
-      id: "nav-home",
-      title: "Home",
-      desc: "Back to the landing page",
-      type: "Navigation",
-      icon: HomeIcon,
-    },
-    {
-      id: "nav-timesheet",
-      title: "Timesheeter",
-      desc: "Open the time tracker",
-      type: "Navigation",
-      icon: Activity,
-      hint: "1",
-    },
-    {
-      id: "nav-todayslist",
-      title: boardLabelFor(department),
-      desc: "Team task allocation board",
-      type: "Navigation",
-      icon: LayoutList,
-      hint: "2",
-    },
-    {
-      id: "nav-canvas",
-      title: "Digi Canvas",
-      desc: "MATRIX task visualiser",
-      type: "Navigation",
-      icon: Layout,
-      hint: "3",
-    },
-    {
-      id: "nav-wriketest",
-      title: "Wrike API",
-      desc: "Fetch and explore Wrike data",
-      type: "Navigation",
-      icon: Server,
-      hint: "4",
-    },
-    {
-      id: "nav-legacy",
-      title: PAGES.legacy.label,
-      desc: PAGES.legacy.desc,
-      type: "Navigation",
-      icon: Timer,
-      hint: "5",
-    },
-    {
-      id: "nav-management",
-      title: PAGES.management.label,
-      desc: PAGES.management.desc,
-      type: "Navigation",
-      icon: Shield,
-    },
-    {
-      id: "nav-jobbook",
-      title: PAGES.jobbook.label,
-      desc: PAGES.jobbook.desc,
-      type: "Navigation",
-      icon: Briefcase,
-    },
-    {
-      id: "action-copy-ts",
-      title: "Copy JSON",
-      desc: "Copy timesheet to clipboard",
-      type: "Data",
-      icon: Copy,
-    },
-    {
-      id: "action-csv",
-      title: "Download CSV",
-      desc: "Export all tasks as a CSV file",
-      type: "Data",
-      icon: FileDown,
-    },
-    {
-      id: "action-sync",
-      title: "Sync Wrike Statuses",
-      desc: "Go to Motion Board → Sync",
-      type: "Data",
-      icon: Zap,
-    },
-    {
-      id: "action-fetch",
-      title: "Fetch Wrike Data",
-      desc: "Go to Wrike API and fetch",
-      type: "Data",
-      icon: RefreshCw,
-    },
-    {
-      id: "action-dark",
-      title: "Toggle Dark Mode",
-      desc: "Switch between light and dark",
-      type: "System",
-      icon: Moon,
-    },
-    {
-      id: "action-clear",
-      title: "Clear Week's Data",
-      desc: "Delete all logged tasks — careful!",
-      type: "System",
-      icon: Trash2,
-    },
-  ];
+  // Palette entries derive from the same department registry Home and the
+  // Rail use, so the palette only ever offers pages this member can actually
+  // reach — and follows renames (e.g. Print Board) automatically. Actions are
+  // gated the same way: Tracker exports only if they have the Tracker, board
+  // sync only if they have the board, Wrike debug only for the admin.
+  const PALETTE_ACTIONS = useMemo(() => {
+    const deptPages = pagesFor(department);
+    const canManage =
+      MANAGEMENT_IDS.length === 0 || MANAGEMENT_IDS.includes(wrikeUserId);
+    const hasPage = (id) => deptPages.some((p) => p.id === id);
+
+    const nav = [
+      { id: "nav-home", title: "Home", desc: "Back to the landing page", type: "Navigation", icon: HomeIcon },
+      ...deptPages.map((p, i) => ({
+        id: `nav-${p.id}`, title: p.label, desc: p.desc,
+        type: "Navigation", icon: p.icon, hint: String(i + 1),
+      })),
+    ];
+    if (canManage && !hasPage("management")) {
+      nav.push({ id: "nav-management", title: PAGES.management.label, desc: PAGES.management.desc, type: "Navigation", icon: Shield });
+    }
+    if (isAdmin) {
+      nav.push({ id: "nav-wriketest", title: "Wrike API", desc: "Debug: fetch and explore raw Wrike data", type: "Navigation", icon: Server });
+    }
+
+    const actions = [];
+    if (!hasToken) {
+      actions.push({ id: "action-connect", title: "Connect Wrike", desc: "Link your Wrike account to pull tasks & timelogs", type: "System", icon: Key });
+    }
+    if (hasPage("todayslist")) {
+      actions.push({ id: "action-sync", title: "Sync Wrike Statuses", desc: `Go to ${boardLabelFor(department)} → Sync`, type: "Data", icon: Zap });
+    }
+    if (hasPage("timesheet")) {
+      actions.push(
+        { id: "action-copy-ts", title: "Copy JSON", desc: "Copy your Tracker week to the clipboard", type: "Data", icon: Copy },
+        { id: "action-csv", title: "Download CSV", desc: "Export your Tracker week as a CSV file", type: "Data", icon: FileDown },
+      );
+    }
+    actions.push({ id: "action-dark", title: "Toggle Dark Mode", desc: "Switch between light and dark", type: "System", icon: Moon });
+    if (hasPage("timesheet")) {
+      actions.push({ id: "action-clear", title: "Clear Week's Data", desc: "Delete this week's Tracker tasks", type: "System", icon: Trash2 });
+    }
+    return [...nav, ...actions];
+  }, [department, wrikeUserId, isAdmin, hasToken]);
 
   const paletteResults = useMemo(() => {
-    // Nav entries respect the department's page set (same registry Home and
-    // the Rail use); Administration additionally honours the admin allowlist.
-    const allowed = new Set([...pageIdsFor(department), "home", "wriketest"]);
-    if (MANAGEMENT_IDS.length === 0 || MANAGEMENT_IDS.includes(wrikeUserId)) {
-      allowed.add("management");
-    }
-    const available = PALETTE_ACTIONS.filter(
-      (a) => !a.id.startsWith("nav-") || allowed.has(a.id.slice(4))
-    );
     const query = paletteSearch.toLowerCase();
-    if (!query) return available;
-    return available.filter(
+    if (!query) return PALETTE_ACTIONS;
+    return PALETTE_ACTIONS.filter(
       (a) =>
         a.title.toLowerCase().includes(query) ||
         a.desc.toLowerCase().includes(query) ||
         a.type.toLowerCase().includes(query)
     );
-  }, [paletteSearch, department, wrikeUserId]);
+  }, [paletteSearch, PALETTE_ACTIONS]);
 
   const handlePaletteKeyDown = (e) => {
     if (e.key === "ArrowDown") {
@@ -411,6 +410,14 @@ export default function App() {
       setSelectedIndex((i) => Math.max(i - 1, 0));
     } else if (e.key === "Enter" && paletteResults[selectedIndex]) {
       handleExecuteAction(paletteResults[selectedIndex]);
+    } else if (!paletteSearch && /^[1-9]$/.test(e.key)) {
+      // The numbered kbd hints are real shortcuts: with an empty search box,
+      // pressing a digit jumps straight to that nav entry.
+      const hinted = paletteResults.find((a) => a.hint === e.key);
+      if (hinted) {
+        e.preventDefault();
+        handleExecuteAction(hinted);
+      }
     }
   };
 
@@ -490,20 +497,22 @@ export default function App() {
     } else if (action.id === "action-sync") {
       setActivePage("todayslist");
       closePalette();
-    } else if (action.id === "action-fetch") {
-      setActivePage("wriketest");
+    } else if (action.id === "action-connect") {
       closePalette();
+      startWrikeOAuth();
     } else if (action.id === "action-clear") {
-      if (
-        window.confirm(
-          "Delete all logged tasks for the week? This cannot be undone."
-        )
-      ) {
-        localStorage.removeItem("xyi_timesheet_tasks_v5");
-        window.location.reload();
-      } else {
-        closePalette();
-      }
+      closePalette();
+      confirmAction({
+        title: "Clear the week's data?",
+        message: "Every logged task for the week will be deleted. This can't be undone.",
+        confirmLabel: "Delete all",
+        danger: true,
+      }).then((ok) => {
+        if (ok) {
+          localStorage.removeItem("xyi_timesheet_tasks_v5");
+          window.location.reload();
+        }
+      });
     }
   };
 
@@ -627,7 +636,9 @@ export default function App() {
 
       {/* ── Admin modal ───────────────────────────────────────────────────── */}
       {showAdmin && isAdmin && (
-        <AdminModal onClose={() => setShowAdmin(false)} />
+        <Suspense fallback={null}>
+          <AdminModal onClose={() => setShowAdmin(false)} />
+        </Suspense>
       )}
 
       {/* Global no-token banner — home renders its own compact chip instead,
@@ -772,20 +783,26 @@ export default function App() {
 
       <ToastHost />
 
+      <ConfirmHost />
+
       {/* Motion Board stays mounted (display:none when inactive) so its board
           state survives switching away — kept outside the transition below
           so it's never unmounted/remounted by AnimatePresence. It sources
           its own data independently (useMotionBoardTasks) rather than from
           globalWrikeData below; wrikeData is only passed through for the
           task detail modal's lookups. */}
-      <div className={`pl-20 ${activePage === "todayslist" ? "block" : "hidden"}`}>
-        <TodaysList
-          wrikeData={globalWrikeData}
-          triggerToast={triggerToast}
-          isActive={activePage === "todayslist"}
-          department={department}
-        />
-      </div>
+      {boardVisited && (
+        <div className={`pl-20 ${activePage === "todayslist" ? "block" : "hidden"}`}>
+          <Suspense fallback={activePage === "todayslist" ? <PageLoading /> : null}>
+            <TodaysList
+              wrikeData={globalWrikeData}
+              triggerToast={triggerToast}
+              isActive={activePage === "todayslist"}
+              department={department}
+            />
+          </Suspense>
+        </div>
+      )}
 
       {/* Wash overlay: takes over from Home's expanded row fill the frame
           the page swaps (identical gradient, identical coverage), then lifts
@@ -814,6 +831,10 @@ export default function App() {
             exit="exit"
             className={activePage === "home" ? "" : "pl-20"}
           >
+            {/* Suspense sits INSIDE the motion.div: a still-loading chunk
+                suspends to the quiet PageLoading fallback within the entrance
+                animation, instead of unmounting the AnimatePresence tree. */}
+            <Suspense fallback={<PageLoading />}>
             {activePage === "home" && (
               <Home
                 onNavigate={(id, gradient) => {
@@ -874,6 +895,7 @@ export default function App() {
               <Management wrikeUserId={wrikeUserId} department={department} />
             )}
             {activePage === "jobbook" && <JobBook />}
+            </Suspense>
           </motion.div>
         )}
       </AnimatePresence>

@@ -10,6 +10,8 @@ import {
   FileBarChart, ClipboardList, Globe, Layers, Download,
 } from "lucide-react";
 import { supabase } from "../lib/supabaseClient";
+import { confirmAction } from "../lib/confirm";
+import { notify } from "../lib/toast";
 import { SEED_CLIENTS, SEED_PROJECT_DESCRIPTIONS } from "../data/seedData";
 import { DEFAULT_JOBS, CATEGORIES } from "../constants";
 import { fullName as cleanFullName, cleanNamePart } from "../lib/formatName";
@@ -22,13 +24,11 @@ const SEED_FILMS = [...new Set(
   DEFAULT_JOBS.map(j => j.split(" : ")[0]?.trim()).filter(f => f && !f.startsWith("XYi "))
 )].sort();
 
-// ── Access control ────────────────────────────────────────────────────────────
-// Add Wrike user IDs of management users here.
-// Your Wrike ID is shown on the Profile Hub page (under your name, first 8 chars).
-// Ask Claude to help you find the full ID if needed.
-export const MANAGEMENT_IDS = [
-  "KUAWDLVN", "KUAQT4JC"
-];
+// Access control lives in lib/access.js (App and the Rail read it at startup;
+// importing it from this lazy-loaded chunk would drag Administration into the
+// main bundle). Re-exported here for compatibility.
+export { MANAGEMENT_IDS } from "../lib/access";
+import { MANAGEMENT_IDS } from "../lib/access";
 
 const OFFICES = ["LDN", "LA"];
 const PRINT_DIGITAL = ["Digital", "Print", "Both"];
@@ -265,13 +265,24 @@ function SimpleListSection({ table, labelField = "name", label, placeholder, isL
   };
 
   const remove = async (id) => {
-    if (!confirm("Delete this item?")) return;
+    const ok = await confirmAction({
+      title: "Delete this item?",
+      message: `It will be removed from the ${label.toLowerCase()} list for everyone.`,
+      confirmLabel: "Delete",
+      danger: true,
+    });
+    if (!ok) return;
     await supabase.from(table).delete().eq("id", id);
     await load();
   };
 
   const seedData = async (seedArr) => {
-    if (!confirm(`This will insert ${seedArr.length} items. Continue?`)) return;
+    const ok = await confirmAction({
+      title: `Seed ${seedArr.length} items?`,
+      message: `The starter ${label.toLowerCase()} list will be inserted. Existing entries are left untouched.`,
+      confirmLabel: "Seed list",
+    });
+    if (!ok) return;
     setSaving(true);
     const chunks = [];
     for (let i = 0; i < seedArr.length; i += 100) chunks.push(seedArr.slice(i, i + 100));
@@ -947,27 +958,6 @@ function PillField({ label, value, onChange, options, colorMap }) {
   );
 }
 
-// ── Filter chip configs (module-level — stable references) ───────────────────
-const CLIENT_FILTERS = [
-  { label: "Universal", gradient: "from-blue-500 to-indigo-700", match: s => s.toLowerCase().includes("universal") },
-  { label: "Paramount", gradient: "from-sky-400 to-blue-700",    match: s => s.toLowerCase().includes("paramount") },
-  { label: "Netflix",   gradient: "from-red-500 to-red-800",     match: s => s.toLowerCase().includes("netflix")   },
-  { label: "Apple",     gradient: "from-slate-400 to-slate-700", match: s => s.toLowerCase().includes("apple")     },
-  { label: "Amazon",    gradient: "from-amber-400 to-orange-600",match: s => s.toLowerCase().includes("amazon")    },
-];
-const DESC_FILTERS = [
-  { label: "AUS", gradient: "from-green-500 to-emerald-600",  match: s => /^AUS[\s\-]/i.test(s) },
-  { label: "UK",  gradient: "from-blue-500 to-blue-700",      match: s => /^UK[\s\-]/i.test(s)  },
-  { label: "DOM", gradient: "from-amber-400 to-orange-500",   match: s => /^DOM[\s\-]/i.test(s) },
-  { label: "INT", gradient: "from-violet-500 to-violet-700",  match: s => /^INT[\s\-]/i.test(s) },
-  { label: "IRE", gradient: "from-emerald-400 to-teal-600",   match: s => /^IRE[\s\-]/i.test(s) },
-  { label: "XYi", gradient: "from-[#12a0e1] to-[#0872a0]",   match: s => /^XYi[\s\-]/i.test(s) },
-];
-const CAT_FILTERS = [
-  { label: "Digital", gradient: "from-cyan-500 to-sky-600",      match: s => s.startsWith("Digital") },
-  { label: "Print",   gradient: "from-orange-400 to-orange-600", match: s => s.startsWith("Print")   },
-  { label: "XYi",    gradient: "from-violet-500 to-violet-700",  match: s => s.startsWith("XYi")    },
-];
 const PD_COLOR_MAP = { Digital: "bg-cyan-600 border-cyan-600", Print: "bg-orange-500 border-orange-500", Both: "bg-violet-600 border-violet-600" };
 const JOB_STATUSES = ["Inactive", "Active", "Closed"];
 const STATUS_COLOR_MAP = { Inactive: "bg-slate-400 border-slate-400", Active: "bg-[#12a0e1] border-[#12a0e1]", Closed: "bg-[#1cc1a5] border-[#1cc1a5]" };
@@ -1367,10 +1357,11 @@ export function JobsSetupSection({ setActiveTab }) {
     const { error } = await supabase.from("jobs").insert(payload);
     setCustomSaving(false);
     if (!error) setCustomCreated(form.job_number);
-    else alert(
+    else notify(
       error.code === "23505"
         ? `Job number "${form.job_number}" already exists in Job Book.`
-        : "Failed to create job: " + error.message
+        : "Failed to create job: " + error.message,
+      "error"
     );
   };
 
@@ -1822,7 +1813,13 @@ export function JobBookSection({ setActiveTab }) {
   };
 
   const deleteJob = async (id) => {
-    if (!confirm("Delete this job?")) return;
+    const ok = await confirmAction({
+      title: "Delete this job?",
+      message: "The job and its Job Book record will be removed. This can't be undone.",
+      confirmLabel: "Delete job",
+      danger: true,
+    });
+    if (!ok) return;
     await supabase.from("jobs").delete().eq("id", id);
     await loadJobs();
   };

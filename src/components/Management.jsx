@@ -7,7 +7,7 @@ import {
   RefreshCw, Shield, AlertTriangle, ChevronLeft, ChevronRight,
   ArrowUpAZ, ArrowDownAZ, CheckCircle2, UserCog,
   FolderPlus, Folder, FolderOpen, Sparkles, Loader2,
-  FileBarChart, ClipboardList, Globe, Layers, Download, Network,
+  FileBarChart, ClipboardList, Globe, Layers, Download, Network, TrendingUp,
 } from "lucide-react";
 import { supabase } from "../lib/supabaseClient";
 import { confirmAction } from "../lib/confirm";
@@ -20,6 +20,7 @@ import PageHeader from "./shared/PageHeader";
 import HubRow from "./shared/HubRow";
 import DateField from "./shared/DateField";
 import OrgChart from "./OrgChart";
+import StudioAnalytics from "./StudioAnalytics";
 
 // Film titles extracted from DEFAULT_JOBS (everything before " : XY")
 const SEED_FILMS = [...new Set(
@@ -52,6 +53,7 @@ const NAV_GROUPS = [
     gradient: "from-[#122027] to-[#12a0e1]",
     items: [
       { id: "project-time", label: "Project/Time", icon: FileBarChart, desc: "Every logged hour, grouped by job" },
+      { id: "studio-analytics", label: "Studio Analytics", icon: TrendingUp, desc: "Throughput, workload, overdue & hours — charted" },
       { id: "timesheet-completion", label: "Timesheet Completion", icon: ClipboardList, desc: "Who hasn't submitted for the week", soon: true },
     ],
   },
@@ -2652,7 +2654,7 @@ const HUB_SLIDE_VARIANTS = {
   exit: (dir) => ({ x: dir > 0 ? -28 : 28, opacity: 0, transition: { duration: 0.16, ease: [0.25, 0.1, 0.25, 1] } }),
 };
 
-export default function Management({ wrikeUserId, department }) {
+export default function Management({ wrikeUserId, department, wrikeData = [] }) {
   // expandedGroup is purely a display toggle — which group's items are
   // unfolded inline on the hub, an accordion, not a navigation state.
   // activeTab is the real navigation: null means "still on the hub"
@@ -2762,6 +2764,7 @@ export default function Management({ wrikeUserId, department }) {
                       component Job Book uses (JobsFeedSection), not a separate
                       report. */}
                   {activeTab === "project-time" && <JobsFeedSection />}
+                  {activeTab === "studio-analytics" && <StudioAnalytics wrikeData={wrikeData} />}
                   {activeTab === "timesheet-completion" && (
                     <ComingSoon
                       icon={ClipboardList}

@@ -2,6 +2,7 @@ import { DAYS_OF_WEEK } from "../constants";
 import { guessFieldsFromTask } from "../utils/wrikeHelpers";
 import { fetchExistingTimelogIds } from "../lib/supabaseClient";
 import { roundToHalfHourSeconds } from "../utils/timeHelpers";
+import { logTimeToWrike } from "../lib/wrikeApi";
 
 /**
  * All task manipulation handlers: log, delete, edit group/task/time/note,
@@ -470,6 +471,9 @@ export function useTaskActions(state) {
       timeLogged: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
     };
     addTask(newTask);
+    logTimeToWrike(recentTaskDraft.taskId, finalSeconds).then((ok) => {
+      triggerToast(ok ? "Synced to Wrike task." : "Logged locally, but Wrike sync failed.", ok ? "success" : "info");
+    });
     triggerToast(`Insta-Logged successfully to ${selectedDay}!`, "success");
     setShowReward(true);
     setTimeout(() => setShowReward(false), 1200);

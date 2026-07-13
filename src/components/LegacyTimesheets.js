@@ -2,6 +2,8 @@ import React, {
   useState,
   useEffect,
   useMemo,
+  useRef,
+  useCallback,
 } from "react";
 import { useLegacyRows, getCurrentWeekStart, hmToHours } from "../hooks/useLegacyRows";
 import { roundToHalfHourSeconds } from "../utils/timeHelpers";
@@ -10,6 +12,7 @@ import {
   setWrikeUserId as stampWrikeUserId,
   fetchExistingTimelogIds,
 } from "../lib/supabaseClient";
+import { subscribeToWrikeTaskEvents } from "../lib/wrikeWebhookSubscription";
 import {
   RefreshCw,
   XCircle,
@@ -236,6 +239,82 @@ export default function LegacyTimesheet({ wrikeData, isAdmin = false }) {
     }
   }, [wrikeUserId]);
 
+  // Extracted out of handleSyncMyJobs's map() so the webhook patch effect
+  // below can produce an identically-shaped task from a single incoming id,
+  // not just from a full batch sync. parseWrikeDescription is defined further
+  // down this component — safe to reference here since this callback only
+  // ever runs later (on sync or on a webhook event), by which point the
+  // whole component body (and parseWrikeDescription's const binding) has
+  // already executed for this render.
+  const enrichLegacyTask = useCallback(
+    (task, statusDict) => {
+      const parsed = parseWrikeDescription(task.description);
+      let projectName = task.title.split(/[_|-]/)[0].trim();
+      if (parsed.extractedPathData) {
+        const parts = parsed.extractedPathData.split("/");
+        const digIdx = parts.findIndex((p) => p === "DIGITAL");
+        if (digIdx > 0 && parts[digIdx - 1]) {
+          projectName = decodeURIComponent(parts[digIdx - 1])
+            .replace(/[_|-]/g, " ")
+            .trim();
+        }
+      }
+      return {
+        ...task,
+        extractedPathData: parsed.extractedPathData,
+        notesText: parsed.notesText,
+        projectName,
+        customStatusName: task.customStatusId
+          ? statusDict[task.customStatusId] || task.status
+          : task.status,
+        assignees: wrikeFullName.split(" ")[0],
+        dueDate: task.dates && task.dates.due ? task.dates.due : null,
+        createdDate: task.createdDate,
+      };
+    },
+    [wrikeFullName]
+  );
+
+  // Last-built status-id → name map, reused by the webhook patch below so an
+  // incoming single-task event doesn't need to refetch /api/wrike/workflows.
+  const statusDictRef = useRef({});
+
+  // Near-instant updates: a webhook event only carries a changed task's id,
+  // so batches of ids (debounced, see wrikeWebhookSubscription.js) get
+  // refetched and merged into localWrikeTasks here — cheap, one small
+  // request per edit rather than the bulk two-query sync "Sync My Jobs" does.
+  useEffect(() => {
+    if (!wrikeUserId) return;
+    const fieldsFilter = encodeURIComponent("[customFields,parentIds,description]");
+
+    const handleWebhookTaskIds = async (ids) => {
+      if (!ids.length) return;
+      let changed = [];
+      try {
+        const res = await fetch(`/api/wrike/tasks/${ids.join(",")}?fields=${fieldsFilter}`);
+        if (res.ok) changed = (await res.json()).data || [];
+      } catch (e) {
+        console.warn("[LegacyTimesheets] webhook refetch failed", e);
+        return;
+      }
+      if (!changed.length) return;
+
+      setLocalWrikeTasks((prev) => {
+        const map = new Map(prev.map((t) => [t.id, t]));
+        changed.forEach((t) => {
+          if (t.responsibleIds?.includes(wrikeUserId)) {
+            map.set(t.id, enrichLegacyTask(t, statusDictRef.current));
+          } else {
+            map.delete(t.id); // reassigned away from me
+          }
+        });
+        return [...map.values()];
+      });
+    };
+
+    return subscribeToWrikeTaskEvents(handleWebhookTaskIds);
+  }, [wrikeUserId, enrichLegacyTask]);
+
   const handleSyncMyJobs = async (silent = false) => {
     if (!wrikeUserId) {
       if (!silent)
@@ -259,6 +338,7 @@ export default function LegacyTimesheet({ wrikeData, isAdmin = false }) {
           }
         });
       }
+      statusDictRef.current = statusDict;
 
       const fieldsFilter = encodeURIComponent(
         "[customFields,parentIds,description]"
@@ -311,31 +391,7 @@ export default function LegacyTimesheet({ wrikeData, isAdmin = false }) {
         hasMore = !!nextPageToken;
       }
 
-      const enrichedTasks = rawTasks.map((task) => {
-        const parsed = parseWrikeDescription(task.description);
-        let projectName = task.title.split(/[_|-]/)[0].trim();
-        if (parsed.extractedPathData) {
-          const parts = parsed.extractedPathData.split("/");
-          const digIdx = parts.findIndex((p) => p === "DIGITAL");
-          if (digIdx > 0 && parts[digIdx - 1]) {
-            projectName = decodeURIComponent(parts[digIdx - 1])
-              .replace(/[_|-]/g, " ")
-              .trim();
-          }
-        }
-        return {
-          ...task,
-          extractedPathData: parsed.extractedPathData,
-          notesText: parsed.notesText,
-          projectName,
-          customStatusName: task.customStatusId
-            ? statusDict[task.customStatusId] || task.status
-            : task.status,
-          assignees: wrikeFullName.split(" ")[0],
-          dueDate: task.dates && task.dates.due ? task.dates.due : null,
-          createdDate: task.createdDate,
-        };
-      });
+      const enrichedTasks = rawTasks.map((task) => enrichLegacyTask(task, statusDict));
 
       setLocalWrikeTasks(enrichedTasks);
       return enrichedTasks;
@@ -960,8 +1016,13 @@ export default function LegacyTimesheet({ wrikeData, isAdmin = false }) {
       currentTasks = await fetchMissingTasks(currentTasks, logs);
 
       // Fetch existing timelog IDs across ALL sources so we don't duplicate
-      // entries that were already pulled in Tracker (or vice versa)
-      const existingTimelogIds = await fetchExistingTimelogIds(wrikeUserId, "legacy");
+      // entries that were already pulled in Tracker (or vice versa). Passing
+      // no source is deliberate: Tracker's own pull already scans all sources,
+      // so scoping Legacy to source="legacy" here was the asymmetry that let a
+      // timelog already pulled by Tracker get re-added as a duplicate Legacy
+      // row. The helper splits comma-joined ids, so Legacy's aggregated
+      // "id1,id2,id3" rows are matched at the individual-id level too.
+      const existingTimelogIds = await fetchExistingTimelogIds(wrikeUserId);
 
       const newRows = [];
       const dayNames = [
@@ -1062,6 +1123,12 @@ export default function LegacyTimesheet({ wrikeData, isAdmin = false }) {
           const known1 = jobLookup?.getJob?.(guessed.jobNumber);
           if (known1?.film_title) filmTitle = known1.film_title;
           if (known1?.client) client = known1.client;
+          // Upgrade a bare "XY025716" to Job Book's canonical
+          // "Film : XY025716, Description" string so pulled rows read
+          // consistently with those that carried the full string from Wrike.
+          if (known1?.job_number?.includes(" : ") && !(guessed.jobNumber || "").includes(" : ")) {
+            guessed.jobNumber = known1.job_number;
+          }
           jobLookup?.ensureJob?.(guessed.jobNumber, { filmTitle, client });
 
           newRows.push({

@@ -1,6 +1,13 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { supabase } from "../lib/supabaseClient";
 import {
+  loadLocalTasks,
+  saveLocalTasks,
+  removeLocalTasks,
+  getLocalCursor,
+  advanceLocalCursor,
+} from "../lib/localTaskCache";
+import {
   enrichTasks,
   filterToMotionTeam,
   hydrateMissingFolders,
@@ -18,6 +25,32 @@ const FIELDS_FILTER = encodeURIComponent(
 const SYNC_INTERVAL_MS  = 15 * 60 * 1000;   // re-sync if data is >15 min old
 const META_MAX_AGE_MS   = 24 * 60 * 60 * 1000; // refresh folder/contact dicts daily
 const LOOKBACK_MONTHS   = 2;                 // how far back the full refresh window goes
+// Delta pulls re-read a day behind the cursor so rows a teammate upserted
+// late (their Wrike updatedDate predates our cursor) still get picked up.
+const CURSOR_OVERLAP_MS = 24 * 60 * 60 * 1000;
+// Folder campaigns are tiny and only derivable when a folder dictionary is
+// in memory (now rare) — persist them locally between sessions.
+const FOLDER_CAMPAIGNS_KEY = "xyi_folder_campaigns_v1";
+// wrike_sync_meta is one shared row for the whole team: the dictionaries are
+// workspace-wide, and sharing last_synced_at means if anyone synced in the
+// last 15 minutes, nobody else hits Wrike at all.
+const SHARED_META_ID = "shared";
+// Bump to force a one-time full re-pull of the local mirror. v2: pagination
+// gained .order("id") — unordered .range() pages overlapped/skipped rows, so
+// v1 mirrors are silently missing thousands of tasks.
+const CACHE_FORMAT = "2";
+const CACHE_FORMAT_KEY = "xyi_cache_format";
+
+// Guards the mount hydration against React StrictMode's dev double-invoke —
+// without it every dev reload downloaded the Supabase cache twice.
+let bootStarted = false;
+
+// A task's permalink is always https://www.wrike.com/open.htm?id=<id>, so
+// storing it is ~1.4 MB of pure redundancy across 25k rows that every cold
+// start then re-downloads. Strip it from the *stored* copy only — the
+// in-memory object and the local IndexedDB mirror keep it, and the one
+// consumer that read it without an id fallback (Canvas) now reconstructs it.
+const stripForStorage = ({ permalink, ...rest }) => rest;
 
 // ---------------------------------------------------------------------------
 // Fetch folders, contacts, workflows from Wrike
@@ -86,34 +119,65 @@ async function fetchWrikeTasks(sinceIso) {
   return rawTasks;
 }
 
+// Progressively smaller field lists to retry with. Wrike rejects the WHOLE
+// request with 400 "Fields parameter value 'X' not allowed" if ANY field in
+// fields= isn't visible to the connected account for that specific task —
+// seen for customFields on a task outside this account's custom-field
+// visibility scope (custom fields can be scoped per space/team in Wrike).
+// This is real per-task access control, not something a fixed field list can
+// predict — so a single such task must degrade gracefully (fewer fields)
+// rather than fail the whole fetch and vanish from whatever list needed it.
+const FIELDS_FALLBACKS = [
+  FIELDS_FILTER,
+  encodeURIComponent("[parentIds,responsibleIds,subTaskIds,description]"),
+  null, // bare Wrike defaults, no optional fields — always succeeds
+];
+
+async function fetchOneTask(id) {
+  for (const fields of FIELDS_FALLBACKS) {
+    const url = fields ? `/api/wrike/tasks/${id}?fields=${fields}` : `/api/wrike/tasks/${id}`;
+    try {
+      const r = await fetch(url);
+      if (r.ok) return (await r.json()).data?.[0] || null;
+    } catch (e) {
+      console.warn(`[WrikeCache] refetch ${id} error`, e);
+    }
+  }
+  return null;
+}
+
 // ---------------------------------------------------------------------------
 // Re-fetch specific tasks by ID *with* the fields param.
 // Wrike pagination drops optional fields (description, customFields) on pages
 // 2+, so tasks from later pages come back without their description — which is
 // where the MATRIX table + notes live. Fetching by ID guarantees we get them.
+//
+// Explicit fields= (not just relying on get-by-id defaults) — callers of this
+// function read parentIds and customFields off the result (the MATRIX repair
+// and the sync-time description backfill below), and every webhook-driven
+// caller (useWrikeCache's and useMotionBoardTasks' realtime patch) needs the
+// same enrichment inputs a full sync gets, so a live-patched task's project/
+// studio name and Motion-team relevance don't silently degrade versus one
+// that came from a full resync.
 // ---------------------------------------------------------------------------
 export async function fetchTasksByIds(ids) {
   const out = [];
-  // Batch up to 100 IDs per request — Wrike supports comma-separated IDs
-  // and returns description by default (no fields param needed).
+  // Batch up to 100 IDs per request — Wrike supports comma-separated IDs.
   const BATCH = 100;
   for (let i = 0; i < ids.length; i += BATCH) {
     const batch = ids.slice(i, i + BATCH);
     try {
-      const r = await fetch(`/api/wrike/tasks/${batch.join(",")}`);
+      const r = await fetch(`/api/wrike/tasks/${batch.join(",")}?fields=${FIELDS_FILTER}`);
       if (r.ok) {
         const tasks = (await r.json()).data || [];
         out.push(...tasks);
       } else {
-        // Batch failed — fall back to individual fetches for this batch
+        // Batch failed — one task in it may have a field-visibility issue
+        // (see FIELDS_FALLBACKS above). Fall back per-id, tiering fields
+        // down per task instead of losing the whole batch to one bad task.
         for (const id of batch) {
-          try {
-            const r2 = await fetch(`/api/wrike/tasks/${id}`);
-            if (r2.ok) {
-              const task = (await r2.json()).data?.[0];
-              if (task) out.push(task);
-            }
-          } catch (e) { console.warn(`[WrikeCache] refetch ${id} error`, e); }
+          const task = await fetchOneTask(id);
+          if (task) out.push(task);
         }
       }
     } catch (e) {
@@ -182,54 +246,92 @@ export function useWrikeCache() {
 
   const wrikeUserId = localStorage.getItem("wrike_user_id");
 
-  // --- Load cached tasks from Supabase immediately on mount ---
-  // Load all rows regardless of wrike_user_id — single-team tool, cache is shared
+  // --- Load cached tasks on mount: IndexedDB mirror first, Supabase deltas only ---
+  // Load all rows regardless of wrike_user_id — single-team tool, cache is shared.
+  // The full cache is tens of MB; downloading it from Supabase on every page
+  // load (twice, under StrictMode) was burning GBs of egress per day. Now the
+  // browser hydrates instantly from its local mirror and only pulls rows whose
+  // updated_date moved past the local cursor. A full download happens exactly
+  // once per browser (cold start / cleared site data).
   useEffect(() => {
+    if (bootStarted) return;
+    bootStarted = true;
     (async () => {
-      // Supabase default limit is 1000 — paginate to get all rows
-      let allTasks = [];
+      // 1) Hydrate from the local mirror — unless its format is stale, in
+      // which case ignore it and re-pull everything once.
+      const formatOk = localStorage.getItem(CACHE_FORMAT_KEY) === CACHE_FORMAT;
+      const local = formatOk ? await loadLocalTasks() : [];
+      const map = new Map(local.map((t) => [t.id, t]));
+      if (local.length) setTasks(local);
+      try {
+        const fc = JSON.parse(localStorage.getItem(FOLDER_CAMPAIGNS_KEY) || "[]");
+        if (fc.length) setFolderCampaigns(fc);
+      } catch { /* ignore */ }
+
+      // 2) Delta-pull changed rows from Supabase (full pull only on cold start)
+      const cursor = local.length ? await getLocalCursor() : null;
+      const sinceOverlap = cursor
+        ? new Date(new Date(cursor).getTime() - CURSOR_OVERLAP_MS).toISOString()
+        : null;
+      let pulled = [];
       const PAGE = 1000;
       let page = 0;
       while (true) {
-        const { data, error } = await supabase
+        // .order("id") is load-bearing: .range() pagination without an ORDER
+        // BY is non-deterministic in Postgres — pages overlapped and skipped,
+        // silently dropping thousands of tasks from what the app saw.
+        let q = supabase
           .from("wrike_tasks_cache")
           .select("task_data")
+          .order("id")
           .range(page * PAGE, (page + 1) * PAGE - 1);
+        if (sinceOverlap) q = q.gt("updated_date", sinceOverlap);
+        const { data, error } = await q;
         if (error || !data?.length) break;
-        allTasks = [...allTasks, ...data.map((r) => r.task_data)];
+        pulled = [...pulled, ...data.map((r) => r.task_data)];
         if (data.length < PAGE) break;
         page++;
       }
-      let loaded = [];
-      if (allTasks.length) {
-        // Deduplicate by id — keep the row with the most data (non-empty tableHtml wins)
-        const map = new Map();
-        for (const t of allTasks) {
+      console.log(
+        `[WrikeCache] hydrate: ${local.length} local, ${pulled.length} pulled ${cursor ? "(delta)" : "(cold start)"}`
+      );
+
+      if (pulled.length) {
+        for (const t of pulled) {
           const existing = map.get(t.id);
-          if (!existing || (!existing.tableHtml && t.tableHtml)) {
+          // Incoming row wins, but never lose a parsed MATRIX table to a
+          // sparser copy of the same task.
+          if (existing?.tableHtml && !t.tableHtml) {
+            map.set(t.id, { ...t, tableHtml: existing.tableHtml, notesText: t.notesText || existing.notesText });
+          } else {
             map.set(t.id, t);
           }
         }
-        loaded = [...map.values()];
-        setTasks(loaded);
+        setTasks([...map.values()]);
+        // Cold start mirrors everything; delta runs only write what changed
+        await saveLocalTasks(cursor ? pulled.map((t) => map.get(t.id)) : [...map.values()]);
       }
+      const loaded = [...map.values()];
+      await advanceLocalCursor(loaded);
+      localStorage.setItem(CACHE_FORMAT_KEY, CACHE_FORMAT);
 
-      // Load latest meta (sync time + dicts for re-enrichment)
+      // Load latest meta — light fields only. The folder/contact/status
+      // dictionaries are multi-MB blobs; they're fetched further down only
+      // if something actually needs repairing.
       const { data: meta } = await supabase
         .from("wrike_sync_meta")
-        .select("last_synced_at,folder_dictionary,contact_dictionary,status_dictionary,film_code_mappings")
-        .order("last_synced_at", { ascending: false })
-        .limit(1)
-        .single();
+        .select("last_synced_at,film_code_mappings")
+        .eq("wrike_user_id", SHARED_META_ID)
+        .maybeSingle();
       if (meta?.last_synced_at) setLastSynced(new Date(meta.last_synced_at));
       if (meta?.film_code_mappings && Object.keys(meta.film_code_mappings).length) {
         setFilmCodeMappings(meta.film_code_mappings);
       }
+      // Only the (small) film mappings are available here — the mount select
+      // deliberately skips the multi-MB dictionaries. The webhook handler
+      // lazily fetches them on its first event if they're still empty.
       enrichCtxRef.current = {
-        folderDictionary: meta?.folder_dictionary || {},
-        contactDictionary: meta?.contact_dictionary || {},
-        statusDictionary: meta?.status_dictionary || {},
-        childToParent: buildChildToParent(meta?.folder_dictionary || {}),
+        ...enrichCtxRef.current,
         filmCodeMappings: meta?.film_code_mappings || {},
       };
 
@@ -242,6 +344,20 @@ export function useWrikeCache() {
         const broken = loaded.filter(
           (t) => t.title?.toUpperCase().includes("MATRIX") && (!t.tableHtml || !t.parentIds?.length)
         );
+        // Nothing to heal → skip the whole block, most importantly the
+        // multi-MB folder_dictionary download it needs. This is the steady
+        // state: repairs and backfills persist, so after one clean pass this
+        // costs zero egress.
+        const needsStudioProbe = loaded.some((t) => !t.studioName);
+        if (broken.length === 0 && !needsStudioProbe) return;
+
+        // Only now pay for the dictionary blob
+        const { data: dictRow } = await supabase
+          .from("wrike_sync_meta")
+          .select("folder_dictionary")
+          .eq("wrike_user_id", SHARED_META_ID)
+          .maybeSingle();
+
         if (broken.length > 0) {
           console.log(`[WrikeCache] repairing ${broken.length} MATRIX tasks (missing table/parentIds)`);
           const refetched = await fetchTasksByIds(broken.map((t) => t.id));
@@ -263,6 +379,7 @@ export function useWrikeCache() {
             for (const t of repaired) {
               await supabase.from("wrike_tasks_cache").update({ task_data: t }).eq("id", t.id);
             }
+            await saveLocalTasks(repaired);
             setTasks((prev) => {
               const m = new Map(prev.map((p) => [p.id, p]));
               repaired.forEach((t) => m.set(t.id, t));
@@ -280,7 +397,7 @@ export function useWrikeCache() {
         // Get fresh folder dictionary. The cached Supabase copy may be unusable for
         // tree-climbing if it predates the childIds fix (childIds absent or empty),
         // so we build the reverse parent map and re-fetch whenever it comes out empty.
-        let fd = meta?.folder_dictionary || {};
+        let fd = dictRow?.folder_dictionary || {};
         let c2p = buildChildToParent(fd);
         if (Object.keys(fd).length < 500 || Object.keys(c2p).length === 0) {
           console.log("[WrikeCache] folder dict sparse or missing childIds — fetching fresh from Wrike");
@@ -307,7 +424,7 @@ export function useWrikeCache() {
             fd = freshFd;
             c2p = buildChildToParent(fd);
             console.log(`[WrikeCache] fresh folder dict: ${Object.keys(fd).length} folders`);
-            supabase.from("wrike_sync_meta").upsert({ folder_dictionary: fd });
+            supabase.from("wrike_sync_meta").upsert({ wrike_user_id: SHARED_META_ID, folder_dictionary: fd });
           }
         }
         console.log(`[WrikeCache] backfill: ${Object.keys(fd).length} folders, ${Object.keys(c2p).length} parent links`);
@@ -316,6 +433,7 @@ export function useWrikeCache() {
         if (derived.length > 0) {
           console.log(`[WrikeCache] folder campaigns derived: ${derived.length}`);
           setFolderCampaigns(derived);
+          try { localStorage.setItem(FOLDER_CAMPAIGNS_KEY, JSON.stringify(derived)); } catch { /* ignore */ }
         }
 
         const needsStudio = loaded.filter((t) => !t.studioName);
@@ -332,6 +450,7 @@ export function useWrikeCache() {
             backfilled.forEach((t) => {
               supabase.from("wrike_tasks_cache").update({ task_data: t }).eq("id", t.id);
             });
+            saveLocalTasks(backfilled);
             console.log(`[WrikeCache] studio backfilled ${backfilled.length} tasks`);
           }
         }
@@ -360,21 +479,32 @@ export function useWrikeCache() {
       }
       if (!userId) throw new Error("Could not resolve Wrike user ID");
 
-      // Read existing meta (last sync time + cached dicts)
+      // Light probe first: "did we sync recently?" must not drag the multi-MB
+      // dictionary blobs across the wire. sync() fires speculatively (mount,
+      // Motion Board tab switches) and usually skips — only a real sync below
+      // pays for the full meta row.
+      if (!fullRefresh) {
+        const { data: probe } = await supabase
+          .from("wrike_sync_meta")
+          .select("last_synced_at")
+          .eq("wrike_user_id", SHARED_META_ID)
+          .maybeSingle();
+        const lastProbe = probe?.last_synced_at ? new Date(probe.last_synced_at).getTime() : 0;
+        if (Date.now() - lastProbe < SYNC_INTERVAL_MS) {
+          console.log("[WrikeCache] skipping sync — last synced", probe?.last_synced_at);
+          return;
+        }
+      }
+
+      // Read existing meta (last sync time + cached dicts) — one shared row
       const { data: meta } = await supabase
         .from("wrike_sync_meta")
         .select("*")
-        .eq("wrike_user_id", userId)
-        .single();
+        .eq("wrike_user_id", SHARED_META_ID)
+        .maybeSingle();
 
       const now = Date.now();
       const lastSync = meta?.last_synced_at ? new Date(meta.last_synced_at).getTime() : 0;
-
-      // Skip if recently synced and not a forced refresh
-      if (!fullRefresh && now - lastSync < SYNC_INTERVAL_MS) {
-        console.log("[WrikeCache] skipping sync — last synced", meta?.last_synced_at);
-        return;
-      }
 
       // Determine the lookback window — always format as 2026-03-24T00:00:00Z (no ms, no offset)
       const toWrikeDate = (d) => new Date(d).toISOString().split(".")[0] + "Z";
@@ -440,27 +570,34 @@ export function useWrikeCache() {
         if (derived.length > 0) {
           console.log(`[WrikeCache] folder campaigns (sync): ${derived.length}`);
           setFolderCampaigns(derived);
+          try { localStorage.setItem(FOLDER_CAMPAIGNS_KEY, JSON.stringify(derived)); } catch { /* ignore */ }
         }
       }
 
       // Enrich the relevant set (parses description → tableHtml + notesText)
       const filtered = enrichTasks(relevant, folderDictionary, contactDictionary, statusDictionary, childToParent, existingFilmMappings);
 
-      // Upsert to Supabase in batches
+      // Upsert to Supabase in batches, and mirror into the local IndexedDB
+      // cache so the next page load doesn't need to re-download these rows.
       if (filtered.length > 0) {
         const rows = filtered.map((t) => ({
           id: t.id,
           wrike_user_id: userId,
-          task_data: t,
+          task_data: stripForStorage(t),
           updated_date: t.updatedDate ?? null,
         }));
         const BATCH = 500;
         for (let i = 0; i < rows.length; i += BATCH) {
-          await supabase.from("wrike_tasks_cache").upsert(rows.slice(i, i + BATCH));
+          // PK is (id) — one shared row per task; wrike_user_id records who
+          // synced it last.
+          await supabase.from("wrike_tasks_cache").upsert(rows.slice(i, i + BATCH), { onConflict: "id" });
         }
+        await saveLocalTasks(filtered);
+        await advanceLocalCursor(filtered);
       }
       if (droppedIds.length > 0) {
         await supabase.from("wrike_tasks_cache").delete().in("id", droppedIds);
+        await removeLocalTasks(droppedIds);
         console.log(`[WrikeCache] purged ${droppedIds.length} task(s) no longer Motion-relevant`);
       }
 
@@ -472,9 +609,9 @@ export function useWrikeCache() {
         console.log(`[WrikeCache] film code mappings: ${Object.keys(mergedFilmMappings).length} total, ${Object.keys(newMappings).length} new this sync`);
       }
 
-      // Persist updated meta
+      // Persist updated meta to the shared row
       await supabase.from("wrike_sync_meta").upsert({
-        wrike_user_id: userId,
+        wrike_user_id: SHARED_META_ID,
         last_synced_at: new Date().toISOString(),
         folder_dictionary:  needsMetaRefresh ? folderDictionary  : (meta?.folder_dictionary  ?? {}),
         contact_dictionary: needsMetaRefresh ? contactDictionary : (meta?.contact_dictionary ?? {}),
@@ -514,6 +651,7 @@ export function useWrikeCache() {
             backfilled.forEach((t) => {
               supabase.from("wrike_tasks_cache").update({ task_data: t }).eq("id", t.id);
             });
+            saveLocalTasks(backfilled);
           }
         }
 
@@ -552,13 +690,13 @@ export function useWrikeCache() {
     let ctx = enrichCtxRef.current;
     if (Object.keys(ctx.folderDictionary).length === 0) {
       // No dictionaries in memory yet (e.g. tab just opened, sync() hasn't run) —
-      // fall back to the last synced copy in Supabase.
+      // fall back to the shared meta row in Supabase. Paid at most once per
+      // session, and only if a webhook event arrives before a full sync.
       const { data: meta } = await supabase
         .from("wrike_sync_meta")
         .select("folder_dictionary,contact_dictionary,status_dictionary,film_code_mappings")
-        .order("last_synced_at", { ascending: false })
-        .limit(1)
-        .single();
+        .eq("wrike_user_id", SHARED_META_ID)
+        .maybeSingle();
       ctx = {
         folderDictionary: meta?.folder_dictionary || {},
         contactDictionary: meta?.contact_dictionary || {},
@@ -592,13 +730,18 @@ export function useWrikeCache() {
       const rows = enriched.map((t) => ({
         id: t.id,
         wrike_user_id: wrikeUserId,
-        task_data: t,
+        task_data: stripForStorage(t),
         updated_date: t.updatedDate ?? null,
       }));
-      await supabase.from("wrike_tasks_cache").upsert(rows);
+      await supabase.from("wrike_tasks_cache").upsert(rows, { onConflict: "id" });
+      // Mirror pushed tasks locally so the next reload's delta doesn't need
+      // to re-download them.
+      await saveLocalTasks(enriched);
+      await advanceLocalCursor(enriched);
     }
     if (droppedIds.length > 0) {
       await supabase.from("wrike_tasks_cache").delete().in("id", droppedIds);
+      await removeLocalTasks(droppedIds);
     }
 
     setTasks((prev) => {
@@ -626,17 +769,15 @@ export function useWrikeCache() {
     setIsScanning(true);
 
     try {
-      // Load existing mappings + folder dict from Supabase
+      // Load existing mappings + folder dict from the shared meta row
       const { data: meta } = await supabase
         .from("wrike_sync_meta")
-        .select("folder_dictionary, film_code_mappings, wrike_user_id")
-        .order("last_synced_at", { ascending: false })
-        .limit(1)
-        .single();
+        .select("folder_dictionary, film_code_mappings")
+        .eq("wrike_user_id", SHARED_META_ID)
+        .maybeSingle();
 
       let fd = meta?.folder_dictionary || {};
       const existingMappings = meta?.film_code_mappings || filmCodeMappings;
-      const userId = meta?.wrike_user_id || wrikeUserId;
 
       // Fetch a fresh folder dict if the cached one is too sparse to tree-climb
       if (Object.keys(fd).length < 100) {
@@ -705,12 +846,10 @@ export function useWrikeCache() {
       setFilmCodeMappings(merged);
       console.log(`[FilmScan] ${Object.keys(newMappings).length} new mappings, ${Object.keys(merged).length} total`);
 
-      if (userId) {
-        await supabase
-          .from("wrike_sync_meta")
-          .update({ film_code_mappings: merged })
-          .eq("wrike_user_id", userId);
-      }
+      await supabase
+        .from("wrike_sync_meta")
+        .update({ film_code_mappings: merged })
+        .eq("wrike_user_id", SHARED_META_ID);
     } catch (err) {
       console.error("[FilmScan] failed:", err);
     } finally {

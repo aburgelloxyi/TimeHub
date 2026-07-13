@@ -16,6 +16,17 @@ const STATE_COOKIE = "wrike_oauth_state";
 const SESSION_MAX_AGE = 60 * 60 * 24 * 180; // 180 days
 const STATE_MAX_AGE = 600; // 10 minutes
 
+// A page load fires several /api/wrike/* calls in parallel. If more than one
+// happens to see a near-expired/expired access token at once, each would
+// independently call Wrike's refresh endpoint with the SAME refresh_token —
+// and since Wrike rotates refresh tokens on use, only the first actually
+// succeeds; every other concurrent caller's refresh_token is already dead by
+// the time it lands, so it gets rejected (token_refresh_failed) even though a
+// valid new token now exists in the DB from the winning call. Keyed by
+// session_token, so concurrent requests share one in-flight refresh instead
+// of racing each other; cleared as soon as that refresh settles either way.
+const refreshInFlight = new Map();
+
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
@@ -104,8 +115,14 @@ async function getTokenRowBySession(env, sessionToken) {
   return rows[0] || null;
 }
 
+// Keyed by session_token, NOT wrike_user_id — the same Wrike account can be
+// connected from several browsers/environments at once (e.g. localhost +
+// the deployed site), and each keeps its own row. Keying by wrike_user_id
+// used to make every new connect overwrite (upsert) or every disconnect/
+// refresh wipe (delete/patch) *every* environment's session sharing that
+// account, causing a 401 cascade in whichever one didn't just touch it.
 async function upsertTokenRow(env, row) {
-  const res = await sbFetch(env, `/wrike_oauth_tokens?on_conflict=wrike_user_id`, {
+  const res = await sbFetch(env, `/wrike_oauth_tokens?on_conflict=session_token`, {
     method: "POST",
     headers: { Prefer: "resolution=merge-duplicates,return=representation" },
     body: JSON.stringify(row),
@@ -114,8 +131,8 @@ async function upsertTokenRow(env, row) {
   return (await res.json())[0];
 }
 
-async function updateTokenRow(env, wrikeUserId, patch) {
-  const res = await sbFetch(env, `/wrike_oauth_tokens?wrike_user_id=eq.${encodeURIComponent(wrikeUserId)}`, {
+async function updateTokenRow(env, sessionToken, patch) {
+  const res = await sbFetch(env, `/wrike_oauth_tokens?session_token=eq.${encodeURIComponent(sessionToken)}`, {
     method: "PATCH",
     headers: { Prefer: "return=representation" },
     body: JSON.stringify(patch),
@@ -124,8 +141,8 @@ async function updateTokenRow(env, wrikeUserId, patch) {
   return (await res.json())[0];
 }
 
-async function deleteTokenRow(env, wrikeUserId) {
-  await sbFetch(env, `/wrike_oauth_tokens?wrike_user_id=eq.${encodeURIComponent(wrikeUserId)}`, {
+async function deleteTokenRow(env, sessionToken) {
+  await sbFetch(env, `/wrike_oauth_tokens?session_token=eq.${encodeURIComponent(sessionToken)}`, {
     method: "DELETE",
   });
 }
@@ -148,10 +165,18 @@ async function upsertWebhookConfig(env, { webhookId, secret }) {
 }
 
 async function insertWebhookEvent(env, { taskId, eventType, occurredAt }) {
-  await sbFetch(env, `/wrike_webhook_events`, {
+  const res = await sbFetch(env, `/wrike_webhook_events`, {
     method: "POST",
+    // return=minimal: this is a fire-and-forget insert, we don't need the row
+    // echoed back — asking for the representation just adds a SELECT that can
+    // fail on its own.
+    headers: { Prefer: "return=minimal" },
     body: JSON.stringify({ task_id: taskId, event_type: eventType, occurred_at: occurredAt }),
   });
+  if (!res.ok) {
+    console.error(`[webhook] insert failed ${res.status}:`, await res.text().catch(() => ""));
+  }
+  return res;
 }
 
 // ── HMAC helpers (Wrike webhook signature verification) ─────────────────────
@@ -295,7 +320,7 @@ async function handleDisconnect(request, env) {
   const session = cookies[SESSION_COOKIE];
   if (session) {
     const row = await getTokenRowBySession(env, session);
-    if (row) await deleteTokenRow(env, row.wrike_user_id);
+    if (row) await deleteTokenRow(env, row.session_token);
   }
   const res = json({ ok: true });
   res.headers.append("Set-Cookie", clearCookie(SESSION_COOKIE, "/"));
@@ -322,8 +347,52 @@ async function handleWebhookRegister(request, url, env) {
   const row = await getTokenRowBySession(env, session);
   if (!row) return json({ error: "not_connected" }, { status: 401 });
 
-  const secret = crypto.randomUUID().replace(/-/g, "") + crypto.randomUUID().replace(/-/g, "");
+  // Wrike validates hookUrl synchronously by calling back to it during
+  // creation — a localhost/private-network origin can never be reached from
+  // Wrike's servers, so this can never succeed from a dev environment. Reject
+  // it up front with a clear reason instead of a generic 502 after Wrike
+  // rejects it (which — see below — used to also corrupt the shared config).
+  if (["localhost", "127.0.0.1", "0.0.0.0"].includes(url.hostname) || url.hostname.endsWith(".local")) {
+    return json({
+      error: "unreachable_origin",
+      detail: "Live sync must be enabled from the deployed site — Wrike can't reach a localhost URL to deliver webhooks.",
+    }, { status: 400 });
+  }
+
   const hookUrl = `${url.origin}/api/wrike/webhook`;
+  const authHeader = { Authorization: `Bearer ${row.access_token}` };
+
+  // Preserve whatever config is live right now. If Wrike rejects the new
+  // webhook below, we restore this instead of leaving the shared config
+  // half-written — a blank webhookId plus a secret that no longer matches
+  // whatever webhook Wrike is still actually delivering with, which silently
+  // 401s (and drops) every future delivery until someone notices the outage.
+  const previousConfig = await getWebhookConfig(env);
+
+  // Delete any webhooks already pointing at this Worker before creating a new
+  // one. Each register generates a fresh secret, but wrike_webhook_config can
+  // only hold one — so every previously-created webhook keeps firing signed
+  // with a secret we no longer have, failing signature verification (401) and
+  // inserting nothing while a valid delivery hides among the rejects. Clearing
+  // them first guarantees exactly one live webhook whose secret matches config.
+  try {
+    const listRes = await fetch(`https://${row.api_host}/api/v4/webhooks`, { headers: authHeader });
+    if (listRes.ok) {
+      const existing = (await listRes.json()).data || [];
+      await Promise.all(
+        existing
+          .filter((w) => w.hookUrl === hookUrl)
+          .map((w) =>
+            fetch(`https://${row.api_host}/api/v4/webhooks/${w.id}`, { method: "DELETE", headers: authHeader })
+              .catch((err) => console.error("webhook delete failed", w.id, err))
+          )
+      );
+    }
+  } catch (err) {
+    console.error("webhook cleanup failed (continuing to create)", err);
+  }
+
+  const secret = crypto.randomUUID().replace(/-/g, "") + crypto.randomUUID().replace(/-/g, "");
 
   // Wrike validates hookUrl synchronously as part of webhook creation — it
   // calls back to /api/wrike/webhook and expects a signed handshake response
@@ -333,58 +402,69 @@ async function handleWebhookRegister(request, url, env) {
   const body = new URLSearchParams({ hookUrl, secret });
   const res = await fetch(`https://${row.api_host}/api/v4/webhooks`, {
     method: "POST",
-    headers: {
-      Authorization: `Bearer ${row.access_token}`,
-      "Content-Type": "application/x-www-form-urlencoded",
-    },
+    headers: { ...authHeader, "Content-Type": "application/x-www-form-urlencoded" },
     body,
   });
   if (!res.ok) {
     const text = await res.text().catch(() => "");
     console.error("wrike webhook create failed", res.status, text);
+    if (previousConfig) {
+      await upsertWebhookConfig(env, { webhookId: previousConfig.webhook_id, secret: previousConfig.secret });
+    }
     return json({ error: "wrike_webhook_create_failed", detail: text }, { status: 502 });
   }
   const data = await res.json();
   const webhookId = data.data?.[0]?.id;
-  if (!webhookId) return json({ error: "no_webhook_id_returned" }, { status: 502 });
+  if (!webhookId) {
+    if (previousConfig) {
+      await upsertWebhookConfig(env, { webhookId: previousConfig.webhook_id, secret: previousConfig.secret });
+    }
+    return json({ error: "no_webhook_id_returned" }, { status: 502 });
+  }
 
   await upsertWebhookConfig(env, { webhookId, secret });
   return json({ ok: true, webhookId });
 }
 
 // Public endpoint Wrike calls directly (no session cookie). Handles both the
-// registration handshake (X-Hook-Secret) and real event deliveries
-// (X-Hook-Signature), per https://developers.wrike.com/docs/webhooks.
+// one-time secret-verification challenge Wrike sends when validating hookUrl
+// and real event deliveries. Per developers.wrike.com/webhooks, BOTH request
+// types carry X-Hook-Secret and X-Hook-Signature — header presence can't
+// distinguish them (a routing mistake this code made twice before landing
+// here). The real discriminator is the body: the verification challenge is
+// {"requestType":"WebHook secret verification"}; real deliveries are a JSON
+// array of event objects. Both are signature-verified the same way first.
 async function handleWebhookEvent(request, env) {
   const config = await getWebhookConfig(env);
   if (!config) return json({ error: "webhook_not_configured" }, { status: 404 });
 
   const rawBody = await request.text();
-  const hookSecretHeader = request.headers.get("X-Hook-Secret");
-
-  if (hookSecretHeader) {
-    // Handshake: prove we know the secret by signing the value Wrike sent us
-    // and echoing it back in the *same* header name (X-Hook-Secret, not
-    // X-Hook-Signature) — per developers.wrike.com/docs/webhooks.
-    const signature = await hmacSha256Hex(config.secret, hookSecretHeader);
-    return new Response(null, { status: 200, headers: { "X-Hook-Secret": signature } });
-  }
-
   const signatureHeader = request.headers.get("X-Hook-Signature") || "";
-  const expected = await hmacSha256Hex(config.secret, rawBody);
-  if (!timingSafeEqual(signatureHeader, expected)) {
+
+  const expectedBodySignature = await hmacSha256Hex(config.secret, rawBody);
+  if (!timingSafeEqual(signatureHeader, expectedBodySignature)) {
     // Signature mismatch — not from Wrike. Discard per Wrike's docs.
+    console.error("[webhook] invalid signature — dropping delivery");
     return json({ error: "invalid_signature" }, { status: 401 });
   }
 
-  let events;
+  let parsedBody;
   try {
-    events = JSON.parse(rawBody);
+    parsedBody = JSON.parse(rawBody);
   } catch {
     return json({ error: "invalid_body" }, { status: 400 });
   }
-  if (!Array.isArray(events)) events = [events];
 
+  if (parsedBody && !Array.isArray(parsedBody) && parsedBody.requestType === "WebHook secret verification") {
+    const hookSecretHeader = request.headers.get("X-Hook-Secret");
+    if (!hookSecretHeader) return json({ error: "missing_hook_secret" }, { status: 400 });
+    // Prove we know the secret by signing the challenge Wrike sent us and
+    // echoing it back in the *same* header name (X-Hook-Secret).
+    const responseSignature = await hmacSha256Hex(config.secret, hookSecretHeader);
+    return new Response(null, { status: 200, headers: { "X-Hook-Secret": responseSignature } });
+  }
+
+  let events = Array.isArray(parsedBody) ? parsedBody : [parsedBody];
   for (const evt of events) {
     if (!evt?.taskId) continue; // ignore folder/comment/attachment-only events
     await insertWebhookEvent(env, {
@@ -405,34 +485,91 @@ async function handleProxy(request, url, env) {
   let row = await getTokenRowBySession(env, session);
   if (!row) return json({ error: "not_connected" }, { status: 401 });
 
+  const restPath = url.pathname.replace(/^\/api\/wrike/, "");
+
+  // Buffer any request body once — a request stream can only be read a single
+  // time, and we may need to replay the call after a token refresh below.
+  const bodyBuffer = ["GET", "HEAD"].includes(request.method)
+    ? undefined
+    : await request.arrayBuffer();
+
+  const callWrike = () => {
+    const fwdHeaders = new Headers(request.headers);
+    fwdHeaders.delete("Cookie");
+    fwdHeaders.delete("Host");
+    fwdHeaders.set("Authorization", `Bearer ${row.access_token}`);
+    const init = { method: request.method, headers: fwdHeaders };
+    if (bodyBuffer !== undefined) init.body = bodyBuffer;
+    return fetch(`https://${row.api_host}/api/v4${restPath}${url.search}`, init);
+  };
+
+  const refreshToken = async () => {
+    const key = row.session_token;
+    if (!refreshInFlight.has(key)) {
+      refreshInFlight.set(
+        key,
+        (async () => {
+          try {
+            const refreshed = await refreshAccessToken(env, row.refresh_token);
+            return await updateTokenRow(env, key, {
+              access_token: refreshed.access_token,
+              refresh_token: refreshed.refresh_token || row.refresh_token,
+              api_host: refreshed.host || row.api_host,
+              expires_at: new Date(Date.now() + Number(refreshed.expires_in || 3600) * 1000).toISOString(),
+              updated_at: new Date().toISOString(),
+            });
+          } finally {
+            refreshInFlight.delete(key);
+          }
+        })()
+      );
+    }
+    // Every concurrent caller — the one that started this refresh and any
+    // that arrived while it was in flight — awaits the SAME promise and gets
+    // the SAME resulting row, instead of each spending its own (possibly
+    // already-rotated-out) refresh_token.
+    row = await refreshInFlight.get(key);
+  };
+
+  // Proactive refresh when the token is about to expire by the clock.
   if (new Date(row.expires_at).getTime() - Date.now() < 60_000) {
     try {
-      const refreshed = await refreshAccessToken(env, row.refresh_token);
-      row = await updateTokenRow(env, row.wrike_user_id, {
-        access_token: refreshed.access_token,
-        refresh_token: refreshed.refresh_token || row.refresh_token,
-        api_host: refreshed.host || row.api_host,
-        expires_at: new Date(Date.now() + Number(refreshed.expires_in || 3600) * 1000).toISOString(),
-        updated_at: new Date().toISOString(),
-      });
+      await refreshToken();
     } catch (err) {
       console.error(err);
       return json({ error: "token_refresh_failed" }, { status: 401 });
     }
   }
 
-  const restPath = url.pathname.replace(/^\/api\/wrike/, "");
-  const targetUrl = `https://${row.api_host}/api/v4${restPath}${url.search}`;
+  let wrikeRes = await callWrike();
 
-  const fwdHeaders = new Headers(request.headers);
-  fwdHeaders.delete("Cookie");
-  fwdHeaders.delete("Host");
-  fwdHeaders.set("Authorization", `Bearer ${row.access_token}`);
+  // Reactive refresh: Wrike can invalidate a token *before* its clock-expiry
+  // (the user re-auths elsewhere, a webhook re-registration rotates it). A 401
+  // means the stored access token is dead even though we thought it valid —
+  // refresh once and retry, so a single prematurely-invalidated token doesn't
+  // 401 every call until it happens to reach its expiry timestamp. If the
+  // refresh token itself is dead, the retry 401s too and the user must re-auth.
+  if (wrikeRes.status === 401) {
+    try {
+      await refreshToken();
+      wrikeRes = await callWrike();
+    } catch (err) {
+      console.error("[proxy] refresh-on-401 failed", err);
+    }
+  }
 
-  const init = { method: request.method, headers: fwdHeaders };
-  if (!["GET", "HEAD"].includes(request.method)) init.body = request.body;
+  if (!wrikeRes.ok) {
+    // The proxy used to pass failures through silently — every "why did this
+    // one request 400" investigation needed a browser Network-tab screenshot
+    // because wrangler tail showed nothing. Log Wrike's actual error body so
+    // future failures are visible from the Worker side too.
+    const text = await wrikeRes.text().catch(() => "");
+    console.error(`[proxy] Wrike ${wrikeRes.status} on ${request.method} ${restPath}${url.search}:`, text);
+    const resHeaders = new Headers(wrikeRes.headers);
+    resHeaders.delete("Set-Cookie");
+    return new Response(text, { status: wrikeRes.status, headers: resHeaders });
+  }
 
-  const wrikeRes = await fetch(targetUrl, init);
   const resHeaders = new Headers(wrikeRes.headers);
   resHeaders.delete("Set-Cookie");
   return new Response(wrikeRes.body, { status: wrikeRes.status, headers: resHeaders });

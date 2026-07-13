@@ -428,7 +428,7 @@ export default function CampaignCanvas({ wrikeData = [], folderCampaigns = [], t
         wrikeGroupedCampaigns[campaignTitle] = {
           id: `wrike-${campaignTitle.toLowerCase().replace(/\s+/g, "-")}`,
           title: campaignTitle,
-          wrikeLink: task.permalink || "#",
+          wrikeLink: task.permalink || `https://www.wrike.com/open.htm?id=${task.id}`,
           notes: [],
           matrices: [],
           links: [],
@@ -1813,7 +1813,7 @@ export default function CampaignCanvas({ wrikeData = [], folderCampaigns = [], t
 
           // ============ GALLERY VIEW (studio cards) ============
           return (
-            <div key="studio-gallery" className="mt-8 py-4 px-6 w-full">
+            <div key="studio-gallery" className="mt-2 py-4 px-6 w-full">
               <div className="flex items-center gap-2.5 mb-4 px-1">
                 <div className="w-9 h-9 rounded-xl bg-[#12a0e1]/10 text-[#12a0e1] flex items-center justify-center shadow-sm">
                   <Film className="w-5 h-5" />

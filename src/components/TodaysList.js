@@ -5,6 +5,8 @@ import {
   Film,
   Paperclip,
   ChevronDown,
+  Star,
+  Sparkle,
 } from "lucide-react";
 import gsap from "gsap";
 import { useGSAP } from "@gsap/react";
@@ -22,16 +24,16 @@ const TEAM_MEMBERS = ["Antonio", "Aaron", "Jacqui", "Maria", "Nicholas", "Luke",
 // Each artist owns a lane ("track") and an identity gradient — the same
 // colour-as-identity system Home's rows use for pages, applied to people.
 // Gradients are tuned so white display-size type holds ≥3:1 on the left
-// edge; Maria's amber can't carry white, so her lane flips to dark ink
+// edge; any lane whose gradient can't carry white flips to dark ink
 // (ink: "dark") — the same rule Home applies to its amber row.
 const MEMBER_LANES = {
   Antonio: { gradient: "from-blue-500 to-indigo-600",   ink: "light", dot: "bg-blue-500" },
-  Aaron:   { gradient: "from-emerald-600 to-teal-600",  ink: "light", dot: "bg-emerald-600" },
-  Jacqui:  { gradient: "from-pink-600 to-rose-600",     ink: "light", dot: "bg-pink-600" },
-  Maria:   { gradient: "from-amber-300 to-yellow-400",  ink: "dark",  dot: "bg-amber-400" },
-  Nicholas:{ gradient: "from-purple-500 to-violet-600", ink: "light", dot: "bg-purple-500" },
+  Aaron:   { gradient: "from-purple-500 to-violet-600", ink: "light", dot: "bg-purple-500" },
+  Jacqui:  { gradient: "from-fuchsia-500 to-pink-600",  ink: "light", dot: "bg-fuchsia-500" },
+  Maria:   { gradient: "from-emerald-600 to-teal-600",  ink: "light", dot: "bg-emerald-600" },
+  Nicholas:{ gradient: "from-cyan-600 to-sky-600",      ink: "light", dot: "bg-cyan-600" },
   Luke:    { gradient: "from-orange-600 to-red-600",    ink: "light", dot: "bg-orange-600" },
-  Turk:    { gradient: "from-cyan-600 to-sky-600",      ink: "light", dot: "bg-cyan-600" },
+  Turk:    { gradient: "from-red-600 to-rose-600",      ink: "light", dot: "bg-red-600" },
 };
 
 // Palette for department boards whose roster comes from profiles (Print and
@@ -373,6 +375,48 @@ export default function TodaysList({ wrikeData, triggerToast: _triggerToast, isA
   const [timeframe, setTimeframe] = useState("Today");
   const [focusedPerson, setFocusedPerson] = useState(null);
   const saveTimeout = useRef(null);
+
+  // --- Jacqui/Maria lane-cap hover flourish: stars + glitter, re-rolled
+  // fresh on every hover rather than a single fixed layout. A bump counter
+  // per person (rather than storing the particle arrays directly) keeps the
+  // random draw itself inside the memo below, deterministic per render.
+  const GLITTER_PEOPLE = ["Jacqui", "Maria"];
+  const [glitterNonce, setGlitterNonce] = useState({ Jacqui: 0, Maria: 0 });
+  const rollGlitter = (person) => {
+    if (!GLITTER_PEOPLE.includes(person)) return;
+    setGlitterNonce((n) => ({ ...n, [person]: n[person] + 1 }));
+  };
+  const glitterParticles = useMemo(() => {
+    // Small seeded PRNG (mulberry32) — deterministic per (person, nonce) pair
+    // so a re-render mid-hover doesn't reshuffle particles under the cursor.
+    const mulberry32 = (seed) => () => {
+      seed |= 0; seed = (seed + 0x6D2B79F5) | 0;
+      let t = Math.imul(seed ^ (seed >>> 15), seed | 1);
+      t = (t + Math.imul(t ^ (t >>> 7), t | 61)) ^ t;
+      return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
+    const build = (baseSeed) => {
+      const next = mulberry32(baseSeed);
+      const particle = (kind) => ({
+        kind,
+        left: `${Math.round(next() * 94) + 2}%`,
+        size: kind === "star" ? 7 + Math.round(next() * 8) : 4 + Math.round(next() * 5),
+        delay: Math.round(next() * 500),
+        duration: kind === "star" ? 900 + Math.round(next() * 700) : 700 + Math.round(next() * 600),
+        drift: Math.round((next() - 0.5) * 40),
+        rotMid: Math.round(next() * 90 - 20),
+        rotEnd: Math.round(next() * 260 + 60),
+        hue: Math.round(next() * 360),
+      });
+      const stars = Array.from({ length: 5 + Math.floor(next() * 3) }, () => particle("star"));
+      const glitter = Array.from({ length: 7 + Math.floor(next() * 5) }, () => particle("glitter"));
+      return [...stars, ...glitter];
+    };
+    return {
+      Jacqui: build(1000 + glitterNonce.Jacqui * 977),
+      Maria: build(5000 + glitterNonce.Maria * 977),
+    };
+  }, [glitterNonce]);
 
   const [taskAttachments, setTaskAttachments] = useState({});
   const [attachmentsLoading, setAttachmentsLoading] = useState(false);
@@ -815,6 +859,7 @@ export default function TodaysList({ wrikeData, triggerToast: _triggerToast, isA
                 {/* Lane cap */}
                 <button
                   onClick={() => setFocusedPerson((p) => (p === person ? null : person))}
+                  onMouseEnter={() => rollGlitter(person)}
                   className="group relative w-44 sm:w-52 shrink-0 text-left px-5 border-r border-[#dce4ec] overflow-hidden"
                 >
                   <div
@@ -822,6 +867,48 @@ export default function TodaysList({ wrikeData, triggerToast: _triggerToast, isA
                       isFocused ? "scale-x-100" : "scale-x-0 group-hover:scale-x-100"
                     }`}
                   />
+                  {/* Hover flourish, Jacqui & Maria only — a randomized
+                      cascade of stars + glitter falling within this lane
+                      cap's own bounding box (the button's overflow-hidden
+                      clips them). onMouseEnter re-rolls the particle set
+                      (glitterParticles memo above) so it's a fresh scatter
+                      every hover, not one fixed layout; each particle's own
+                      keyframe animation only exists while :hover applies via
+                      group-hover:, so it restarts clean each time too. */}
+                  {(person === "Jacqui" || person === "Maria") && (
+                    <div className="absolute inset-0 z-[5] pointer-events-none overflow-hidden">
+                      {glitterParticles[person].map((p, i) => {
+                        const vars = {
+                          left: `${p.left}`,
+                          width: p.size,
+                          height: p.size,
+                          animationDelay: `${p.delay}ms`,
+                          animationDuration: `${p.duration}ms`,
+                          "--drift": `${p.drift}px`,
+                          "--rot-mid": `${p.rotMid}deg`,
+                          "--rot-end": `${p.rotEnd}deg`,
+                        };
+                        if (p.kind === "star") {
+                          return (
+                            <Star
+                              key={i}
+                              style={vars}
+                              className={`absolute top-0 opacity-0 fill-current group-hover:animate-star-fall ${
+                                lane.ink === "dark" ? "text-[#122027]/70" : "text-white/90"
+                              }`}
+                            />
+                          );
+                        }
+                        return (
+                          <Sparkle
+                            key={i}
+                            style={{ ...vars, color: `hsl(${p.hue}, 85%, 80%)` }}
+                            className="absolute top-0 opacity-0 fill-current group-hover:animate-glitter-twinkle"
+                          />
+                        );
+                      })}
+                    </div>
+                  )}
                   <div className="relative z-10 h-full flex flex-col justify-center overflow-hidden">
                     <div data-lane-rise className="flex items-baseline justify-between gap-2">
                       <span

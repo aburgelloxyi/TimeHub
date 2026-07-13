@@ -13,6 +13,7 @@ import {
   fetchExistingTimelogIds,
 } from "../lib/supabaseClient";
 import { subscribeToWrikeTaskEvents } from "../lib/wrikeWebhookSubscription";
+import { fetchTasksByIds } from "../hooks/useWrikeCache";
 import {
   RefreshCw,
   XCircle,
@@ -285,18 +286,14 @@ export default function LegacyTimesheet({ wrikeData, isAdmin = false }) {
   // request per edit rather than the bulk two-query sync "Sync My Jobs" does.
   useEffect(() => {
     if (!wrikeUserId) return;
-    const fieldsFilter = encodeURIComponent("[customFields,parentIds,description]");
-
+    // Share fetchTasksByIds with the other webhook subscribers rather than
+    // issuing a bespoke request: it collapses all of them onto one fetch per
+    // changed task, and it degrades fields per-task on Wrike's field-visibility
+    // 400s (which this handler used to just swallow, silently dropping the
+    // edit). Its field set is a superset of what enrichLegacyTask reads.
     const handleWebhookTaskIds = async (ids) => {
       if (!ids.length) return;
-      let changed = [];
-      try {
-        const res = await fetch(`/api/wrike/tasks/${ids.join(",")}?fields=${fieldsFilter}`);
-        if (res.ok) changed = (await res.json()).data || [];
-      } catch (e) {
-        console.warn("[LegacyTimesheets] webhook refetch failed", e);
-        return;
-      }
+      const changed = await fetchTasksByIds(ids);
       if (!changed.length) return;
 
       setLocalWrikeTasks((prev) => {

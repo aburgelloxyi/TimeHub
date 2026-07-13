@@ -133,12 +133,65 @@ const FIELDS_FALLBACKS = [
   null, // bare Wrike defaults, no optional fields — always succeeds
 ];
 
-async function fetchOneTask(id) {
-  for (const fields of FIELDS_FALLBACKS) {
-    const url = fields ? `/api/wrike/tasks/${id}?fields=${fields}` : `/api/wrike/tasks/${id}`;
+// Which fallback tier Wrike actually accepted for a given task, remembered so
+// repeat webhook events for the same task skip straight to the request that
+// works instead of re-earning the same 400s every time. A handful of tasks get
+// touched by Wrike automation every few seconds, and each event was re-walking
+// the whole ladder — hundreds of known-doomed requests a minute against a
+// rate-limited API.
+//
+// Entries expire: field visibility is account/space scoped and can change (a
+// task moves into a space we can see), so a degraded task is retried at full
+// fields once a day rather than being written off forever.
+const FIELD_TIER_KEY = "xyi_wrike_field_tier_v1";
+const FIELD_TIER_TTL_MS = 24 * 60 * 60 * 1000;
+
+const fieldTiers = (() => {
+  try {
+    const stored = JSON.parse(localStorage.getItem(FIELD_TIER_KEY) || "{}");
+    const now = Date.now();
+    return new Map(
+      Object.entries(stored).filter(([, e]) => e && now - e.at < FIELD_TIER_TTL_MS)
+    );
+  } catch {
+    return new Map();
+  }
+})();
+
+function getFieldTier(id) {
+  const entry = fieldTiers.get(id);
+  if (!entry || Date.now() - entry.at >= FIELD_TIER_TTL_MS) return 0;
+  return entry.tier;
+}
+
+let persistTimer = null;
+function setFieldTier(id, tier) {
+  // Tier 0 is the default — only degraded tasks are worth remembering.
+  if (tier === 0) {
+    if (!fieldTiers.delete(id)) return;
+  } else {
+    if (fieldTiers.get(id)?.tier === tier) return;
+    fieldTiers.set(id, { tier, at: Date.now() });
+  }
+  clearTimeout(persistTimer);
+  persistTimer = setTimeout(() => {
     try {
-      const r = await fetch(url);
-      if (r.ok) return (await r.json()).data?.[0] || null;
+      localStorage.setItem(FIELD_TIER_KEY, JSON.stringify(Object.fromEntries(fieldTiers)));
+    } catch { /* quota — the in-memory map still does the job this session */ }
+  }, 1000);
+}
+
+const taskUrl = (ids, fields) =>
+  fields ? `/api/wrike/tasks/${ids}?fields=${fields}` : `/api/wrike/tasks/${ids}`;
+
+async function fetchOneTask(id, startTier = getFieldTier(id)) {
+  for (let tier = startTier; tier < FIELDS_FALLBACKS.length; tier++) {
+    try {
+      const r = await fetch(taskUrl(id, FIELDS_FALLBACKS[tier]));
+      if (r.ok) {
+        setFieldTier(id, tier);
+        return (await r.json()).data?.[0] || null;
+      }
     } catch (e) {
       console.warn(`[WrikeCache] refetch ${id} error`, e);
     }
@@ -160,31 +213,77 @@ async function fetchOneTask(id) {
 // studio name and Motion-team relevance don't silently degrade versus one
 // that came from a full resync.
 // ---------------------------------------------------------------------------
-export async function fetchTasksByIds(ids) {
+async function fetchBatched(ids) {
   const out = [];
   // Batch up to 100 IDs per request — Wrike supports comma-separated IDs.
   const BATCH = 100;
-  for (let i = 0; i < ids.length; i += BATCH) {
-    const batch = ids.slice(i, i + BATCH);
-    try {
-      const r = await fetch(`/api/wrike/tasks/${batch.join(",")}?fields=${FIELDS_FILTER}`);
-      if (r.ok) {
-        const tasks = (await r.json()).data || [];
-        out.push(...tasks);
-      } else {
-        // Batch failed — one task in it may have a field-visibility issue
-        // (see FIELDS_FALLBACKS above). Fall back per-id, tiering fields
-        // down per task instead of losing the whole batch to one bad task.
-        for (const id of batch) {
-          const task = await fetchOneTask(id);
-          if (task) out.push(task);
+
+  // Group by remembered field tier: a task known to reject customFields would
+  // 400 the whole batch it rides in, so it goes out with its own tier's peers
+  // rather than poisoning the batch and forcing everyone into per-id retries.
+  const byTier = new Map();
+  for (const id of ids) {
+    const tier = getFieldTier(id);
+    if (!byTier.has(tier)) byTier.set(tier, []);
+    byTier.get(tier).push(id);
+  }
+
+  for (const [tier, tierIds] of byTier) {
+    for (let i = 0; i < tierIds.length; i += BATCH) {
+      const batch = tierIds.slice(i, i + BATCH);
+      let ok = false;
+      try {
+        const r = await fetch(taskUrl(batch.join(","), FIELDS_FALLBACKS[tier]));
+        if (r.ok) {
+          out.push(...((await r.json()).data || []));
+          ok = true;
         }
+      } catch (e) {
+        console.warn(`[WrikeCache] batch refetch error`, e);
       }
-    } catch (e) {
-      console.warn(`[WrikeCache] batch refetch error`, e);
+      if (ok) continue;
+      // Batch failed — some task in it has a field-visibility issue we hadn't
+      // seen yet (see FIELDS_FALLBACKS above). Fall back per-id, tiering fields
+      // down per task instead of losing the whole batch to one bad task.
+      //
+      // A one-id batch pins the blame: that task just failed at this tier, so
+      // start it at the next one. With >1 id the culprit is unknown — the rest
+      // are likely fine at this tier — so each retries from its own memo.
+      const startTier = batch.length === 1 ? tier + 1 : undefined;
+      for (const id of batch) {
+        const task = await fetchOneTask(id, startTier ?? getFieldTier(id));
+        if (task) out.push(task);
+      }
     }
   }
   return out;
+}
+
+// Four components subscribe to the same webhook event stream and each asked for
+// the same changed task independently, so one Wrike edit fanned out into four
+// identical fetch ladders. Collapse concurrent callers onto one request per
+// task. Entries are dropped as soon as they settle — this coalesces the fan-out
+// of a single event, it is not a result cache, so a task that genuinely changes
+// again is always refetched.
+const inflight = new Map();
+
+export async function fetchTasksByIds(ids) {
+  const unique = [...new Set(ids)];
+  const pending = unique.filter((id) => !inflight.has(id));
+
+  if (pending.length) {
+    const batch = fetchBatched(pending);
+    for (const id of pending) {
+      const p = batch
+        .then((tasks) => tasks.find((t) => t.id === id) || null)
+        .catch(() => null)
+        .finally(() => { if (inflight.get(id) === p) inflight.delete(id); });
+      inflight.set(id, p);
+    }
+  }
+
+  const results = await Promise.all(unique.map((id) => inflight.get(id)));
+  return results.filter(Boolean);
 }
 
 // ---------------------------------------------------------------------------

@@ -32,6 +32,7 @@ import { guessFieldsFromTask } from "../utils/wrikeHelpers";
 import SearchableSelect from "./shared/SearchableSelect";
 import { parsePdfDeliverySpecs } from "../utils/pdfTableParser";
 import DeliverySpecsModal from "./DeliverySpecsModal";
+import { logTimeToWrike } from "../lib/wrikeApi";
 
 // ── Local presentational helpers ──────────────────────────────────────────────
 
@@ -785,7 +786,7 @@ function fmtClock(totalSecs) {
   return [h, m, s].map((n) => String(n).padStart(2, "0")).join(":");
 }
 
-function TimeLogPanel({ task, fullTask, jobOptions, onLogTime, onLogged }) {
+function TimeLogPanel({ task, fullTask, jobOptions, onLogTime, onLogged, triggerToast }) {
   const prefill = React.useMemo(
     () => guessFieldsFromTask(fullTask, jobOptions || []),
     [fullTask, jobOptions]
@@ -855,6 +856,9 @@ function TimeLogPanel({ task, fullTask, jobOptions, onLogTime, onLogged }) {
       taskId: task.id,
     });
     onLogged?.(finalSecs);
+    logTimeToWrike(task.id, finalSecs).then((ok) => {
+      triggerToast?.(ok ? "Synced to Wrike task." : "Logged locally, but Wrike sync failed.", ok ? "success" : "info");
+    });
     setElapsed(0);
     setManualH("");
     setManualM("");
@@ -1399,6 +1403,7 @@ export default function TaskDetailModal({
                   fullTask={fullTask}
                   jobOptions={jobOptions}
                   onLogTime={onLogTime}
+                  triggerToast={triggerToast}
                   onLogged={(secs) => {
                     triggerToast?.(`Logged ${fmtClock(secs)} to your timesheet.`, "success");
                   }}

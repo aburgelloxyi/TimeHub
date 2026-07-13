@@ -897,7 +897,7 @@ export default function App() {
               />
             )}
             {activePage === "management" && (
-              <Management wrikeUserId={wrikeUserId} department={department} />
+              <Management wrikeUserId={wrikeUserId} department={department} wrikeData={globalWrikeData} />
             )}
             {activePage === "jobbook" && <JobBook />}
             </Suspense>

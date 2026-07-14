@@ -116,6 +116,49 @@ function CountryFlag({ flag, imgClass = "w-11 h-[30px]", textClass = "text-3xl" 
   );
 }
 
+// --- Relative time formatter: "just now", "3m ago", "2h ago", "5d ago", "12/07" ---
+function relativeTime(dateStr) {
+  if (!dateStr) return "";
+  const d = new Date(typeof dateStr === "string" ? dateStr : null);
+  if (isNaN(d.getTime())) return "";
+  const s = Math.round((Date.now() - d.getTime()) / 1000);
+  if (s < 5) return "just now";
+  if (s < 60) return `${s}s ago`;
+  if (s < 3600) return `${Math.floor(s/60)}m ago`;
+  if (s < 86400) return `${Math.floor(s/3600)}h ago`;
+  if (s < 604800) return `${Math.floor(s/86400)}d ago`;
+  return d.toLocaleDateString("en-GB", { day: "2-digit", month: "2-digit" });
+}
+
+// --- Save status indicator: "Saving…" / "Saved ✓" / "Last edited Xm ago" ---
+function SaveStatus({ state, lastSavedAt }) {
+  const [now, setNow] = useState(Date.now());
+  // Re-render every 30s so "Xm ago" stays fresh while the card is open.
+  useEffect(() => {
+    if (state === "saving") return;
+    const t = setInterval(() => setNow(Date.now()), 30000);
+    return () => clearInterval(t);
+  }, [state]);
+  if (state === "saving") {
+    return (
+      <span className="flex items-center gap-1.5 text-[11px] font-bold text-[#768994]">
+        <Loader2 className="w-3 h-3 animate-spin" /> Saving…
+      </span>
+    );
+  }
+  if (state === "saved") {
+    return (
+      <span className="flex items-center gap-1.5 text-[11px] font-bold text-[#1baf7a]">
+        <Check className="w-3 h-3" /> Saved
+      </span>
+    );
+  }
+  const rel = lastSavedAt ? relativeTime(lastSavedAt) : "";
+  return rel ? (
+    <span className="text-[11px] font-semibold text-[#94a3b8]">Last edited {rel}</span>
+  ) : null;
+}
+
 // --- Shared collapsible card shell for the two Reference note sections ---
 function CollapsibleCard({ icon, title, subtitle, isOpen, onToggle, children }) {
   return (
@@ -148,21 +191,47 @@ function EndOfCampaignNotesCard({ isOpen, onToggle, campaigns }) {
   const [selectedCampaignId, setSelectedCampaignId] = useState(null);
   const [content, setContent] = useState("");
   const [loaded, setLoaded] = useState(false);
+  const [saveState, setSaveState] = useState("idle");
+  const [lastSavedAt, setLastSavedAt] = useState(null);
+  const [recent, setRecent] = useState([]);
   const skipNextSaveRef = useRef(false);
+  const savedTimerRef = useRef(null);
 
   const selectedCampaign = campaigns.find((c) => c.id === selectedCampaignId);
 
+  // Fetch top 4 recently-edited campaigns on mount + after each save
+  const refreshRecent = useCallback(async () => {
+    const { data } = await supabase
+      .from("campaign_eoc_notes")
+      .select("campaign_id, updated_at")
+      .order("updated_at", { ascending: false })
+      .limit(4);
+    if (!data) return;
+    const withTitles = data
+      .map((r) => {
+        const camp = campaigns.find((c) => c.id === r.campaign_id);
+        return camp ? { id: r.campaign_id, title: camp.title, updated_at: r.updated_at } : null;
+      })
+      .filter(Boolean);
+    setRecent(withTitles);
+  }, [campaigns]);
+
   useEffect(() => {
-    if (!selectedCampaignId) { setContent(""); setLoaded(false); return; }
+    if (isOpen) refreshRecent();
+  }, [isOpen, refreshRecent]);
+
+  useEffect(() => {
+    if (!selectedCampaignId) { setContent(""); setLoaded(false); setSaveState("idle"); setLastSavedAt(null); return; }
     setLoaded(false);
     (async () => {
       const { data } = await supabase
         .from("campaign_eoc_notes")
-        .select("content")
+        .select("content, updated_at")
         .eq("campaign_id", selectedCampaignId)
         .maybeSingle();
       skipNextSaveRef.current = true;
       setContent(data?.content || "");
+      setLastSavedAt(data?.updated_at || null);
       setLoaded(true);
     })();
   }, [selectedCampaignId]);
@@ -170,15 +239,20 @@ function EndOfCampaignNotesCard({ isOpen, onToggle, campaigns }) {
   useEffect(() => {
     if (!selectedCampaignId || !loaded) return;
     if (skipNextSaveRef.current) { skipNextSaveRef.current = false; return; }
-    const t = setTimeout(() => {
-      supabase.from("campaign_eoc_notes").upsert({
+    setSaveState("saving");
+    const t = setTimeout(async () => {
+      await supabase.from("campaign_eoc_notes").upsert({
         campaign_id: selectedCampaignId,
         content,
         updated_at: new Date().toISOString(),
       });
+      setSaveState("saved");
+      setLastSavedAt(new Date().toISOString());
+      refreshRecent();
+      savedTimerRef.current = setTimeout(() => setSaveState("idle"), 2000);
     }, 800);
-    return () => clearTimeout(t);
-  }, [content, selectedCampaignId, loaded]);
+    return () => { clearTimeout(t); clearTimeout(savedTimerRef.current); };
+  }, [content, selectedCampaignId, loaded, refreshRecent]);
 
   const filteredCampaigns = campaigns.filter(
     (c) => !search.trim() || c.title.toLowerCase().includes(search.trim().toLowerCase())
@@ -193,6 +267,25 @@ function EndOfCampaignNotesCard({ isOpen, onToggle, campaigns }) {
       onToggle={onToggle}
     >
       <div className="space-y-3">
+        {/* Recently edited strip — top 4 by updated_at */}
+        {recent.length > 0 && !selectedCampaignId && (
+          <div>
+            <p className="text-[10px] font-black uppercase tracking-widest text-[#94a3b8] mb-2 px-1">Recently edited</p>
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+              {recent.map((r) => (
+                <button
+                  key={r.id}
+                  onClick={() => setSelectedCampaignId(r.id)}
+                  className="group text-left px-3 py-2.5 rounded-xl border border-[#dce4ec] bg-white hover:border-[#12a0e1]/40 hover:shadow-sm transition-all"
+                >
+                  <p className="text-xs font-bold text-[#122027] truncate group-hover:text-[#12a0e1] transition-colors">{r.title}</p>
+                  <p className="text-[10px] font-semibold text-[#94a3b8] mt-0.5">{relativeTime(r.updated_at)}</p>
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+
         <div className="relative">
           <button
             onClick={() => setPickerOpen((v) => !v)}
@@ -231,11 +324,16 @@ function EndOfCampaignNotesCard({ isOpen, onToggle, campaigns }) {
         </div>
 
         {selectedCampaignId ? (
-          <div data-color-mode="light" className="rounded-xl overflow-hidden border border-[#dce4ec]">
-            <MDEditor value={content} onChange={(v) => setContent(v || "")} height={340} preview="live" />
-          </div>
+          <>
+            <div data-color-mode="light" className="rounded-xl overflow-hidden border border-[#dce4ec]">
+              <MDEditor value={content} onChange={(v) => setContent(v || "")} height={420} preview="live" />
+            </div>
+            <div className="flex items-center justify-end pt-1">
+              <SaveStatus state={saveState} lastSavedAt={lastSavedAt} />
+            </div>
+          </>
         ) : (
-          <p className="text-center text-sm font-bold text-[#768994] py-8">Pick a campaign above to write its wrap-up notes.</p>
+          <p className="text-center text-sm font-bold text-[#768994] py-8">Pick a campaign above — or jump back into a recent one — to write its wrap-up notes.</p>
         )}
       </div>
     </CollapsibleCard>
@@ -267,6 +365,9 @@ function NotesCanvasCard({ isOpen, onToggle }) {
   const [selectedPageId, setSelectedPageId] = useState(null);
   const [addingFolder, setAddingFolder] = useState(false);
   const [newFolderName, setNewFolderName] = useState("");
+  const [pageSaveState, setPageSaveState] = useState("idle");
+  const [pageLastSavedAt, setPageLastSavedAt] = useState(null);
+  const savedTimerRef = useRef(null);
 
   useEffect(() => {
     if (!isOpen) return;
@@ -322,8 +423,20 @@ function NotesCanvasCard({ isOpen, onToggle }) {
 
   const savePageContent = async (pageId, blocks) => {
     setPages((prev) => prev.map((p) => (p.id === pageId ? { ...p, content: blocks } : p)));
+    setPageSaveState("saving");
     await supabase.from("canvas_notes_pages").update({ content: blocks, updated_at: new Date().toISOString() }).eq("id", pageId);
+    setPageSaveState("saved");
+    setPageLastSavedAt(new Date().toISOString());
+    clearTimeout(savedTimerRef.current);
+    savedTimerRef.current = setTimeout(() => setPageSaveState("idle"), 2000);
   };
+
+  // Reset save state when switching pages
+  useEffect(() => {
+    setPageSaveState("idle");
+    const p = pages.find((pg) => pg.id === selectedPageId);
+    setPageLastSavedAt(p?.updated_at || null);
+  }, [selectedPageId]);
 
   const selectedPage = pages.find((p) => p.id === selectedPageId);
 
@@ -393,7 +506,12 @@ function NotesCanvasCard({ isOpen, onToggle }) {
                           className={`group/page flex items-center gap-1.5 px-1.5 py-1 rounded-lg cursor-pointer ${page.id === selectedPageId ? "bg-[#12a0e1]/10 text-[#12a0e1]" : "hover:bg-black/5 text-[#122027]"}`}
                         >
                           <FileText className="w-3 h-3 shrink-0" />
-                          <span className="text-xs font-semibold truncate flex-1">{page.title || "Untitled"}</span>
+                          <div className="flex-1 min-w-0">
+                            <span className="text-xs font-semibold truncate block leading-tight">{page.title || "Untitled"}</span>
+                            {page.updated_at && (
+                              <span className={`text-[9px] font-semibold ${page.id === selectedPageId ? "text-[#12a0e1]/60" : "text-[#94a3b8]"}`}>{relativeTime(page.updated_at)}</span>
+                            )}
+                          </div>
                           <button
                             onClick={(e) => { e.stopPropagation(); deletePage(page.id); }}
                             className="opacity-0 group-hover/page:opacity-100 p-0.5 rounded hover:bg-red-50 text-red-400"
@@ -420,12 +538,17 @@ function NotesCanvasCard({ isOpen, onToggle }) {
         <div className="flex-1 min-w-0 rounded-xl border border-[#dce4ec] bg-white overflow-hidden">
           {selectedPage ? (
             <>
-              <input
-                value={selectedPage.title}
-                onChange={(e) => renamePage(selectedPage.id, e.target.value)}
-                className="w-full px-4 py-2.5 border-b border-[#dce4ec] outline-none text-sm font-black text-[#122027]"
-                placeholder="Untitled"
-              />
+              <div className="flex items-center border-b border-[#dce4ec]">
+                <input
+                  value={selectedPage.title}
+                  onChange={(e) => renamePage(selectedPage.id, e.target.value)}
+                  className="flex-1 px-4 py-2.5 outline-none text-sm font-black text-[#122027] bg-transparent"
+                  placeholder="Untitled"
+                />
+                <div className="px-3 shrink-0">
+                  <SaveStatus state={pageSaveState} lastSavedAt={pageLastSavedAt} />
+                </div>
+              </div>
               <NotesCanvasPageEditor
                 key={selectedPage.id}
                 page={selectedPage}
@@ -433,9 +556,23 @@ function NotesCanvasCard({ isOpen, onToggle }) {
               />
             </>
           ) : (
-            <p className="text-center text-sm font-bold text-[#768994] py-16 px-4">
-              Pick or create a topic, then a page, to start scribbling.
-            </p>
+            <div className="flex flex-col items-center justify-center text-center py-16 px-4 gap-4">
+              <div className="w-14 h-14 rounded-2xl bg-[#12a0e1]/10 text-[#12a0e1] flex items-center justify-center">
+                <FileText className="w-7 h-7" />
+              </div>
+              <div>
+                <p className="text-sm font-bold text-[#122027]">No page selected</p>
+                <p className="text-xs font-semibold text-[#768994] mt-1">Pick a topic on the left, then create a page to start scribbling.</p>
+              </div>
+              {folders.length > 0 && (
+                <button
+                  onClick={() => { setSelectedFolderId(folders[0].id); addPage(folders[0].id); }}
+                  className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-[#12a0e1] hover:bg-[#0f88c0] text-white text-xs font-black uppercase tracking-widest transition-colors active:scale-95"
+                >
+                  <Plus className="w-4 h-4" /> New page
+                </button>
+              )}
+            </div>
           )}
         </div>
       </div>
@@ -578,6 +715,17 @@ export default function CampaignCanvas({ wrikeData = [], folderCampaigns = [], t
     const next = Object.fromEntries(keys.map((k) => [k, open]));
     setExpandedRegions(next);
     localStorage.setItem("canvas_reference_expanded", JSON.stringify(next));
+  };
+
+  // --- Reference tab navigation: DOOH Specs / End of Campaign / Notes Canvas.
+  // The three sections used to live in a long vertical stack under a single
+  // "Reference" divider, so every page load dropped the user onto a wall of
+  // open editors with no focus. Surfacing them as tabs means the user picks a
+  // surface and lands on it; the last viewed tab survives a refresh.
+  const [refTab, setRefTab] = useState(() => localStorage.getItem("canvas_reference_tab") || "dooh");
+  const switchRefTab = (tab) => {
+    setRefTab(tab);
+    localStorage.setItem("canvas_reference_tab", tab);
   };
   const [uploadingCountry, setUploadingCountry] = useState(null);
   const [deletingAssetId, setDeletingAssetId] = useState(null);
@@ -2259,12 +2407,41 @@ export default function CampaignCanvas({ wrikeData = [], folderCampaigns = [], t
                 </section>
               )}
 
-              {/* ============ DOOH SPECS ============ */}
-              <div className="mt-12 mb-8 flex items-center gap-4" aria-hidden="true">
-                <div className="h-px flex-1 bg-gradient-to-r from-transparent via-[#cdd7e1] to-[#cdd7e1]" />
-                <span className="text-[10px] font-black uppercase tracking-[0.2em] text-[#94a3b8]">Reference</span>
-                <div className="h-px flex-1 bg-gradient-to-l from-transparent via-[#cdd7e1] to-[#cdd7e1]" />
+              {/* ============ REFERENCE TAB BAR ============ */}
+              {/* Sticky pill that lets the user switch between the three Reference
+                  surfaces (DOOH Specs / End of Campaign / Notes Canvas) without
+                  scrolling through all of them. The active tab body renders
+                  below; the others are unmounted so their editors don't fight
+                  for scroll position or steal cmd-k shortcuts. */}
+              <div className="mt-12 mb-6 sticky top-2 z-30">
+                <div className="flex items-center gap-1 px-2 py-1.5 bg-white/85 backdrop-blur-md border border-[#dce4ec] rounded-2xl shadow-sm overflow-x-auto">
+                  <span className="text-[10px] font-black uppercase tracking-[0.2em] text-[#94a3b8] pl-1.5 pr-2.5 shrink-0 border-r border-[#eef1f5] mr-1">Reference</span>
+                  {[
+                    { id: "dooh",  label: "DOOH Specs",    icon: Globe,    count: doohCountries.length },
+                    { id: "eoc",   label: "End of Campaign", icon: FileText, count: campaigns.length },
+                    { id: "notes", label: "Notes Canvas",  icon: Folder,   count: null },
+                  ].map((tab) => (
+                    <button
+                      key={tab.id}
+                      onClick={() => switchRefTab(tab.id)}
+                      className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-[11px] font-black uppercase tracking-widest transition-colors shrink-0 ${
+                        refTab === tab.id ? "bg-[#12a0e1] text-white shadow-sm" : "text-[#768994] hover:text-[#122027] hover:bg-black/[0.04]"
+                      }`}
+                    >
+                      <tab.icon className="w-3.5 h-3.5" />
+                      {tab.label}
+                      {tab.count != null && (
+                        <span className={`ml-0.5 text-[10px] font-black tabular-nums ${refTab === tab.id ? "text-white/70" : "text-[#b0bec5]"}`}>
+                          {tab.count}
+                        </span>
+                      )}
+                    </button>
+                  ))}
+                </div>
               </div>
+
+              {/* ============ DOOH SPECS ============ */}
+              {refTab === "dooh" && (
               <section className="rounded-3xl bg-white/60 border border-[#dce4ec] shadow-sm p-5 sm:p-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
                 <div className="flex flex-wrap items-center gap-3 mb-5 px-1">
                   <div className="w-9 h-9 rounded-xl bg-[#12a0e1]/10 text-[#12a0e1] flex items-center justify-center shadow-sm shrink-0">
@@ -2385,18 +2562,28 @@ export default function CampaignCanvas({ wrikeData = [], folderCampaigns = [], t
                   );
                 })()}
               </section>
+              )}
 
-              <div className="mt-6 space-y-6">
+              {/* ============ END OF CAMPAIGN NOTES ============ */}
+              {refTab === "eoc" && (
+              <div className="space-y-6">
                 <EndOfCampaignNotesCard
                   isOpen={expandedRegions["eocNotes"] ?? true}
                   onToggle={() => toggleRegion("eocNotes")}
                   campaigns={campaigns}
                 />
+              </div>
+              )}
+
+              {/* ============ NOTES CANVAS ============ */}
+              {refTab === "notes" && (
+              <div className="space-y-6">
                 <NotesCanvasCard
                   isOpen={expandedRegions["notesCanvas"] ?? true}
                   onToggle={() => toggleRegion("notesCanvas")}
                 />
               </div>
+              )}
             </div>
           );
         })()}

@@ -1,7 +1,8 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { supabase } from "../lib/supabaseClient";
-import { getFilmName } from "../lib/wrikeEnrich";
+import { getFilmName, PRINT_HUB_RE } from "../lib/wrikeEnrich";
+import { fetchTasksByIds } from "../hooks/useWrikeCache";
 import { useCreateBlockNote } from "@blocknote/react";
 import { BlockNoteView } from "@blocknote/mantine";
 import "@blocknote/core/fonts/inter.css";
@@ -50,6 +51,7 @@ import {
   User,
   Maximize2,
   Minimize2,
+  Printer,
 } from "lucide-react";
 
 // --- DOOH country → region grouping ---
@@ -1115,6 +1117,512 @@ const parseFormatting = (text) => {
   return html;
 };
 
+// ---------------------------------------------------------------------------
+// Reference > Launch Tracker (Print): per-launch-wave market delivery grid.
+// Print coordinates each launch through a Wrike hub task ("*_Launch_Print_
+// Requests" / "*_Launch_Markets") whose subtasks are the per-market requests
+// ("AB3_INTL_Print_Teaser1SHT_Birds_CMYK_KR"). The hub description carries the
+// job-folder paths, OV master links, the shared GD sheet and the per-market
+// packaging checklist — all parsed into notesText by the sync (wrikeEnrich).
+// ---------------------------------------------------------------------------
+
+// Trailing market code from a per-market subtask title. Allows compound codes
+// (NL-ENG, IN-HI) and template placeholders (MARKET).
+const marketFromTitle = (title) => {
+  const m = (title || "").match(/_([A-Za-z]{2,6}(?:-[A-Za-z]{2,4})?)$/);
+  return m ? m[1].toUpperCase() : null;
+};
+
+// Hub titles come straight from Wrike as "ZAL_Print_Launch_Hub" etc — the
+// film-code prefix isn't user-friendly. Replace it with the full film title
+// from FILM_MAPPINGS when one exists; leave non-matching titles untouched.
+const prettifyHubTitle = (rawTitle) => {
+  if (!rawTitle) return "";
+  const parts = rawTitle.split(/_/);
+  const first = parts[0]?.toUpperCase();
+  if (FILM_MAPPINGS[first]) {
+    parts[0] = FILM_MAPPINGS[first];
+    return parts.join(" ");
+  }
+  return rawTitle.replace(/_/g, " ");
+};
+
+// Wrike market codes that aren't ISO 3166 (or aren't a single country at all).
+const MARKET_CODE_FIXUPS = { UK: "GB" };
+const NON_COUNTRY_MARKETS = new Set(["MARKET", "LAS", "CIS", "INT", "INTL", "OV"]);
+const marketFlagEmoji = (code) => {
+  if (!code || NON_COUNTRY_MARKETS.has(code)) return "";
+  const base = MARKET_CODE_FIXUPS[code] || code.split("-")[0];
+  return /^[A-Z]{2}$/.test(base) ? codeToFlag(base) : "";
+};
+
+// Traffic-light bucket for a subtask's workflow status name.
+const launchStatusStyle = (statusName) => {
+  const s = (statusName || "").toLowerCase();
+  if (/(complete|deliver|approved)/.test(s)) return { dot: "bg-[#1baf7a]", chip: "border-[#1baf7a]/30 bg-[#1baf7a]/5" };
+  if (/(hold|defer)/.test(s))                return { dot: "bg-amber-400", chip: "border-amber-300/60 bg-amber-50" };
+  if (/cancel/.test(s))                      return { dot: "bg-slate-300", chip: "border-slate-200 bg-slate-50 opacity-60" };
+  return { dot: "bg-[#12a0e1]", chip: "border-[#12a0e1]/30 bg-[#12a0e1]/5" };
+};
+const isLaunchDone = (statusName) => /(complete|deliver)/i.test(statusName || "");
+
+// Pull the reusable bits out of a hub's parsed description: server paths, the
+// shared Google-Sheet tracker link, and the packaging-checklist tail.
+const parseHubNotes = (notesText) => {
+  const text = notesText || "";
+  const gdLink = (text.match(/https:\/\/docs\.google\.com\/[^\s"']+/) || [])[0] || null;
+  const paths = [...new Set(text.match(/\/Volumes\/[^\s"']+/g) || [])];
+  const ckIdx = text.search(/PACKAGING\s*CHECKLIST/i);
+  const checklist = ckIdx >= 0
+    ? text.slice(ckIdx).split("\n").slice(1).map((l) => l.trim()).filter(Boolean)
+    : [];
+  return { gdLink, paths, checklist };
+};
+
+const wrikeTaskLink = (t) => t.permalink || `https://www.wrike.com/open.htm?id=${t.id}`;
+
+// One chip per MARKET (not per subtask — digital waves carry several requests
+// per market, and a wall of five separate DE chips read as noise). Aggregate
+// status decides the chip's colour; multi-request markets show a done/total
+// fraction and open a popover listing the individual Wrike tasks.
+const aggregateChipStyle = (m) => {
+  if (m.activeCount === 0)      return { chip: "border-slate-200 bg-slate-50 opacity-60", dot: "bg-slate-300" };   // all cancelled
+  if (m.done === m.activeCount) return { chip: "border-[#1baf7a]/30 bg-[#1baf7a]/5",      dot: "bg-[#1baf7a]" };   // delivered
+  if (m.allOnHold)              return { chip: "border-amber-300/60 bg-amber-50",          dot: "bg-amber-400" };   // parked
+  return { chip: "border-[#12a0e1]/30 bg-[#12a0e1]/5", dot: "bg-[#12a0e1]" };                                      // in flight
+};
+
+function MarketChip({ market }) {
+  const [open, setOpen] = useState(false);
+  const style = aggregateChipStyle(market);
+  const flag = marketFlagEmoji(market.code);
+  const label = market.code === "MARKET" ? "Template" : market.code === "OTHER" ? "Other" : market.code;
+  const single = market.items.length === 1;
+
+  const face = (
+    <>
+      {flag ? (
+        <CountryFlag flag={flag} imgClass="w-5 h-[14px]" textClass="text-[11px]" />
+      ) : (
+        <Globe className="w-3.5 h-3.5 text-[#768994]" />
+      )}
+      {label}
+      {!single && (
+        <span className="text-[10px] font-bold text-[#768994] tabular-nums">
+          {market.done}/{market.activeCount || market.items.length}
+        </span>
+      )}
+      <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${style.dot}`} />
+    </>
+  );
+
+  // Single request → chip links straight to its Wrike task, same as before.
+  if (single) {
+    const { task, status } = market.items[0];
+    return (
+      <a
+        href={wrikeTaskLink(task)}
+        target="_blank"
+        rel="noopener noreferrer"
+        title={`${task.title} — ${status}`}
+        className={`flex items-center gap-1.5 pl-1.5 pr-2 py-1 rounded-lg border text-[11px] font-black text-[#122027] hover:shadow-sm transition-shadow ${style.chip}`}
+      >
+        {face}
+      </a>
+    );
+  }
+
+  // Several requests behind one market → popover lists each as its own link.
+  return (
+    <div className="relative">
+      <button
+        onClick={() => setOpen((v) => !v)}
+        title={`${market.items.length} requests — click to list`}
+        className={`flex items-center gap-1.5 pl-1.5 pr-2 py-1 rounded-lg border text-[11px] font-black text-[#122027] hover:shadow-sm transition-shadow ${style.chip}`}
+      >
+        {face}
+      </button>
+      {open && (
+        <>
+          <div className="fixed inset-0 z-20" onClick={() => setOpen(false)} />
+          <div className="absolute z-30 top-full left-0 mt-1.5 w-72 max-h-64 overflow-y-auto bg-white border border-[#dce4ec] rounded-xl shadow-xl p-1.5 space-y-0.5">
+            {market.items.map(({ task, status }) => {
+              const s = launchStatusStyle(status);
+              return (
+                <a
+                  key={task.id}
+                  href={wrikeTaskLink(task)}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="flex items-center gap-2 px-2 py-1.5 rounded-lg hover:bg-slate-50 transition-colors"
+                >
+                  <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${s.dot}`} />
+                  <span className="text-[11px] font-semibold text-[#122027] truncate flex-1">{task.title.replace(/_/g, " ")}</span>
+                  <span className="text-[9px] font-bold text-[#768994] uppercase tracking-wide shrink-0">{status}</span>
+                </a>
+              );
+            })}
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+function LaunchHubCard({ hub, subs }) {
+  const [expanded, setExpanded] = useState(false);
+  const [showDetails, setShowDetails] = useState(false);
+  const [copiedPath, setCopiedPath] = useState(null);
+  const { gdLink, paths, checklist } = parseHubNotes(hub.notesText);
+
+  // Group subtasks by market code; no-code strays pool into "OTHER" and
+  // template placeholders (_MARKET) keep their own bucket. Alphabetical for
+  // findability, Template and Other pinned last.
+  const byCode = new Map();
+  for (const s of subs) {
+    const code = marketFromTitle(s.title) || "OTHER";
+    if (!byCode.has(code)) byCode.set(code, []);
+    byCode.get(code).push({ task: s, status: s.customStatusName || s.status || "" });
+  }
+  const markets = [...byCode.entries()]
+    .map(([code, items]) => {
+      const cancelled = items.filter((i) => /cancel/i.test(i.status)).length;
+      const activeCount = items.length - cancelled;
+      const done = items.filter((i) => isLaunchDone(i.status)).length;
+      const allOnHold = activeCount > 0 && items.filter((i) => !/cancel/i.test(i.status)).every((i) => /(hold|defer)/i.test(i.status));
+      return { code, items, done, activeCount, allOnHold };
+    })
+    .sort((a, b) => {
+      const rank = (c) => (c === "OTHER" ? 2 : c === "MARKET" ? 1 : 0);
+      return rank(a.code) - rank(b.code) || a.code.localeCompare(b.code);
+    });
+
+  // Header + progress speak in MARKETS (the unit Print thinks in), not raw
+  // request-subtask counts: a market is done when every non-cancelled request
+  // in it is delivered. All-cancelled markets drop out of the denominator.
+  const countable = markets.filter((m) => m.code !== "MARKET" && m.activeCount > 0);
+  const done = countable.filter((m) => m.done === m.activeCount).length;
+  const totalRequests = subs.length;
+  const pct = countable.length > 0 ? Math.round((done / countable.length) * 100) : 0;
+  const allDone = done === countable.length && countable.length > 0;
+  const onHoldCount = markets.filter((m) => m.allOnHold).length;
+  const hasFlags = markets.some((m) => marketFlagEmoji(m.code));
+  const previewFlags = markets.filter((m) => marketFlagEmoji(m.code)).slice(0, 4);
+  const extraFlagCount = markets.filter((m) => marketFlagEmoji(m.code)).length - previewFlags.length;
+
+  const copyPath = (p) => {
+    navigator.clipboard?.writeText(p);
+    setCopiedPath(p);
+    setTimeout(() => setCopiedPath(null), 1500);
+  };
+
+  return (
+    <div
+      className={`group rounded-2xl border bg-white overflow-hidden transition-all duration-200 ${
+        allDone ? "border-[#1baf7a]/30 bg-gradient-to-br from-[#1baf7a]/[0.04] to-white"
+        : onHoldCount === countable.length && countable.length > 0 ? "border-amber-200"
+        : "border-[#dce4ec] hover:border-[#12a0e1]/40 hover:shadow-sm"
+      }`}
+    >
+      {/* Clickable header — collapsed shows everything scannable in one row */}
+      <button
+        type="button"
+        onClick={() => setExpanded((v) => !v)}
+        className={`w-full flex items-center gap-3 p-3.5 text-left ${expanded ? "pb-3" : ""}`}
+      >
+        {/* Progress ring — replaces the small "done/countable" text */}
+        <span className="relative shrink-0 w-10 h-10 rounded-full flex items-center justify-center">
+          <svg viewBox="0 0 36 36" className="absolute inset-0 w-full h-full -rotate-90">
+            <circle cx="18" cy="18" r="15" fill="none" stroke="#eef1f5" strokeWidth="3.5" />
+            {countable.length > 0 && (
+              <circle
+                cx="18" cy="18" r="15" fill="none" stroke={allDone ? "#1baf7a" : "#c2410d"} strokeWidth="3.5"
+                strokeDasharray={`${(done / countable.length) * 94.25} 94.25`}
+                strokeLinecap="round"
+                className="transition-all duration-500"
+              />
+            )}
+          </svg>
+          <span className={`relative text-[10px] font-black tabular-nums ${allDone ? "text-[#1baf7a]" : "text-[#122027]"}`}>
+            {countable.length > 0 ? `${done}` : "--"}
+          </span>
+        </span>
+
+        <span className="flex-1 min-w-0">
+          {hub.projectName && (
+            <span className="block text-[9px] font-black uppercase tracking-[0.15em] text-[#c2410d] truncate mb-0.5">{hub.projectName}</span>
+          )}
+          <span className="block text-sm font-black text-[#122027] truncate leading-tight">{prettifyHubTitle(hub.title)}</span>
+          <span className="flex items-center gap-1.5 mt-0.5 flex-wrap">
+            <span className="text-[10px] font-bold text-[#768994]">{hub.customStatusName || hub.status}</span>
+            {countable.length > 0 && (
+              <>
+                <span className="text-[#dce4ec]">·</span>
+                <span className={`text-[10px] font-black ${allDone ? "text-[#1baf7a]" : "text-[#122027]"}`}>
+                  {done}/{countable.length} markets
+                </span>
+                {totalRequests > countable.length && (
+                  <span className="text-[10px] font-semibold text-[#94a3b8]">· {totalRequests} requests</span>
+                )}
+              </>
+            )}
+            {onHoldCount > 0 && !allDone && (
+              <span className="text-[10px] font-black text-amber-500">· {onHoldCount} on hold</span>
+            )}
+          </span>
+        </span>
+
+        {/* Compact flag preview — collapses the wall of chips into 4 + "N" */}
+        {!expanded && hasFlags && (
+          <span className="hidden sm:flex items-center -space-x-1.5 shrink-0">
+            {previewFlags.map((m) => {
+              const st = aggregateChipStyle(m);
+              const flag = marketFlagEmoji(m.code);
+              return (
+                <span
+                  key={m.code}
+                  title={`${m.code} — ${m.done}/${m.activeCount} delivered`}
+                  className={`relative w-7 h-5 rounded-md overflow-hidden ring-2 ring-white ${st.dot} flex items-center justify-center`}
+                >
+                  <CountryFlag flag={flag} imgClass="w-full h-full" textClass="text-[9px]" />
+                </span>
+              );
+            })}
+            {extraFlagCount > 0 && (
+              <span className="relative w-7 h-5 rounded-md bg-slate-100 ring-2 ring-white flex items-center justify-center text-[9px] font-black text-[#768994] tabular-nums">
+                +{extraFlagCount}
+              </span>
+            )}
+          </span>
+        )}
+
+        <span className="flex items-center gap-1 shrink-0">
+          <a
+            href={wrikeTaskLink(hub)}
+            target="_blank"
+            rel="noopener noreferrer"
+            onClick={(e) => e.stopPropagation()}
+            title="Open in Wrike"
+            className="p-1.5 rounded-lg text-[#768994] hover:text-[#c2410d] hover:bg-slate-50 transition-colors inline-flex"
+          >
+            <ExternalLink className="w-3.5 h-3.5" />
+          </a>
+          <ChevronRight className={`w-4 h-4 text-[#768994] transition-transform ${expanded ? "rotate-90" : ""}`} />
+        </span>
+      </button>
+
+      {/* Expanded body — market chips + paths + checklist, slides in */}
+      {expanded && (
+        <div className="px-3.5 pb-3.5 space-y-3 animate-in fade-in slide-in-from-top-1 duration-200">
+          {countable.length > 0 && (
+            <div className="h-1.5 rounded-full bg-slate-100 overflow-hidden">
+              <div
+                className={`h-full rounded-full transition-all duration-500 ${allDone ? "bg-[#1baf7a]" : "bg-gradient-to-r from-amber-500 to-orange-600"}`}
+                style={{ width: `${pct}%` }}
+              />
+            </div>
+          )}
+
+          {markets.length > 0 ? (
+            <div className="flex flex-wrap gap-1.5">
+              {markets.map((m) => (
+                <MarketChip key={m.code} market={m} />
+              ))}
+            </div>
+          ) : (
+            <p className="text-[11px] font-bold text-[#94a3b8]">No market subtasks synced yet.</p>
+          )}
+
+          {(paths.length > 0 || gdLink || checklist.length > 0) && (
+            <div className="pt-2 border-t border-[#eef1f5]">
+              <div className="flex items-center gap-3">
+                {(paths.length > 0 || checklist.length > 0) && (
+                  <button
+                    onClick={() => setShowDetails((v) => !v)}
+                    className="flex items-center gap-1 text-[10px] font-black uppercase tracking-widest text-[#768994] hover:text-[#122027]"
+                  >
+                    <ChevronRight className={`w-3 h-3 transition-transform ${showDetails ? "rotate-90" : ""}`} />
+                    Paths & checklist
+                  </button>
+                )}
+                {gdLink && (
+                  <a
+                    href={gdLink}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="flex items-center gap-1 text-[10px] font-black uppercase tracking-widest text-[#c2410d] hover:text-[#9a3412]"
+                  >
+                    <ExternalLink className="w-3 h-3" /> GD Sheet
+                  </a>
+                )}
+              </div>
+              {showDetails && (
+                <div className="space-y-1.5 pt-2">
+                  {paths.map((p) => (
+                    <button
+                      key={p}
+                      onClick={() => copyPath(p)}
+                      title="Copy path"
+                      className="group flex items-center gap-1.5 max-w-full text-left"
+                    >
+                      {copiedPath === p
+                        ? <Check className="w-3 h-3 shrink-0 text-[#1baf7a]" />
+                        : <Copy className="w-3 h-3 shrink-0 text-[#94a3b8] group-hover:text-[#c2410d]" />}
+                      <span className="text-[10px] font-semibold text-[#768994] group-hover:text-[#122027] truncate font-mono">{p}</span>
+                    </button>
+                  ))}
+                  {checklist.length > 0 && (
+                    <ul className="space-y-0.5 pl-1 pt-1">
+                      {checklist.map((line, i) => (
+                        <li key={i} className="text-[11px] font-semibold text-[#4b5c68] leading-snug">{line}</li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function PrintLaunchTrackerCard({ isOpen, onToggle, hubs, taskById }) {
+  // Hub subtasks that predate the widened sync filter aren't in the cache yet —
+  // hydrate them straight from Wrike for display. Attempted ids are remembered
+  // so tasks Wrike won't return don't trigger a refetch loop.
+  const [extraSubs, setExtraSubs] = useState({});
+  const attemptedRef = useRef(new Set());
+
+  useEffect(() => {
+    if (!isOpen) return;
+    const missing = [];
+    for (const hub of hubs) {
+      for (const id of hub.subTaskIds || []) {
+        if (!taskById.has(id) && !attemptedRef.current.has(id)) {
+          attemptedRef.current.add(id);
+          missing.push(id);
+        }
+      }
+    }
+    if (!missing.length) return;
+    let alive = true;
+    fetchTasksByIds(missing).then((list) => {
+      if (!alive) return;
+      if (!list.length) {
+        // Whole fetch came back empty — a transient failure (rate limit,
+        // expired session), not "these tasks don't exist". Unmark so the
+        // next open/remount retries instead of writing the session off.
+        missing.forEach((id) => attemptedRef.current.delete(id));
+        return;
+      }
+      setExtraSubs((prev) => {
+        const next = { ...prev };
+        list.forEach((t) => { next[t.id] = t; });
+        return next;
+      });
+    });
+    return () => { alive = false; };
+  }, [isOpen, hubs, taskById]);
+
+  // Flat grid, freshest work first. Hubs whose own status is wrapped
+  // (Delivered / Completed / Cancelled) are months-old campaigns — hidden by
+  // default behind a toggle so the tracker opens on what's actually live.
+  // The same bucket catches hubs whose Wrike status hasn't flipped yet but
+  // every market IS delivered — those are work visually complete, just not
+  //yet reflected in Wrike.
+  const [showWrapped, setShowWrapped] = useState(false);
+  const { active, wrapped } = useMemo(() => {
+    const withSubs = hubs
+      .map((hub) => ({
+        hub,
+        subs: (hub.subTaskIds || [])
+          .map((id) => taskById.get(id) || extraSubs[id])
+          .filter(Boolean),
+      }))
+      .sort((a, b) => (b.hub.updatedDate || "").localeCompare(a.hub.updatedDate || ""));
+
+    // Status-rolled-up case: Wrike already says the whole hub is done.
+    const hubStatusWrapped = ({ hub }) =>
+      /(deliver|complete|cancel)/i.test(hub.customStatusName || hub.status || "");
+
+    // A hub is "all-markets-done" when it has ≥1 countable market and every
+    // one of those markets is fully delivered — guards against a null `subs`
+    // or a no-market hub being misclassified as wrapped.
+    const allMarketsDone = ({ subs }) => {
+      if (!subs || subs.length === 0) return false;
+      const byCode = new Map();
+      for (const s of subs) {
+        const code = marketFromTitle(s.title) || "OTHER";
+        (byCode.has(code) ? byCode.get(code) : byCode.set(code, []).get(code)).push(s);
+      }
+      let countable = 0, done = 0;
+      for (const [code, items] of byCode) {
+        if (code === "MARKET") continue;
+        const cancelled = items.filter((i) => /cancel/i.test(i.customStatusName || i.status || "")).length;
+        const activeCount = items.length - cancelled;
+        if (activeCount === 0) continue;
+        countable++;
+        if (items.filter((i) => isLaunchDone(i.customStatusName || i.status || "")).length === activeCount) done++;
+      }
+      return countable > 0 && done === countable;
+    };
+
+    const isWrapped = (h) => hubStatusWrapped(h) || allMarketsDone(h);
+    return {
+      active: withSubs.filter((h) => !isWrapped(h)),
+      wrapped: withSubs.filter(isWrapped),
+    };
+  }, [hubs, taskById, extraSubs]);
+  const visible = showWrapped ? [...active, ...wrapped] : active;
+
+  return (
+    <CollapsibleCard
+      icon={Printer}
+      title="Launch Tracker"
+      subtitle={`Per-market print requests · ${active.length} live`}
+      isOpen={isOpen}
+      onToggle={onToggle}
+    >
+      {hubs.length === 0 ? (
+        <p className="text-center text-sm font-bold text-[#768994] py-16">
+          No launch hubs synced yet — hit Sync to pull Print requests from Wrike.
+        </p>
+      ) : (
+        <div className="space-y-4">
+          {wrapped.length > 0 && (
+            <div className="flex justify-end">
+              <button
+                onClick={() => setShowWrapped((v) => !v)}
+                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl border text-[10px] font-black uppercase tracking-widest transition-colors ${
+                  showWrapped
+                    ? "border-[#c2410d]/40 bg-[#c2410d]/5 text-[#c2410d]"
+                    : "border-[#dce4ec] bg-white text-[#768994] hover:text-[#122027]"
+                }`}
+              >
+                <Check className={`w-3 h-3 ${showWrapped ? "" : "opacity-30"}`} />
+                Wrapped · {wrapped.length}
+              </button>
+            </div>
+          )}
+          {visible.length === 0 ? (
+            <p className="text-center text-sm font-bold text-[#768994] py-10">
+              Nothing live right now — {wrapped.length} wrapped launch{wrapped.length === 1 ? "" : "es"} hidden above.
+            </p>
+          ) : (
+            <div className="grid grid-cols-1 lg:grid-cols-2 2xl:grid-cols-3 gap-4">
+              {visible.map(({ hub, subs }) => (
+                <LaunchHubCard key={hub.id} hub={hub} subs={subs} />
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+    </CollapsibleCard>
+  );
+}
+
 export default function CampaignCanvas({ wrikeData = [], folderCampaigns = [], triggerToast: _triggerToast, isLoading = false, syncNow, isSyncing = false, isAdmin = false, scanFilmMappings, isScanning = false, filmCodeMappings = {} }) {
   const triggerToast = _triggerToast ?? ((msg) => console.warn("Toast:", msg));
   // Same null-falls-back-to-Motion convention used everywhere else
@@ -1176,16 +1684,12 @@ export default function CampaignCanvas({ wrikeData = [], folderCampaigns = [], t
     localStorage.setItem("canvas_reference_expanded", JSON.stringify(next));
   };
 
-  // --- Reference tab navigation: DOOH Specs / End of Campaign / Notes Canvas.
-  // The three sections used to live in a long vertical stack under a single
-  // "Reference" divider, so every page load dropped the user onto a wall of
-  // open editors with no focus. Surfacing them as tabs means the user picks a
-  // surface and lands on it; the last viewed tab survives a refresh.
-  const [refTab, setRefTab] = useState(() => localStorage.getItem("canvas_reference_tab") || "dooh");
-  const switchRefTab = (tab) => {
-    setRefTab(tab);
-    localStorage.setItem("canvas_reference_tab", tab);
-  };
+  // --- Launch Tracker (Print): hub tasks + id lookup for their subtasks ---
+  const taskById = useMemo(() => new Map(wrikeData.map((t) => [t.id, t])), [wrikeData]);
+  const printLaunchHubs = useMemo(
+    () => wrikeData.filter((t) => t.title && PRINT_HUB_RE.test(t.title)),
+    [wrikeData]
+  );
   const [uploadingCountry, setUploadingCountry] = useState(null);
   const [deletingAssetId, setDeletingAssetId] = useState(null);
   const [deletingCountryId, setDeletingCountryId] = useState(null);
@@ -2843,36 +3347,25 @@ export default function CampaignCanvas({ wrikeData = [], folderCampaigns = [], t
                   scrolling through all of them. The active tab body renders
                   below; the others are unmounted so their editors don't fight
                   for scroll position or steal cmd-k shortcuts. */}
-              <div className="mt-12 mb-6 sticky top-2 z-30">
-                <div className="flex items-center gap-1 px-2 py-1.5 bg-white/85 backdrop-blur-md border border-[#dce4ec] rounded-2xl shadow-sm overflow-x-auto">
-                  <span className="text-[10px] font-black uppercase tracking-[0.2em] text-[#94a3b8] pl-1.5 pr-2.5 shrink-0 border-r border-[#eef1f5] mr-1">Reference</span>
-                  {[
-                    { id: "dooh",  label: "DOOH Specs",    icon: Globe,    count: doohCountries.length },
-                    { id: "eoc",   label: "End of Campaign", icon: FileText, count: campaigns.length },
-                    { id: "notes", label: "Notes Canvas",  icon: Folder,   count: null },
-                  ].map((tab) => (
-                    <button
-                      key={tab.id}
-                      onClick={() => switchRefTab(tab.id)}
-                      className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-[11px] font-black uppercase tracking-widest transition-colors shrink-0 ${
-                        refTab === tab.id ? "bg-[#12a0e1] text-white shadow-sm" : "text-[#768994] hover:text-[#122027] hover:bg-black/[0.04]"
-                      }`}
-                    >
-                      <tab.icon className="w-3.5 h-3.5" />
-                      {tab.label}
-                      {tab.count != null && (
-                        <span className={`ml-0.5 text-[10px] font-black tabular-nums ${refTab === tab.id ? "text-white/70" : "text-[#b0bec5]"}`}>
-                          {tab.count}
-                        </span>
-                      )}
-                    </button>
-                  ))}
-                </div>
+              {/* ============ REFERENCE ============ */}
+              <div className="mt-12 mb-8 flex items-center gap-4" aria-hidden="true">
+                <div className="h-px flex-1 bg-gradient-to-r from-transparent via-[#cdd7e1] to-[#cdd7e1]" />
+                <span className="text-[10px] font-black uppercase tracking-[0.2em] text-[#94a3b8]">Reference</span>
+                <div className="h-px flex-1 bg-gradient-to-l from-transparent via-[#cdd7e1] to-[#cdd7e1]" />
               </div>
+              {/* ============ LAUNCH TRACKER (PRINT) ============ */}
+              {department === "Print" && (
+                <PrintLaunchTrackerCard
+                  isOpen={expandedRegions["printLaunch"] ?? true}
+                  onToggle={() => toggleRegion("printLaunch")}
+                  hubs={printLaunchHubs}
+                  taskById={taskById}
+                />
+              )}
               {/* ============ DOOH SPECS ============ */}
               {/* DOOH specs are Motion-specific (out-of-home media specs) —
                   other departments get different content here later. */}
-              {refTab === "dooh" && department === "Motion" && (
+              {department === "Motion" && (
               <CollapsibleCard
                 icon={Globe}
                 title="DOOH Specs"
@@ -2996,9 +3489,12 @@ export default function CampaignCanvas({ wrikeData = [], folderCampaigns = [], t
               </CollapsibleCard>
               )}
 
-              {/* ============ END OF CAMPAIGN NOTES ============ */}
-              {refTab === "eoc" && (
-              <div className="space-y-6">
+              <div className="mt-6 space-y-6">
+                <NotesCanvasCard
+                  isOpen={expandedRegions["notesCanvas"] ?? false}
+                  onToggle={() => toggleRegion("notesCanvas")}
+                  department={department}
+                />
                 <EndOfCampaignNotesCard
                   isOpen={expandedRegions["eocNotes"] ?? false}
                   onToggle={() => toggleRegion("eocNotes")}
@@ -3006,18 +3502,6 @@ export default function CampaignCanvas({ wrikeData = [], folderCampaigns = [], t
                   department={department}
                 />
               </div>
-              )}
-
-              {/* ============ NOTES CANVAS ============ */}
-              {refTab === "notes" && (
-              <div className="space-y-6">
-                <NotesCanvasCard
-                  isOpen={expandedRegions["notesCanvas"] ?? true}
-                  onToggle={() => toggleRegion("notesCanvas")}
-                  department={department}
-                />
-              </div>
-              )}
             </div>
           );
         })()}

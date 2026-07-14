@@ -1,5 +1,19 @@
 import { FILM_MAPPINGS, MOTION_TEAM_NAME_MAP, TERRITORIES, REGION_ALIASES } from "../constants.js";
 
+// Resolve a film-code folder/name (e.g. "ZAL", "ody", "DDA") to its full
+// title via FILM_MAPPINGS; returns the title-cased input untouched when no
+// mapping exists. Used by getFilmName's tree-climb and path fallback so
+// "ZAL" doesn't slip through as projectName when the Wrike folder itself
+// is named after the code, not the film.
+const titleCase = (s) =>
+  s.trim().toLowerCase().split(" ").map((w) => w.charAt(0).toUpperCase() + w.slice(1)).join(" ");
+const resolveFilmCode = (name) => {
+  if (!name) return name;
+  const key = name.trim().toUpperCase();
+  if (FILM_MAPPINGS?.[key]) return FILM_MAPPINGS[key];
+  return titleCase(name.replace(/[_|-]/g, " "));
+};
+
 // Every token the territory guesser can recognise (full names + aliases like
 // AE/AUS), uppercased — used below to decide which customFields values are
 // worth keeping in the cache. Mirrors guessFieldsFromTask's own sources so
@@ -106,13 +120,7 @@ export function getFilmName(task, folderDictionary, extractedPath = "", extraMap
     }
 
     if (foundFilmName) {
-      return foundFilmName
-        .replace(/[_|-]/g, " ")
-        .trim()
-        .toLowerCase()
-        .split(" ")
-        .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
-        .join(" ");
+      return resolveFilmCode(foundFilmName);
     }
   }
 
@@ -131,13 +139,7 @@ export function getFilmName(task, folderDictionary, extractedPath = "", extraMap
           parts[back].toUpperCase().includes("ARCHIVE"))
       ) back--;
       if (back > 0 && parts[back].trim()) {
-        return decodeURIComponent(parts[back])
-          .replace(/[_|-]/g, " ")
-          .trim()
-          .toLowerCase()
-          .split(" ")
-          .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
-          .join(" ");
+        return resolveFilmCode(decodeURIComponent(parts[back]));
       }
     }
   }
@@ -206,6 +208,29 @@ export function getStudioName(task, folderDictionary, childToParent = {}) {
 }
 
 // ---------------------------------------------------------------------------
+// Print launch-tracking relevance (Print Canvas / Launch Tracker)
+// ---------------------------------------------------------------------------
+// Print coordinates each launch wave through a hub task ("*_Launch_Print_Requests"
+// / "*_Print_Teaser_Launch_Markets") whose subtasks are the per-market requests
+// ("AB3_INTL_Print_Teaser1SHT_Birds_CMYK_KR"). Both must match on their OWN
+// title: webhook events fetch single tasks, so a subtask that only matched "via
+// its hub" would fail the filter on its next status change and get purged.
+export const PRINT_HUB_RE = /print_?requests|launch_?markets/i;
+const PRINT_DELIVERABLE_RE = /^[A-Z0-9]{2,10}_(INTL?|DOM)_print_/i;
+
+export const isPrintLaunchTask = (title) =>
+  PRINT_HUB_RE.test(title) || PRINT_DELIVERABLE_RE.test(title);
+
+// Which tasks keep their parsed description through enrichment (and are
+// therefore worth a description backfill when pagination drops it): MATRIX
+// tasks (the Canvas table) and Print launch hubs (paths, GD sheet, packaging
+// checklist). Everything else's description is deleted at enrich time.
+export const keepsDescription = (title) => {
+  const t = title || "";
+  return t.toUpperCase().includes("MATRIX") || PRINT_HUB_RE.test(t);
+};
+
+// ---------------------------------------------------------------------------
 // Filter raw tasks down to Motion team relevance
 // ---------------------------------------------------------------------------
 export function filterToMotionTeam(tasks, folderDictionary, contactDictionary) {
@@ -216,7 +241,8 @@ export function filterToMotionTeam(tasks, folderDictionary, contactDictionary) {
     const upper = task.title.toUpperCase();
 
     const matchesKeywords =
-      upper.includes("DOOH") || upper.includes("DINTH") || upper.includes("MATRIX");
+      upper.includes("DOOH") || upper.includes("DINTH") || upper.includes("MATRIX") ||
+      isPrintLaunchTask(task.title);
     const matchesAssignee = task.responsibleIds?.some(
       (id) => contactDictionary[id] && MOTION_TEAM_NAME_MAP[contactDictionary[id]]
     );
@@ -256,7 +282,10 @@ export function enrichTasks(rawTasks, folderDictionary, contactDictionary, statu
     // skip parsing and don't retain those bytes for non-MATRIX tasks. Tradeoff:
     // global search no longer matches on notes/path text for non-MATRIX tasks,
     // and film detection loses its description fallback (folder-tree only).
-    const isMatrix = task.title?.toUpperCase().includes("MATRIX");
+    // Print launch hubs also keep their parsed description — it carries the
+    // job-folder paths, OV master links, GD sheet URL and the per-market
+    // packaging checklist the Launch Tracker renders.
+    const isMatrix = keepsDescription(task.title);
     const parsed = isMatrix
       ? parseWrikeData(task.description)
       : { tableHtml: "", notesText: "", extractedPathData: "" };

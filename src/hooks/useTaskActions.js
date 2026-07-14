@@ -70,6 +70,14 @@ export function useTaskActions(state) {
     if (jobNumber && !jobOptions.includes(jobNumber))
       setJobOptions((prev) => [...prev, jobNumber]);
 
+    // Register this job in the shared Job Book so a Wrike pull (possibly from
+    // another session/device) can find it by code instead of only matching by
+    // coincidence against this browser's local jobOptions list.
+    const jobColonMatch = jobNumber.match(/^([^:]+)\s*:/);
+    state.jobLookup?.ensureJob(jobNumber, {
+      filmTitle: jobColonMatch ? jobColonMatch[1].trim() : undefined,
+    });
+
     const newTask = {
       id: Date.now(),
       jobNumber, territory, category, notes,
@@ -266,6 +274,7 @@ export function useTaskActions(state) {
     // otherwise a stale filmTitle from a bad Wrike folder-tree guess would survive the edit.
     const jobColonMatch = editGroupForm.jobNumber.match(/^([^:]+)\s*:/);
     const filmTitle = jobColonMatch ? jobColonMatch[1].trim() : undefined;
+    state.jobLookup?.ensureJob(editGroupForm.jobNumber, { filmTitle });
     updateTasks(taskIds, {
       jobNumber: editGroupForm.jobNumber,
       territory: editGroupForm.territory,
@@ -298,6 +307,10 @@ export function useTaskActions(state) {
     if (editTaskForm.jobNumber && !jobOptions.includes(editTaskForm.jobNumber)) {
       setJobOptions((prev) => [...prev, editTaskForm.jobNumber]);
     }
+    const editJobColonMatch = editTaskForm.jobNumber.match(/^([^:]+)\s*:/);
+    state.jobLookup?.ensureJob(editTaskForm.jobNumber, {
+      filmTitle: editJobColonMatch ? editJobColonMatch[1].trim() : undefined,
+    });
     setEditingTaskId(null);
     triggerToast("Subtask detached and moved successfully!", "success");
   };
@@ -458,6 +471,10 @@ export function useTaskActions(state) {
     if (recentTaskDraft.jobNumber && !jobOptions.includes(recentTaskDraft.jobNumber)) {
       setJobOptions((prev) => [...prev, recentTaskDraft.jobNumber]);
     }
+    const jobColonMatch = (recentTaskDraft.jobNumber || "").match(/^([^:]+)\s*:/);
+    state.jobLookup?.ensureJob(recentTaskDraft.jobNumber, {
+      filmTitle: jobColonMatch ? jobColonMatch[1].trim() : undefined,
+    });
     const newTask = {
       id: Date.now(),
       jobNumber: recentTaskDraft.jobNumber,

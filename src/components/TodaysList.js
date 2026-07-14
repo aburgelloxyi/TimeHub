@@ -7,6 +7,7 @@ import {
   ChevronDown,
   Star,
   Sparkle,
+  EyeOff,
 } from "lucide-react";
 import gsap from "gsap";
 import { useGSAP } from "@gsap/react";
@@ -374,6 +375,7 @@ export default function TodaysList({ wrikeData, triggerToast: _triggerToast, isA
   );
   const [timeframe, setTimeframe] = useState("Today");
   const [focusedPerson, setFocusedPerson] = useState(null);
+  const [hideStale, setHideStale] = useState(true);
   const saveTimeout = useRef(null);
 
   // --- Jacqui/Maria lane-cap hover flourish: stars + glitter, re-rolled
@@ -664,11 +666,17 @@ export default function TodaysList({ wrikeData, triggerToast: _triggerToast, isA
 
   // Stats
   const today = new Date(); today.setHours(0, 0, 0, 0);
+  const oneWeekAgo = new Date(today); oneWeekAgo.setDate(oneWeekAgo.getDate() - 7);
   const isOverdue = (d) => d && d !== "No Due Date" && new Date(d) < today;
+  // "Stale" tasks — overdue by more than a week — clutter the board long
+  // after they're actionable; hideStale lets a lane hide them without
+  // touching the underlying data or the Today/Tomorrow/Next Week window.
+  const isStale = (d) => d && d !== "No Due Date" && new Date(d) < oneWeekAgo;
   const allAssigned = Object.values(assignments).flat();
   const backlogCount = campaigns.reduce((s, c) => s + c.subtasks.length, 0);
   const motionCount = allAssigned.filter((t) => (t.tag || "").toLowerCase().includes("motion")).length;
   const overdueCount = allAssigned.filter((t) => isOverdue(t.dueDate)).length;
+  const staleCount = allAssigned.filter((t) => isStale(t.dueDate)).length;
 
   return (
     <div ref={boardRef} className="min-h-screen bg-slate-100 text-[#122027] font-sans selection:bg-[#12a0e1]/30 selection:text-[#122027]">
@@ -716,6 +724,20 @@ export default function TodaysList({ wrikeData, triggerToast: _triggerToast, isA
             </button>
           ))}
         </div>
+        <button
+          onClick={() => setHideStale((v) => !v)}
+          title={hideStale ? "Show tasks overdue by more than a week" : "Hide tasks overdue by more than a week"}
+          className={`relative ml-1 flex items-center gap-1.5 px-3 py-2 text-[10px] font-black uppercase tracking-wider rounded-xl border transition-colors ${
+            hideStale
+              ? "bg-white/15 border-white/20 text-white/80 hover:text-white hover:bg-white/20"
+              : "bg-white/5 border-white/10 text-white/40 hover:text-white/70"
+          }`}
+        >
+          <EyeOff className="w-3.5 h-3.5" />
+          {hideStale && staleCount > 0 && (
+            <span className="text-white/60">{staleCount}</span>
+          )}
+        </button>
       </PageHeader>
 
       <div className="max-w-[1800px] mx-auto px-4 sm:px-6 py-6 flex flex-col gap-4">
@@ -836,7 +858,7 @@ export default function TodaysList({ wrikeData, triggerToast: _triggerToast, isA
             </p>
           )}
           {board.members.map((person, laneIdx) => {
-            const tasks = assignments[person] || [];
+            const tasks = (assignments[person] || []).filter((t) => !hideStale || !isStale(t.dueDate));
             const lane = board.lanes[person];
             const isFocused = focusedPerson === person;
             const isCollapsed = focusedPerson !== null && !isFocused;

@@ -100,15 +100,34 @@ export const guessFieldsFromTask = (linkedTask, jobOptions = [], extraText = "",
   }
 
   // --- Job number guess ---
+  // A dedicated "Job Number" custom field may carry a suffix beyond the base
+  // code (e.g. "XY025953_LUG_D6" for a localized delivery package). Check the
+  // raw (pre-underscore-stripped) custom field values first so that suffix
+  // survives — searchTarget below has already turned "_" into " ", which
+  // would otherwise truncate it down to the bare "XY025953".
   let guessedJob = "";
-  const xyMatch = searchTarget.match(/(XY\d{5,6})/i);
+  let fullCodeMatch = null;
+  if (linkedTask.customFields) {
+    for (const cf of linkedTask.customFields) {
+      if (cf.value && typeof cf.value === "string") {
+        const m = cf.value.match(/(XY\d{5,6}(?:_[A-Za-z0-9]+)*)/i);
+        if (m) { fullCodeMatch = m[1].toUpperCase(); break; }
+      }
+    }
+  }
+  const xyMatch = fullCodeMatch ? [null, fullCodeMatch] : searchTarget.match(/(XY\d{5,6})/i);
 
   if (xyMatch) {
-    const rawXy = xyMatch[1].toUpperCase();
+    const fullCode = xyMatch[1].toUpperCase();
+    const rawXy = fullCode.match(/XY\d{5,6}/i)[0];
     const matchingOption = jobOptions.find((job) =>
       job.toUpperCase().includes(rawXy)
     );
-    guessedJob = matchingOption ? matchingOption : rawXy;
+    guessedJob = matchingOption
+      ? matchingOption.toUpperCase().includes(fullCode)
+        ? matchingOption
+        : matchingOption.replace(new RegExp(rawXy, "i"), fullCode)
+      : fullCode;
   } else {
     for (const job of jobOptions) {
       const shortJob = job.split("-")[0].trim().toUpperCase();
@@ -167,6 +186,14 @@ export const guessFieldsFromTask = (linkedTask, jobOptions = [], extraText = "",
     // caller's comma-split derive a project description it otherwise couldn't.
     if (known?.job_number?.includes(" : ") && !guessedJob.includes(" : ")) {
       guessedJob = known.job_number;
+    } else if (!guessedJob.includes(" : ") && filmTitle && filmTitle !== "XYi Unbilled") {
+      // Brand-new job with no Job Book record yet — synthesize the canonical
+      // "Film : CODE, Description" string ourselves instead of leaving a
+      // bare/suffixed code that external systems (e.g. the timesheet
+      // bookmarklet) won't recognize.
+      guessedJob = `${filmTitle} : ${guessedJob}, ${linkedTask.title || ""}`
+        .trim()
+        .replace(/,\s*$/, "");
     }
   }
 

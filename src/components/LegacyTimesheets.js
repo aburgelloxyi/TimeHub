@@ -453,23 +453,37 @@ export default function LegacyTimesheet({ wrikeData, isAdmin = false }) {
           cf.value.match(/(XY\d{5,6})/i)
       );
       if (jobField) {
-        const cfMatch = jobField.value.match(/(XY\d{5,6})/i);
-        rawPrefix = cfMatch[1].toUpperCase();
+        // Custom field value may carry a suffix beyond the base code (e.g.
+        // "XY025953_LUG_D6" for a localized delivery package) — keep the full
+        // value as the job number, but match against DEFAULT_JOBS on the base
+        // code only, since that's what's registered there.
+        const cfMatch = jobField.value.match(/(XY\d{5,6}(?:_[A-Za-z0-9]+)*)/i);
+        const fullCode = cfMatch[1].toUpperCase();
+        rawPrefix = fullCode.match(/XY\d{5,6}/i)[0];
         const matchingOption = DEFAULT_JOBS.find((job) =>
           job.toUpperCase().includes(rawPrefix)
         );
-        guessedJob = matchingOption ? matchingOption : rawPrefix;
+        guessedJob = matchingOption
+          ? matchingOption.toUpperCase().includes(fullCode)
+            ? matchingOption
+            : matchingOption.replace(new RegExp(rawPrefix, "i"), fullCode)
+          : fullCode;
       }
     }
 
     if (!rawPrefix) {
-      const xyMatch = searchTarget.match(/(XY\d{5,6})/i);
+      const xyMatch = searchTarget.match(/(XY\d{5,6}(?:_[A-Za-z0-9]+)*)/i);
       if (xyMatch) {
-        rawPrefix = xyMatch[1].toUpperCase();
+        const fullCode = xyMatch[1].toUpperCase();
+        rawPrefix = fullCode.match(/XY\d{5,6}/i)[0];
         const matchingOption = DEFAULT_JOBS.find((job) =>
           job.toUpperCase().includes(rawPrefix)
         );
-        guessedJob = matchingOption ? matchingOption : rawPrefix;
+        guessedJob = matchingOption
+          ? matchingOption.toUpperCase().includes(fullCode)
+            ? matchingOption
+            : matchingOption.replace(new RegExp(rawPrefix, "i"), fullCode)
+          : fullCode;
       } else {
         const rawSplit = linkedTask.title?.split(/[_|-]/)[0]?.trim();
         for (const job of DEFAULT_JOBS) {
@@ -684,7 +698,6 @@ export default function LegacyTimesheet({ wrikeData, isAdmin = false }) {
 
       myTasks.forEach((task) => {
         const fields = guessFieldsFromTask(task);
-        const groupName = fields.jobNumber || "Others (No Job Number)";
 
         let client = "";
         // Job number "Film Name : CODE, Description" is the ground truth — prefer it over
@@ -736,8 +749,27 @@ export default function LegacyTimesheet({ wrikeData, isAdmin = false }) {
         const known2 = jobLookup?.getJob?.(fields.jobNumber);
         if (known2?.film_title) filmTitle = known2.film_title;
         if (known2?.client) client = known2.client;
+        // Upgrade a bare/suffixed code to Job Book's canonical
+        // "Film : CODE, Description" string so it reads consistently with jobs
+        // that carried the full string from Wrike.
+        if (known2?.job_number?.includes(" : ") && !(fields.jobNumber || "").includes(" : ")) {
+          fields.jobNumber = known2.job_number;
+        } else if (
+          fields.jobNumber &&
+          !fields.jobNumber.includes(" : ") &&
+          filmTitle &&
+          filmTitle !== "XYi Unbilled"
+        ) {
+          // Brand-new job with no Job Book record yet — synthesize the canonical
+          // string ourselves instead of leaving a bare/suffixed code that
+          // external systems (e.g. the timesheet bookmarklet) won't recognize.
+          fields.jobNumber = `${filmTitle} : ${fields.jobNumber}, ${fields.notes || ""}`
+            .trim()
+            .replace(/,\s*$/, "");
+        }
         jobLookup?.ensureJob?.(fields.jobNumber, { filmTitle, client });
 
+        const groupName = fields.jobNumber || "Others (No Job Number)";
         if (!grouped[groupName]) {
           grouped[groupName] = [];
           newExpanded[groupName] = true;
@@ -1125,6 +1157,18 @@ export default function LegacyTimesheet({ wrikeData, isAdmin = false }) {
           // consistently with those that carried the full string from Wrike.
           if (known1?.job_number?.includes(" : ") && !(guessed.jobNumber || "").includes(" : ")) {
             guessed.jobNumber = known1.job_number;
+          } else if (
+            guessed.jobNumber &&
+            !guessed.jobNumber.includes(" : ") &&
+            filmTitle &&
+            filmTitle !== "XYi Unbilled"
+          ) {
+            // Brand-new job with no Job Book record yet — synthesize the canonical
+            // string ourselves instead of leaving a bare/suffixed code that
+            // external systems (e.g. the timesheet bookmarklet) won't recognize.
+            guessed.jobNumber = `${filmTitle} : ${guessed.jobNumber}, ${guessed.notes || ""}`
+              .trim()
+              .replace(/,\s*$/, "");
           }
           jobLookup?.ensureJob?.(guessed.jobNumber, { filmTitle, client });
 

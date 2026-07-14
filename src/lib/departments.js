@@ -99,15 +99,26 @@ export function boardLabelFor(department) {
   return !department || department === "Motion" ? "Motion Board" : `${department} Board`;
 }
 
+// Same idea for Campaign Canvas, now that its content (Team Board, End of
+// Campaign notes, DOOH Specs) varies per department too — "Digi Canvas" stays
+// the label for Motion/Digital (its original audience), everyone else gets
+// their own name so "Digi" doesn't show up for a department it isn't about.
+export function canvasLabelFor(department) {
+  return !department || department === "Motion" || department === "Digital"
+    ? "Digi Canvas"
+    : `${department} Canvas`;
+}
+
 export function pageIdsFor(department) {
   return DEPARTMENT_PAGES[department] || DEFAULT_PAGE_IDS;
 }
 
 // Returns the page object with any department-specific overrides applied
-// (currently just the board label). Used wherever a single page's display
-// data is needed for a known viewer department.
+// (board label, canvas label). Used wherever a single page's display data is
+// needed for a known viewer department.
 export function pageFor(id, department) {
   if (id === "todayslist") return { ...PAGES[id], label: boardLabelFor(department) };
+  if (id === "canvas") return { ...PAGES[id], label: canvasLabelFor(department) };
   return PAGES[id];
 }
 

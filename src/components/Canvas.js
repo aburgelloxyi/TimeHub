@@ -10,6 +10,7 @@ import PageHeader, { pageHeaderActionClass } from "./shared/PageHeader";
 import HubRow from "./shared/HubRow";
 import { useDepartment } from "../hooks/useDepartment";
 import { boardLabelFor } from "../lib/departments";
+import { PAGE_GRADIENTS } from "../lib/pageGradients";
 import { FILM_MAPPINGS } from "../constants.js";
 import {
   Layout,
@@ -47,6 +48,8 @@ import {
   RefreshCw,
   Users,
   User,
+  Maximize2,
+  Minimize2,
 } from "lucide-react";
 
 // --- DOOH country → region grouping ---
@@ -395,6 +398,96 @@ function FolderTree({ folders, pages, selectedFolderId, selectedPageId, onToggle
   );
 }
 
+// Folders-only column for the three-pane drill-down (Folders → Pages →
+// Editor): a folder is just a selectable row here, its pages live in
+// PageList next to it instead of nesting inline underneath.
+function FolderList({ folders, pages, selectedFolderId, onSelectFolder, onDeleteFolder, accentColor }) {
+  if (!folders.length) return <p className="text-xs font-semibold text-[#768994] px-1">No topics yet.</p>;
+  return (
+    <div className="space-y-1">
+      {folders.map((folder) => {
+        const count = pages.filter((p) => p.folder_id === folder.id).length;
+        const isSelected = selectedFolderId === folder.id;
+        return (
+          <div
+            key={folder.id}
+            role="button"
+            tabIndex={0}
+            onClick={() => onSelectFolder(folder.id)}
+            className="group/folder flex items-center gap-2 px-2 py-1.5 rounded-lg cursor-pointer transition-colors"
+            style={isSelected ? { backgroundColor: `${accentColor}1a` } : undefined}
+          >
+            <Folder className="w-3.5 h-3.5 shrink-0" style={{ color: accentColor }} />
+            <span
+              className="text-xs font-bold truncate flex-1"
+              style={{ color: isSelected ? accentColor : "#122027" }}
+            >
+              {folder.name}
+            </span>
+            <span className="text-[10px] font-black text-[#768994]">{count}</span>
+            <button
+              onClick={(e) => { e.stopPropagation(); onDeleteFolder(folder.id); }}
+              className="opacity-0 group-hover/folder:opacity-100 p-0.5 rounded hover:bg-red-50 text-red-400 shrink-0"
+            >
+              <Trash2 className="w-3 h-3" />
+            </button>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+// Pages column: a folder's pages as cards rather than an indented list, so
+// they carry the same visual weight as the folder they belong to instead
+// of reading as a footnote underneath it.
+function PageList({ folder, pages, selectedPageId, onSelectPage, onDeletePage, onAddPage, accentColor }) {
+  if (!folder) {
+    return (
+      <p className="text-xs font-semibold text-[#768994] text-center px-4 py-8">
+        Pick a topic on the left to see its pages.
+      </p>
+    );
+  }
+  const folderPages = pages.filter((p) => p.folder_id === folder.id);
+  return (
+    <div>
+      <p className="text-[11px] font-black uppercase tracking-widest text-[#768994] px-1 mb-2 truncate">{folder.name}</p>
+      <div className="space-y-1.5">
+        {folderPages.map((page) => {
+          const isSelected = page.id === selectedPageId;
+          return (
+            <div
+              key={page.id}
+              role="button"
+              tabIndex={0}
+              onClick={() => onSelectPage(page.id)}
+              className="group/page flex items-center gap-2 px-2.5 py-2 rounded-xl border cursor-pointer transition-colors"
+              style={isSelected ? { borderColor: accentColor, backgroundColor: `${accentColor}14` } : { borderColor: "#dce4ec" }}
+            >
+              <FileText className="w-3.5 h-3.5 shrink-0" style={{ color: isSelected ? accentColor : "#768994" }} />
+              <span className="text-xs font-semibold truncate flex-1 text-[#122027]">{page.title || "Untitled"}</span>
+              <button
+                onClick={(e) => { e.stopPropagation(); onDeletePage(page.id); }}
+                className="opacity-0 group-hover/page:opacity-100 p-0.5 rounded hover:bg-red-50 text-red-400 shrink-0"
+              >
+                <Trash2 className="w-3 h-3" />
+              </button>
+            </div>
+          );
+        })}
+        <button
+          onClick={() => onAddPage(folder.id)}
+          className="w-full flex items-center justify-center gap-1 px-2.5 py-2 rounded-xl border border-dashed text-[11px] font-black hover:opacity-80"
+          style={{ borderColor: `${accentColor}55`, color: accentColor }}
+        >
+          <Plus className="w-3 h-3" /> New page
+        </button>
+      </div>
+    </div>
+  );
+}
+
 function NotesCanvasCard({ isOpen, onToggle, department }) {
   const [folders, setFolders] = useState([]);
   const [pages, setPages] = useState([]);
@@ -408,6 +501,12 @@ function NotesCanvasCard({ isOpen, onToggle, department }) {
   const [showTeammates, setShowTeammates] = useState(false);
   const [expandedPersonId, setExpandedPersonId] = useState(null);
   const [colorPickerOpen, setColorPickerOpen] = useState(false);
+  // Which board the sidebar is showing — same "door" toggle idiom as the
+  // Job Book page's Setup/Book/Feed switcher, scaled down to two doors.
+  const [activeBoard, setActiveBoard] = useState("team");
+  // Hides the Folders/Pages columns so the editor can take the full width —
+  // useful now that there are 3 columns competing for space next to it.
+  const [editorExpanded, setEditorExpanded] = useState(false);
 
   const currentUserId = useMemo(() => localStorage.getItem("wrike_user_id") || null, []);
 
@@ -508,8 +607,18 @@ function NotesCanvasCard({ isOpen, onToggle, department }) {
   const selectedPageFolder = selectedPage ? folders.find((f) => f.id === selectedPage.folder_id) : null;
   const selectedAccent = selectedPageFolder?.owner_wrike_id ? colorFor(selectedPageFolder.owner_wrike_id) : "#c2410d";
 
+  // Folder that owns the pages shown in the middle column — looked up from
+  // the full folders list (not just the active board's) so a folder picked
+  // from Teammates still populates it, coloured by whoever owns it.
+  const selectedFolder = folders.find((f) => f.id === selectedFolderId) || null;
+  const selectedFolderAccent = selectedFolder?.owner_wrike_id
+    ? colorFor(selectedFolder.owner_wrike_id)
+    : "#c2410d";
+
   const toggleFolder = (id) => setSelectedFolderId((prev) => (prev === id ? null : id));
   const startDraft = (owner) => { setFolderDraft({ owner }); setNewFolderName(""); };
+
+  const myName = profileFor(currentUserId)?.first_name ? `${profileFor(currentUserId).first_name}'s Space` : "My Space";
 
   const teamFolders = folders.filter((f) => !f.owner_wrike_id);
   const myFolders = currentUserId ? folders.filter((f) => f.owner_wrike_id === currentUserId) : [];
@@ -525,61 +634,116 @@ function NotesCanvasCard({ isOpen, onToggle, department }) {
       isOpen={isOpen}
       onToggle={onToggle}
     >
-      <div className="flex flex-col sm:flex-row gap-4">
-        {/* Sidebar: Team Board / My Space / Teammates */}
-        <div className="sm:w-72 shrink-0 space-y-3 max-h-[560px] overflow-y-auto pr-1">
-          {/* --- Team Board — boxed like My Space below, so the two feel like
-              equally-weighted destinations instead of one being a plain list
-              and the other a highlighted card. --- */}
-          <div className="rounded-2xl border border-[#dce4ec] bg-white shadow-sm p-3">
-            <div className="flex items-center gap-2 mb-2">
-              <div className="w-7 h-7 rounded-lg bg-[#c2410d]/10 text-[#c2410d] flex items-center justify-center shrink-0">
-                <Users className="w-3.5 h-3.5" />
-              </div>
-              <span className="text-[11px] font-black uppercase tracking-widest text-[#122027] flex-1 truncate">{boardLabelFor(department)}</span>
-              <button onClick={() => startDraft(null)} title="New team topic" className="p-1 rounded-md text-[#c2410d] hover:bg-[#c2410d]/10 shrink-0">
-                <FolderPlus className="w-3.5 h-3.5" />
+      <div className="flex flex-col gap-4">
+        {/* --- Dept Board / First Name's Space — full-width subheaders, each
+            taking half the card, toggled exactly like Job Book's Setup /
+            Book / Feed switcher: active door stays filled with its
+            gradient, inactive doors get the hover sweep. Only one board's
+            folders show below at a time. --- */}
+        <div
+          className={`grid gap-px bg-[#dce4ec] border border-[#dce4ec] rounded-2xl overflow-hidden shadow-sm ${
+            currentUserId ? "grid-cols-2" : "grid-cols-1"
+          }`}
+        >
+          {[
+            { id: "team", label: boardLabelFor(department), icon: Users },
+            ...(currentUserId ? [{ id: "mine", label: myName, icon: User }] : []),
+          ].map(({ id, label, icon: Icon }) => {
+            const isActive = activeBoard === id;
+            const isMine = id === "mine";
+            return (
+              <button
+                key={id}
+                onClick={() => setActiveBoard(id)}
+                className={`group relative flex items-center gap-3 px-4 py-4 text-left overflow-hidden transition-colors duration-300 ${
+                  isActive && !isMine ? `bg-gradient-to-br ${PAGE_GRADIENTS.canvas}` : "bg-white"
+                }`}
+                style={isActive && isMine ? { background: `linear-gradient(135deg, ${myColor}, ${myColor}cc)` } : undefined}
+              >
+                {!isActive && (
+                  <div
+                    className={`absolute inset-0 origin-left scale-x-0 group-hover:scale-x-100 transition-transform duration-300 ease-out ${
+                      isMine ? "" : `bg-gradient-to-br ${PAGE_GRADIENTS.canvas}`
+                    }`}
+                    style={isMine ? { background: `linear-gradient(135deg, ${myColor}, ${myColor}cc)` } : undefined}
+                  />
+                )}
+                <div
+                  className={`relative z-10 w-9 h-9 rounded-xl flex items-center justify-center shrink-0 transition-colors duration-300 ${
+                    isActive ? "bg-white/20 text-white" : "text-white group-hover:bg-white/20"
+                  }`}
+                  style={!isActive ? { backgroundColor: isMine ? myColor : "#c2410d" } : undefined}
+                >
+                  <Icon className="w-4 h-4" />
+                </div>
+                <span
+                  className={`relative z-10 text-xs font-black uppercase tracking-widest truncate transition-colors duration-300 ${
+                    isActive ? "text-white" : "text-[#122027] group-hover:text-white"
+                  }`}
+                >
+                  {label}
+                </span>
               </button>
-            </div>
-            {folderDraft?.owner === null && (
-              <FolderNameInput value={newFolderName} onChange={setNewFolderName} onSubmit={addFolder} onCancel={() => setFolderDraft(null)} />
-            )}
-            <FolderTree
-              folders={teamFolders}
-              pages={pages}
-              selectedFolderId={selectedFolderId}
-              selectedPageId={selectedPageId}
-              onToggleFolder={toggleFolder}
-              onSelectPage={setSelectedPageId}
-              onDeleteFolder={deleteFolder}
-              onDeletePage={deletePage}
-              onAddPage={addPage}
-              accentColor="#c2410d"
-            />
-          </div>
+            );
+          })}
+        </div>
 
-          {/* --- My Space — same card shape as Team Board, tinted with the
-              viewer's own colour so it visually reads as "yours" at a glance. --- */}
-          {currentUserId && (
+        <div className="flex flex-col sm:flex-row gap-4">
+          {/* Folders column: active board's topics + Teammates. Pages for
+              whichever topic is selected live in their own column next to
+              this one instead of nesting inline underneath it. Hidden while
+              the editor is expanded — collapsing back reveals both again.
+              `layout` on the columns (incl. the editor pane below) plus
+              AnimatePresence around these two makes the expand/collapse a
+              smooth width animation rather than an instant cut. */}
+          <AnimatePresence initial={false}>
+          {!editorExpanded && (
+          <motion.div
+            key="folders-pages"
+            layout
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.2, ease: "easeInOut" }}
+            className="flex flex-col sm:flex-row gap-4 overflow-hidden"
+          >
+          <div className="sm:w-52 shrink-0 space-y-3 max-h-[560px] overflow-y-auto pr-1">
             <div
               className="rounded-2xl border p-3 shadow-sm"
-              style={{ borderColor: `${myColor}55`, backgroundColor: `${myColor}0d` }}
+              style={
+                activeBoard === "mine"
+                  ? { borderColor: `${myColor}55`, backgroundColor: `${myColor}0d` }
+                  : { borderColor: "#dce4ec", backgroundColor: "#ffffff" }
+              }
             >
               <div className="flex items-center gap-2 mb-2">
+                {activeBoard === "mine" ? (
+                  <button
+                    onClick={() => setColorPickerOpen((v) => !v)}
+                    title="Change my colour"
+                    className="relative w-6 h-6 rounded-lg flex items-center justify-center shrink-0"
+                    style={{ backgroundColor: `${myColor}22`, color: myColor }}
+                  >
+                    <User className="w-3 h-3" />
+                  </button>
+                ) : (
+                  <div className="w-6 h-6 rounded-lg bg-[#c2410d]/10 text-[#c2410d] flex items-center justify-center shrink-0">
+                    <Users className="w-3 h-3" />
+                  </div>
+                )}
+                <span className="text-[11px] font-black uppercase tracking-widest text-[#122027] flex-1 truncate">
+                  {activeBoard === "mine" ? myName : boardLabelFor(department)}
+                </span>
                 <button
-                  onClick={() => setColorPickerOpen((v) => !v)}
-                  title="Change my colour"
-                  className="relative w-7 h-7 rounded-lg flex items-center justify-center shrink-0"
-                  style={{ backgroundColor: `${myColor}22`, color: myColor }}
+                  onClick={() => startDraft(activeBoard === "mine" ? currentUserId : null)}
+                  title={activeBoard === "mine" ? "New personal topic" : "New team topic"}
+                  className="p-1 rounded-md hover:bg-black/5 shrink-0"
+                  style={{ color: activeBoard === "mine" ? myColor : "#c2410d" }}
                 >
-                  <User className="w-3.5 h-3.5" />
-                </button>
-                <span className="text-[11px] font-black uppercase tracking-widest text-[#122027] flex-1 truncate">My Space</span>
-                <button onClick={() => startDraft(currentUserId)} title="New personal topic" className="p-1 rounded-md hover:bg-black/5 shrink-0" style={{ color: myColor }}>
                   <FolderPlus className="w-3.5 h-3.5" />
                 </button>
               </div>
-              {colorPickerOpen && (
+              {activeBoard === "mine" && colorPickerOpen && (
                 <div className="flex items-center gap-1 p-1.5 mb-2 rounded-lg border border-[#dce4ec] bg-white shadow-sm w-fit">
                   {CANVAS_COLOR_PALETTE.map((hex) => (
                     <button
@@ -591,92 +755,126 @@ function NotesCanvasCard({ isOpen, onToggle, department }) {
                   ))}
                 </div>
               )}
-              {folderDraft?.owner === currentUserId && (
+              {folderDraft?.owner === (activeBoard === "mine" ? currentUserId : null) && (
                 <FolderNameInput value={newFolderName} onChange={setNewFolderName} onSubmit={addFolder} onCancel={() => setFolderDraft(null)} />
               )}
-              <FolderTree
-                folders={myFolders}
+              <FolderList
+                folders={activeBoard === "mine" ? myFolders : teamFolders}
                 pages={pages}
                 selectedFolderId={selectedFolderId}
-                selectedPageId={selectedPageId}
-                onToggleFolder={toggleFolder}
-                onSelectPage={setSelectedPageId}
+                onSelectFolder={toggleFolder}
                 onDeleteFolder={deleteFolder}
-                onDeletePage={deletePage}
-                onAddPage={addPage}
-                accentColor={myColor}
+                accentColor={activeBoard === "mine" ? myColor : "#c2410d"}
               />
             </div>
-          )}
 
-          {/* --- Teammates — deliberately lighter (dashed border, no fill)
-              so it reads as "browsing someone else's" rather than a third
-              destination of equal weight to Team Board / My Space. --- */}
-          {teammateIds.length > 0 && (
-            <div className="rounded-2xl border border-dashed border-[#dce4ec] p-3">
-              <button onClick={() => setShowTeammates((v) => !v)} className="w-full flex items-center gap-2">
-                <div className="w-7 h-7 rounded-lg bg-[#768994]/10 text-[#768994] flex items-center justify-center shrink-0">
-                  <Users className="w-3.5 h-3.5" />
-                </div>
-                <span className="text-[11px] font-black uppercase tracking-widest text-[#768994] flex-1 text-left">Teammates</span>
-                <ChevronRight className={`w-3.5 h-3.5 text-[#768994] shrink-0 transition-transform ${showTeammates ? "rotate-90" : ""}`} />
-              </button>
-              {showTeammates && (
-                <div className="space-y-2 mt-2">
-                  {teammateIds.map((id) => {
-                    const color = colorFor(id);
-                    const personFolders = folders.filter((f) => f.owner_wrike_id === id);
-                    const isExpanded = expandedPersonId === id;
-                    return (
-                      <div key={id}>
-                        <div
-                          role="button"
-                          tabIndex={0}
-                          onClick={() => setExpandedPersonId(isExpanded ? null : id)}
-                          className="flex items-center gap-1.5 px-1.5 py-1 rounded-lg cursor-pointer hover:bg-black/5"
-                        >
-                          <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ backgroundColor: color }} />
-                          <span className="text-xs font-bold text-[#122027] truncate flex-1">{nameFor(id)}</span>
-                          <ChevronRight className={`w-3 h-3 shrink-0 text-[#768994] transition-transform ${isExpanded ? "rotate-90" : ""}`} />
-                        </div>
-                        {isExpanded && (
-                          <div className="ml-4 mt-0.5">
-                            <FolderTree
-                              folders={personFolders}
-                              pages={pages}
-                              selectedFolderId={selectedFolderId}
-                              selectedPageId={selectedPageId}
-                              onToggleFolder={toggleFolder}
-                              onSelectPage={setSelectedPageId}
-                              onDeleteFolder={deleteFolder}
-                              onDeletePage={deletePage}
-                              onAddPage={addPage}
-                              accentColor={color}
-                            />
+            {/* --- Teammates — deliberately lighter (dashed border, no fill)
+                so it reads as "browsing someone else's" rather than a third
+                destination of equal weight to Dept Board / First Name's
+                Space. --- */}
+            {teammateIds.length > 0 && (
+              <div className="rounded-2xl border border-dashed border-[#dce4ec] p-3">
+                <button onClick={() => setShowTeammates((v) => !v)} className="w-full flex items-center gap-2">
+                  <div className="w-7 h-7 rounded-lg bg-[#768994]/10 text-[#768994] flex items-center justify-center shrink-0">
+                    <Users className="w-3.5 h-3.5" />
+                  </div>
+                  <span className="text-[11px] font-black uppercase tracking-widest text-[#768994] flex-1 text-left">Teammates</span>
+                  <ChevronRight className={`w-3.5 h-3.5 text-[#768994] shrink-0 transition-transform ${showTeammates ? "rotate-90" : ""}`} />
+                </button>
+                {showTeammates && (
+                  <div className="space-y-2 mt-2">
+                    {teammateIds.map((id) => {
+                      const color = colorFor(id);
+                      const personFolders = folders.filter((f) => f.owner_wrike_id === id);
+                      const isExpanded = expandedPersonId === id;
+                      return (
+                        <div key={id}>
+                          <div
+                            role="button"
+                            tabIndex={0}
+                            onClick={() => setExpandedPersonId(isExpanded ? null : id)}
+                            className="flex items-center gap-1.5 px-1.5 py-1 rounded-lg cursor-pointer hover:bg-black/5"
+                          >
+                            <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ backgroundColor: color }} />
+                            <span className="text-xs font-bold text-[#122027] truncate flex-1">{nameFor(id)}</span>
+                            <ChevronRight className={`w-3 h-3 shrink-0 text-[#768994] transition-transform ${isExpanded ? "rotate-90" : ""}`} />
                           </div>
-                        )}
-                      </div>
-                    );
-                  })}
-                </div>
-              )}
-            </div>
-          )}
-        </div>
+                          {isExpanded && (
+                            <div className="ml-4 mt-0.5">
+                              <FolderTree
+                                folders={personFolders}
+                                pages={pages}
+                                selectedFolderId={selectedFolderId}
+                                selectedPageId={selectedPageId}
+                                onToggleFolder={toggleFolder}
+                                onSelectPage={setSelectedPageId}
+                                onDeleteFolder={deleteFolder}
+                                onDeletePage={deletePage}
+                                onAddPage={addPage}
+                                accentColor={color}
+                              />
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
 
-        {/* Main pane: selected page's BlockNote editor */}
-        <div
-          className="flex-1 min-w-0 rounded-xl border border-[#dce4ec] bg-white overflow-hidden"
-          style={selectedPage ? { borderLeft: `3px solid ${selectedAccent}` } : undefined}
+          {/* Pages column: cards for whichever topic is selected on the
+              left — its own pane rather than an indented sub-list, so
+              pages read as peers of the folder instead of a footnote. */}
+          <div className="sm:w-60 shrink-0 rounded-2xl border border-[#dce4ec] bg-white shadow-sm p-3 max-h-[560px] overflow-y-auto">
+            <PageList
+              folder={selectedFolder}
+              pages={pages}
+              selectedPageId={selectedPageId}
+              onSelectPage={setSelectedPageId}
+              onDeletePage={deletePage}
+              onAddPage={addPage}
+              accentColor={selectedFolderAccent}
+            />
+          </div>
+          </motion.div>
+          )}
+          </AnimatePresence>
+
+          {/* Main pane: selected page's BlockNote editor — tinted with a
+              faint wash of the page's own accent colour, and expandable
+              (hides the Folders/Pages columns) now that it shares the row
+              with two other columns. `layout` here is what makes that
+              expand/collapse read as a scale-up rather than an instant
+              jump, in step with the Folders/Pages columns fading out. */}
+          <motion.div
+          layout
+          transition={{ duration: 0.25, ease: "easeInOut" }}
+          className="flex-1 min-w-0 rounded-xl border border-[#dce4ec] overflow-hidden"
+          style={
+            selectedPage
+              ? { borderLeft: `3px solid ${selectedAccent}`, backgroundColor: `${selectedAccent}0a` }
+              : undefined
+          }
         >
           {selectedPage ? (
             <>
-              <input
-                value={selectedPage.title}
-                onChange={(e) => renamePage(selectedPage.id, e.target.value)}
-                className="w-full px-4 py-2.5 border-b border-[#dce4ec] outline-none text-sm font-black text-[#122027]"
-                placeholder="Untitled"
-              />
+              <div className="flex items-center border-b border-[#dce4ec]">
+                <input
+                  value={selectedPage.title}
+                  onChange={(e) => renamePage(selectedPage.id, e.target.value)}
+                  className="flex-1 min-w-0 px-4 py-2.5 outline-none bg-transparent text-sm font-black text-[#122027]"
+                  placeholder="Untitled"
+                />
+                <button
+                  onClick={() => setEditorExpanded((v) => !v)}
+                  title={editorExpanded ? "Show folders & pages" : "Expand editor"}
+                  className="p-2 mr-1.5 rounded-md hover:bg-black/5 text-[#768994] shrink-0"
+                >
+                  {editorExpanded ? <Minimize2 className="w-3.5 h-3.5" /> : <Maximize2 className="w-3.5 h-3.5" />}
+                </button>
+              </div>
               <NotesCanvasPageEditor
                 key={selectedPage.id}
                 page={selectedPage}
@@ -684,10 +882,24 @@ function NotesCanvasCard({ isOpen, onToggle, department }) {
               />
             </>
           ) : (
-            <p className="text-center text-sm font-bold text-[#768994] py-16 px-4">
-              Pick or create a topic, then a page, to start scribbling.
-            </p>
+            <>
+              {editorExpanded && (
+                <div className="flex justify-end p-1.5 border-b border-[#dce4ec]">
+                  <button
+                    onClick={() => setEditorExpanded(false)}
+                    title="Show folders & pages"
+                    className="p-1.5 rounded-md hover:bg-black/5 text-[#768994] shrink-0"
+                  >
+                    <Minimize2 className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+              )}
+              <p className="text-center text-sm font-bold text-[#768994] py-16 px-4">
+                Pick or create a topic, then a page, to start scribbling.
+              </p>
+            </>
           )}
+        </motion.div>
         </div>
       </div>
     </CollapsibleCard>
@@ -2785,8 +2997,8 @@ export default function CampaignCanvas({ wrikeData = [], folderCampaigns = [], t
                           onClick={() => setShowFoldersPanel((prev) => !prev)}
                           className={`px-4 py-2 rounded-xl transition-colors flex items-center gap-2 text-xs font-bold border ${
                             showFoldersPanel
-                              ? "bg-indigo-100 text-indigo-700 border-indigo-200"
-                              : "text-indigo-600 bg-indigo-50 hover:bg-indigo-100 border-indigo-100"
+                              ? "bg-[#c2410d]/10 text-[#c2410d] border-[#c2410d]/20"
+                              : "text-[#c2410d] bg-[#c2410d]/5 hover:bg-[#c2410d]/10 border-[#c2410d]/10"
                           }`}
                         >
                           <Folder className="w-4 h-4" />{" "}

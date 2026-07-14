@@ -45,6 +45,8 @@ import {
   LayoutGrid,
   List,
   RefreshCw,
+  Users,
+  User,
 } from "lucide-react";
 
 // --- DOOH country → region grouping ---
@@ -187,14 +189,11 @@ function EndOfCampaignPageEditor({ initialContent, onSave }) {
 // Notes are per (campaign, department) — Print's wrap-up on a campaign is a
 // separate note from Motion's, sharing only the campaign picker.
 function EndOfCampaignNotesCard({ isOpen, onToggle, campaigns, department }) {
-  const [pickerOpen, setPickerOpen] = useState(false);
   const [search, setSearch] = useState("");
   const [selectedCampaignId, setSelectedCampaignId] = useState(null);
   const [content, setContent] = useState("");
   const [loaded, setLoaded] = useState(false);
   const skipNextSaveRef = useRef(false);
-
-  const selectedCampaign = campaigns.find((c) => c.id === selectedCampaignId);
 
   useEffect(() => {
     if (!selectedCampaignId) { setContent(""); setLoaded(false); return; }
@@ -226,9 +225,12 @@ function EndOfCampaignNotesCard({ isOpen, onToggle, campaigns, department }) {
     return () => clearTimeout(t);
   }, [content, selectedCampaignId, department, loaded]);
 
-  const filteredCampaigns = campaigns.filter(
-    (c) => !search.trim() || c.title.toLowerCase().includes(search.trim().toLowerCase())
-  );
+  // Newest-updated campaigns first — same recency signal the Studios gallery
+  // sorts by (lastMatrixUpdate), so "most likely to need wrap-up notes right
+  // now" naturally floats to the top instead of requiring a search.
+  const sortedFilteredCampaigns = campaigns
+    .filter((c) => !search.trim() || c.title.toLowerCase().includes(search.trim().toLowerCase()))
+    .sort((a, b) => (b.lastMatrixUpdate || 0) - (a.lastMatrixUpdate || 0));
 
   return (
     <CollapsibleCard
@@ -238,57 +240,49 @@ function EndOfCampaignNotesCard({ isOpen, onToggle, campaigns, department }) {
       isOpen={isOpen}
       onToggle={onToggle}
     >
-      <div className="space-y-3">
-        <div className="relative">
-          <button
-            onClick={() => setPickerOpen((v) => !v)}
-            className="w-full flex items-center justify-between gap-2 px-3 py-2 rounded-xl border border-[#dce4ec] bg-white text-sm font-bold text-[#122027] hover:border-[#c2410d]/40"
-          >
-            <span className={selectedCampaign ? "" : "text-[#768994] font-semibold"}>
-              {selectedCampaign ? selectedCampaign.title : "Pick a campaign…"}
-            </span>
-            <ChevronRight className={`w-4 h-4 text-[#768994] shrink-0 transition-transform ${pickerOpen ? "rotate-90" : ""}`} />
-          </button>
-          {pickerOpen && (
-            <div className="absolute z-20 mt-1 w-full max-h-64 overflow-y-auto rounded-xl border border-[#dce4ec] bg-white shadow-lg">
-              <div className="p-2 sticky top-0 bg-white border-b border-[#dce4ec]">
-                <input
-                  autoFocus
-                  value={search}
-                  onChange={(e) => setSearch(e.target.value)}
-                  placeholder="Search campaigns…"
-                  className="w-full px-2.5 py-1.5 rounded-lg border border-[#dce4ec] outline-none text-sm font-semibold"
-                />
-              </div>
-              {filteredCampaigns.length === 0 && (
-                <p className="p-3 text-xs font-bold text-[#768994]">No campaigns match.</p>
-              )}
-              {filteredCampaigns.map((c) => (
-                <button
-                  key={c.id}
-                  onClick={() => { setSelectedCampaignId(c.id); setPickerOpen(false); setSearch(""); }}
-                  className={`w-full text-left px-3 py-2 text-sm font-bold hover:bg-[#f2f6f9] ${c.id === selectedCampaignId ? "text-[#c2410d]" : "text-[#122027]"}`}
-                >
-                  {c.title}
-                </button>
-              ))}
-            </div>
-          )}
-        </div>
-
-        {selectedCampaignId && loaded ? (
-          <div className="rounded-xl overflow-hidden border border-[#dce4ec] bg-white">
-            <EndOfCampaignPageEditor
-              key={selectedCampaignId}
-              initialContent={content}
-              onSave={(json) => setContent(json)}
+      <div className="flex flex-col sm:flex-row gap-4">
+        {/* Campaign list — always visible, newest-updated first */}
+        <div className="sm:w-64 shrink-0 space-y-2">
+          <div className="relative">
+            <Search className="w-4 h-4 text-[#768994] absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+            <input
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="Search campaigns…"
+              className="w-full pl-9 pr-3 py-2 rounded-xl border border-[#dce4ec] bg-white outline-none text-sm font-semibold text-[#122027] focus:border-[#c2410d]/40"
             />
           </div>
-        ) : selectedCampaignId ? (
-          <p className="text-center text-sm font-bold text-[#768994] py-8">Loading notes…</p>
-        ) : (
-          <p className="text-center text-sm font-bold text-[#768994] py-8">Pick a campaign above to write its wrap-up notes.</p>
-        )}
+          <div className="rounded-xl border border-[#dce4ec] bg-white overflow-hidden max-h-[500px] overflow-y-auto divide-y divide-[#dce4ec]">
+            {sortedFilteredCampaigns.length === 0 && (
+              <p className="p-3 text-xs font-bold text-[#768994]">No campaigns match.</p>
+            )}
+            {sortedFilteredCampaigns.map((c) => (
+              <button
+                key={c.id}
+                onClick={() => setSelectedCampaignId(c.id)}
+                className={`w-full text-left px-3 py-2.5 text-sm font-bold transition-colors ${c.id === selectedCampaignId ? "bg-[#c2410d]/10 text-[#c2410d]" : "text-[#122027] hover:bg-[#f2f6f9]"}`}
+              >
+                {c.title}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        <div className="flex-1 min-w-0">
+          {selectedCampaignId && loaded ? (
+            <div className="rounded-xl overflow-hidden border border-[#dce4ec] bg-white">
+              <EndOfCampaignPageEditor
+                key={selectedCampaignId}
+                initialContent={content}
+                onSave={(json) => setContent(json)}
+              />
+            </div>
+          ) : selectedCampaignId ? (
+            <p className="text-center text-sm font-bold text-[#768994] py-16">Loading notes…</p>
+          ) : (
+            <p className="text-center text-sm font-bold text-[#768994] py-16">Pick a campaign from the list to write its wrap-up notes.</p>
+          )}
+        </div>
       </div>
     </CollapsibleCard>
   );
@@ -533,12 +527,17 @@ function NotesCanvasCard({ isOpen, onToggle, department }) {
     >
       <div className="flex flex-col sm:flex-row gap-4">
         {/* Sidebar: Team Board / My Space / Teammates */}
-        <div className="sm:w-64 shrink-0 space-y-4 max-h-[560px] overflow-y-auto pr-1">
-          {/* --- Team Board --- */}
-          <div>
-            <div className="flex items-center justify-between px-1 mb-1">
-              <span className="text-[11px] font-black uppercase tracking-widest text-[#768994]">{boardLabelFor(department)}</span>
-              <button onClick={() => startDraft(null)} title="New team topic" className="p-1 rounded-md text-[#c2410d] hover:bg-[#c2410d]/10">
+        <div className="sm:w-72 shrink-0 space-y-3 max-h-[560px] overflow-y-auto pr-1">
+          {/* --- Team Board — boxed like My Space below, so the two feel like
+              equally-weighted destinations instead of one being a plain list
+              and the other a highlighted card. --- */}
+          <div className="rounded-2xl border border-[#dce4ec] bg-white shadow-sm p-3">
+            <div className="flex items-center gap-2 mb-2">
+              <div className="w-7 h-7 rounded-lg bg-[#c2410d]/10 text-[#c2410d] flex items-center justify-center shrink-0">
+                <Users className="w-3.5 h-3.5" />
+              </div>
+              <span className="text-[11px] font-black uppercase tracking-widest text-[#122027] flex-1 truncate">{boardLabelFor(department)}</span>
+              <button onClick={() => startDraft(null)} title="New team topic" className="p-1 rounded-md text-[#c2410d] hover:bg-[#c2410d]/10 shrink-0">
                 <FolderPlus className="w-3.5 h-3.5" />
               </button>
             </div>
@@ -559,35 +558,39 @@ function NotesCanvasCard({ isOpen, onToggle, department }) {
             />
           </div>
 
-          {/* --- My Space --- */}
+          {/* --- My Space — same card shape as Team Board, tinted with the
+              viewer's own colour so it visually reads as "yours" at a glance. --- */}
           {currentUserId && (
-            <div>
-              <div className="flex items-center justify-between px-1 mb-1">
-                <div className="relative flex items-center gap-1.5">
-                  <button
-                    onClick={() => setColorPickerOpen((v) => !v)}
-                    title="Change my colour"
-                    className="w-3 h-3 rounded-full ring-2 ring-white shadow shrink-0"
-                    style={{ backgroundColor: myColor }}
-                  />
-                  <span className="text-[11px] font-black uppercase tracking-widest text-[#768994]">My Space</span>
-                  {colorPickerOpen && (
-                    <div className="absolute z-20 top-5 left-0 flex items-center gap-1 p-1.5 rounded-lg border border-[#dce4ec] bg-white shadow-lg">
-                      {CANVAS_COLOR_PALETTE.map((hex) => (
-                        <button
-                          key={hex}
-                          onClick={() => setMyColor(hex)}
-                          className="w-4 h-4 rounded-full ring-1 ring-black/5"
-                          style={{ backgroundColor: hex }}
-                        />
-                      ))}
-                    </div>
-                  )}
-                </div>
-                <button onClick={() => startDraft(currentUserId)} title="New personal topic" className="p-1 rounded-md hover:bg-black/5" style={{ color: myColor }}>
+            <div
+              className="rounded-2xl border p-3 shadow-sm"
+              style={{ borderColor: `${myColor}55`, backgroundColor: `${myColor}0d` }}
+            >
+              <div className="flex items-center gap-2 mb-2">
+                <button
+                  onClick={() => setColorPickerOpen((v) => !v)}
+                  title="Change my colour"
+                  className="relative w-7 h-7 rounded-lg flex items-center justify-center shrink-0"
+                  style={{ backgroundColor: `${myColor}22`, color: myColor }}
+                >
+                  <User className="w-3.5 h-3.5" />
+                </button>
+                <span className="text-[11px] font-black uppercase tracking-widest text-[#122027] flex-1 truncate">My Space</span>
+                <button onClick={() => startDraft(currentUserId)} title="New personal topic" className="p-1 rounded-md hover:bg-black/5 shrink-0" style={{ color: myColor }}>
                   <FolderPlus className="w-3.5 h-3.5" />
                 </button>
               </div>
+              {colorPickerOpen && (
+                <div className="flex items-center gap-1 p-1.5 mb-2 rounded-lg border border-[#dce4ec] bg-white shadow-sm w-fit">
+                  {CANVAS_COLOR_PALETTE.map((hex) => (
+                    <button
+                      key={hex}
+                      onClick={() => setMyColor(hex)}
+                      className="w-4 h-4 rounded-full ring-1 ring-black/5"
+                      style={{ backgroundColor: hex }}
+                    />
+                  ))}
+                </div>
+              )}
               {folderDraft?.owner === currentUserId && (
                 <FolderNameInput value={newFolderName} onChange={setNewFolderName} onSubmit={addFolder} onCancel={() => setFolderDraft(null)} />
               )}
@@ -606,15 +609,20 @@ function NotesCanvasCard({ isOpen, onToggle, department }) {
             </div>
           )}
 
-          {/* --- Teammates --- */}
+          {/* --- Teammates — deliberately lighter (dashed border, no fill)
+              so it reads as "browsing someone else's" rather than a third
+              destination of equal weight to Team Board / My Space. --- */}
           {teammateIds.length > 0 && (
-            <div>
-              <button onClick={() => setShowTeammates((v) => !v)} className="w-full flex items-center justify-between px-1 mb-1">
-                <span className="text-[11px] font-black uppercase tracking-widest text-[#768994]">Teammates</span>
-                <ChevronRight className={`w-3 h-3 text-[#768994] transition-transform ${showTeammates ? "rotate-90" : ""}`} />
+            <div className="rounded-2xl border border-dashed border-[#dce4ec] p-3">
+              <button onClick={() => setShowTeammates((v) => !v)} className="w-full flex items-center gap-2">
+                <div className="w-7 h-7 rounded-lg bg-[#768994]/10 text-[#768994] flex items-center justify-center shrink-0">
+                  <Users className="w-3.5 h-3.5" />
+                </div>
+                <span className="text-[11px] font-black uppercase tracking-widest text-[#768994] flex-1 text-left">Teammates</span>
+                <ChevronRight className={`w-3.5 h-3.5 text-[#768994] shrink-0 transition-transform ${showTeammates ? "rotate-90" : ""}`} />
               </button>
               {showTeammates && (
-                <div className="space-y-2">
+                <div className="space-y-2 mt-2">
                   {teammateIds.map((id) => {
                     const color = colorFor(id);
                     const personFolders = folders.filter((f) => f.owner_wrike_id === id);

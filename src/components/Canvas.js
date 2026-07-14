@@ -8,6 +8,8 @@ import "@blocknote/core/fonts/inter.css";
 import "@blocknote/mantine/style.css";
 import PageHeader, { pageHeaderActionClass } from "./shared/PageHeader";
 import HubRow from "./shared/HubRow";
+import { useDepartment } from "../hooks/useDepartment";
+import { boardLabelFor } from "../lib/departments";
 import { FILM_MAPPINGS } from "../constants.js";
 import {
   Layout,
@@ -182,7 +184,9 @@ function EndOfCampaignPageEditor({ initialContent, onSave }) {
 }
 
 // --- Reference > End of Campaign Notes: pick a campaign, write wrap-up notes ---
-function EndOfCampaignNotesCard({ isOpen, onToggle, campaigns }) {
+// Notes are per (campaign, department) — Print's wrap-up on a campaign is a
+// separate note from Motion's, sharing only the campaign picker.
+function EndOfCampaignNotesCard({ isOpen, onToggle, campaigns, department }) {
   const [pickerOpen, setPickerOpen] = useState(false);
   const [search, setSearch] = useState("");
   const [selectedCampaignId, setSelectedCampaignId] = useState(null);
@@ -200,12 +204,13 @@ function EndOfCampaignNotesCard({ isOpen, onToggle, campaigns }) {
         .from("campaign_eoc_notes")
         .select("content")
         .eq("campaign_id", selectedCampaignId)
+        .eq("department", department)
         .maybeSingle();
       skipNextSaveRef.current = true;
       setContent(data?.content || "");
       setLoaded(true);
     })();
-  }, [selectedCampaignId]);
+  }, [selectedCampaignId, department]);
 
   useEffect(() => {
     if (!selectedCampaignId || !loaded) return;
@@ -213,12 +218,13 @@ function EndOfCampaignNotesCard({ isOpen, onToggle, campaigns }) {
     const t = setTimeout(() => {
       supabase.from("campaign_eoc_notes").upsert({
         campaign_id: selectedCampaignId,
+        department,
         content,
         updated_at: new Date().toISOString(),
       });
     }, 800);
     return () => clearTimeout(t);
-  }, [content, selectedCampaignId, loaded]);
+  }, [content, selectedCampaignId, department, loaded]);
 
   const filteredCampaigns = campaigns.filter(
     (c) => !search.trim() || c.title.toLowerCase().includes(search.trim().toLowerCase())
@@ -395,7 +401,7 @@ function FolderTree({ folders, pages, selectedFolderId, selectedPageId, onToggle
   );
 }
 
-function NotesCanvasCard({ isOpen, onToggle }) {
+function NotesCanvasCard({ isOpen, onToggle, department }) {
   const [folders, setFolders] = useState([]);
   const [pages, setPages] = useState([]);
   const [profiles, setProfiles] = useState([]);
@@ -414,16 +420,25 @@ function NotesCanvasCard({ isOpen, onToggle }) {
   useEffect(() => {
     if (!isOpen) return;
     (async () => {
-      const [{ data: f }, { data: p }, { data: pr }] = await Promise.all([
-        supabase.from("canvas_notes_folders").select("*").order("created_at", { ascending: true }),
-        supabase.from("canvas_notes_pages").select("*").order("created_at", { ascending: true }),
+      // Folders are scoped to the viewer's department at the query level —
+      // a Print viewer never even fetches Motion's Team Board or personal
+      // spaces, so "Teammates" below naturally only ever lists people in
+      // the same department.
+      const [{ data: f }, { data: pr }] = await Promise.all([
+        supabase.from("canvas_notes_folders").select("*").eq("department", department).order("created_at", { ascending: true }),
         supabase.from("profiles").select("wrike_user_id, first_name, last_name, canvas_color"),
       ]);
       setFolders(f || []);
-      setPages(p || []);
       setProfiles(pr || []);
+      const folderIds = (f || []).map((x) => x.id);
+      if (folderIds.length) {
+        const { data: p } = await supabase.from("canvas_notes_pages").select("*").in("folder_id", folderIds).order("created_at", { ascending: true });
+        setPages(p || []);
+      } else {
+        setPages([]);
+      }
     })();
-  }, [isOpen]);
+  }, [isOpen, department]);
 
   const profileFor = (id) => profiles.find((pr) => pr.wrike_user_id === id);
   const nameFor = (id) => {
@@ -451,7 +466,7 @@ function NotesCanvasCard({ isOpen, onToggle }) {
     if (!name || !folderDraft) { setFolderDraft(null); return; }
     const { data } = await supabase
       .from("canvas_notes_folders")
-      .insert({ name, owner_wrike_id: folderDraft.owner })
+      .insert({ name, owner_wrike_id: folderDraft.owner, department })
       .select()
       .single();
     if (data) setFolders((prev) => [...prev, data]);
@@ -512,7 +527,7 @@ function NotesCanvasCard({ isOpen, onToggle }) {
     <CollapsibleCard
       icon={Folder}
       title="Notes Canvas"
-      subtitle="Team board · personal spaces"
+      subtitle={`${department} team board · personal spaces`}
       isOpen={isOpen}
       onToggle={onToggle}
     >
@@ -522,7 +537,7 @@ function NotesCanvasCard({ isOpen, onToggle }) {
           {/* --- Team Board --- */}
           <div>
             <div className="flex items-center justify-between px-1 mb-1">
-              <span className="text-[11px] font-black uppercase tracking-widest text-[#768994]">Team Board</span>
+              <span className="text-[11px] font-black uppercase tracking-widest text-[#768994]">{boardLabelFor(department)}</span>
               <button onClick={() => startDraft(null)} title="New team topic" className="p-1 rounded-md text-[#c2410d] hover:bg-[#c2410d]/10">
                 <FolderPlus className="w-3.5 h-3.5" />
               </button>
@@ -753,6 +768,10 @@ const parseFormatting = (text) => {
 
 export default function CampaignCanvas({ wrikeData = [], folderCampaigns = [], triggerToast: _triggerToast, isLoading = false, syncNow, isSyncing = false, isAdmin = false, scanFilmMappings, isScanning = false, filmCodeMappings = {} }) {
   const triggerToast = _triggerToast ?? ((msg) => console.warn("Toast:", msg));
+  // Same null-falls-back-to-Motion convention used everywhere else
+  // department-gated (see src/lib/departments.js) — an unset profile
+  // department behaves like Motion rather than showing nothing.
+  const department = useDepartment() || "Motion";
   const [campaigns, setCampaigns] = useState(INITIAL_CAMPAIGNS);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [selectedMatrix, setSelectedMatrix] = useState(null);
@@ -788,7 +807,7 @@ export default function CampaignCanvas({ wrikeData = [], folderCampaigns = [], t
   const [newCountryName, setNewCountryName] = useState("");
   const [newCountryCode, setNewCountryCode] = useState("");
   const [countrySearch, setCountrySearch] = useState("");
-  const [doohViewMode, setDoohViewMode] = useState(() => localStorage.getItem("dooh_view_mode") || "grid");
+  const [doohViewMode, setDoohViewMode] = useState(() => localStorage.getItem("dooh_view_mode") || "list");
 
   // --- REFERENCE SECTION: collapsible region groups + free-text note cards ---
   const [expandedRegions, setExpandedRegions] = useState(() => {
@@ -2337,9 +2356,10 @@ export default function CampaignCanvas({ wrikeData = [], folderCampaigns = [], t
               </div>
               {/* Fixed-size flex row, not a grid — with only a handful of studios,
                   a wide grid reserves empty tracks that read as an accidental
-                  gap on the right. Cards keep their own size and wrap naturally,
-                  and the row is centred so a small studio count doesn't read as
-                  stranded in the corner of a very wide page. */}
+                  gap on the right. Cards flex to fill the row evenly (capped so
+                  they don't balloon on ultra-wide screens) with a fixed height
+                  rather than aspect-square, so stretching the width doesn't also
+                  stretch the height into something oversized. */}
               <div className="flex flex-wrap justify-center gap-5">
                 {gallerySections.map((section, i) => {
                   const art = STUDIO_ART[section] || STUDIO_ART.Misc;
@@ -2348,12 +2368,12 @@ export default function CampaignCanvas({ wrikeData = [], folderCampaigns = [], t
                   return (
                     <div
                       key={section}
-                      className="w-48 sm:w-56 lg:w-64 animate-in fade-in slide-in-from-bottom-4 zoom-in-95"
+                      className="flex-1 min-w-[200px] animate-in fade-in slide-in-from-bottom-4 zoom-in-95"
                       style={{ animationDelay: `${i * 60}ms`, animationFillMode: "both" }}
                     >
                     <button
                       onClick={() => setSelectedStudio((prev) => (prev === section ? null : section))}
-                      className={`group relative w-full rounded-2xl overflow-hidden aspect-square shadow-md hover:shadow-2xl hover:-translate-y-1.5 outline-none [filter:saturate(0.4)_brightness(0.9)] hover:[filter:saturate(1.08)_brightness(1.05)] ${isSelected ? "ring-4 ring-[#c2410d]/50 [filter:saturate(1.08)_brightness(1.05)]" : ""}`}
+                      className={`group relative w-full rounded-2xl overflow-hidden h-56 sm:h-64 shadow-md hover:shadow-2xl hover:-translate-y-1.5 outline-none [filter:saturate(0.4)_brightness(0.9)] hover:[filter:saturate(1.08)_brightness(1.05)] ${isSelected ? "ring-4 ring-[#c2410d]/50 [filter:saturate(1.08)_brightness(1.05)]" : ""}`}
                       style={{ background: art.gradient, transition: "filter 0.6s cubic-bezier(0.16,1,0.3,1), transform 0.6s cubic-bezier(0.16,1,0.3,1), box-shadow 0.6s cubic-bezier(0.16,1,0.3,1)" }}
                     >
                       {/* Studio art (best-effort; hides itself on load failure) */}
@@ -2380,11 +2400,11 @@ export default function CampaignCanvas({ wrikeData = [], folderCampaigns = [], t
                         {count}
                       </span>
                       {/* Wordmark */}
-                      <div className="absolute bottom-0 left-0 right-0 p-3 text-left transition-transform duration-300 group-hover:-translate-y-1">
-                        <p className="text-sm font-black text-white tracking-tight drop-shadow-md leading-none truncate">
+                      <div className="absolute bottom-0 left-0 right-0 p-4 text-left transition-transform duration-300 group-hover:-translate-y-1">
+                        <p className="text-lg font-black text-white tracking-tight drop-shadow-md leading-none truncate">
                           {section}
                         </p>
-                        <p className="text-[9px] font-bold text-white/75 uppercase tracking-widest mt-1 truncate">
+                        <p className="text-[10px] font-bold text-white/75 uppercase tracking-widest mt-1.5 truncate">
                           {art.label}
                         </p>
                       </div>
@@ -2399,9 +2419,7 @@ export default function CampaignCanvas({ wrikeData = [], folderCampaigns = [], t
                   put and a second click on the same card collapses it again. */}
               <AnimatePresence initial={false}>
                 {selectedStudio && (() => {
-                  const art = STUDIO_ART[selectedStudio] || STUDIO_ART.Misc;
                   const detailCamps = grouped[selectedStudio] || [];
-                  const isMisc = selectedStudio === "Misc";
                   return (
                     <motion.div
                       key={`studio-detail-${selectedStudio}`}
@@ -2411,61 +2429,17 @@ export default function CampaignCanvas({ wrikeData = [], folderCampaigns = [], t
                       transition={{ duration: 0.3, ease: [0.25, 0.1, 0.25, 1] }}
                       className="overflow-hidden"
                     >
+                      {/* No repeat header here — the selected card above already
+                          shows the studio name/count and gets a ring highlight,
+                          so this just drops straight into its campaigns. */}
                       <div className="mt-6">
-                        <div
-                          className="relative rounded-3xl overflow-hidden p-6 sm:p-7 mb-6 shadow-md"
-                          style={{ background: art.gradient }}
-                        >
-                          {art.img && art.fit === "cover" && (
-                            <img
-                              src={art.img}
-                              alt=""
-                              onError={(e) => { e.currentTarget.style.display = "none"; }}
-                              className="absolute inset-0 w-full h-full object-cover pointer-events-none"
-                            />
-                          )}
-                          {art.img && art.fit !== "cover" && (
-                            <img
-                              src={art.img}
-                              alt=""
-                              onError={(e) => { e.currentTarget.style.display = "none"; }}
-                              className="absolute -right-4 top-1/2 -translate-y-1/2 h-[150%] object-contain opacity-15 pointer-events-none"
-                            />
-                          )}
-                          <div className={`absolute inset-0 ${art.fit === "cover" ? "bg-gradient-to-r from-black/65 via-black/30 to-black/10" : "bg-gradient-to-r from-black/35 via-black/10 to-transparent"}`} />
-                          <div className="relative flex justify-between items-start gap-4">
-                            <div>
-                              <button
-                                onClick={() => setSelectedStudio(null)}
-                                className="group/back flex items-center gap-1.5 text-[11px] font-black uppercase tracking-widest text-white/70 hover:text-white transition-colors"
-                              >
-                                <span className="text-base leading-none transition-transform group-hover/back:-translate-x-0.5">←</span> Collapse
-                              </button>
-                              <p className="text-3xl sm:text-4xl font-black text-white tracking-tight drop-shadow-md leading-none mt-3">
-                                {selectedStudio}
-                              </p>
-                              <p className="text-[11px] font-bold text-white/70 uppercase tracking-widest mt-2">
-                                {art.label} · {detailCamps.length} {detailCamps.length === 1 ? "campaign" : "campaigns"}
-                              </p>
-                            </div>
-                            {isMisc && (
-                              <button
-                                onClick={() => setIsModalOpen(true)}
-                                className="shrink-0 flex items-center gap-1.5 bg-white/15 hover:bg-white/25 backdrop-blur-md text-white px-4 py-2 rounded-xl font-bold text-xs border border-white/25 transition-colors active:scale-95"
-                              >
-                                <span className="text-base leading-none">+</span> New Campaign
-                              </button>
-                            )}
-                          </div>
-                        </div>
-
                         <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 2xl:grid-cols-6 gap-4">
                           {detailCamps.map((camp, i) => renderCampaignCard(camp, i))}
                         </div>
 
                         {detailCamps.length === 0 && (
                           <p className="text-center text-sm font-bold text-[#768994] py-16">
-                            {isMisc ? "No campaigns here yet — use “+ New Campaign” to add one." : "No campaigns in this studio."}
+                            No campaigns in this studio.
                           </p>
                         )}
                       </div>
@@ -2509,6 +2483,9 @@ export default function CampaignCanvas({ wrikeData = [], folderCampaigns = [], t
                 <span className="text-[10px] font-black uppercase tracking-[0.2em] text-[#94a3b8]">Reference</span>
                 <div className="h-px flex-1 bg-gradient-to-l from-transparent via-[#cdd7e1] to-[#cdd7e1]" />
               </div>
+              {/* DOOH specs are Motion-specific (out-of-home media specs) —
+                  other departments get different content here later. */}
+              {department === "Motion" && (
               <CollapsibleCard
                 icon={Globe}
                 title="DOOH Specs"
@@ -2610,7 +2587,9 @@ export default function CampaignCanvas({ wrikeData = [], folderCampaigns = [], t
                       {REGION_ORDER.map((region) => {
                         const items = unpinned.filter((c) => regionOf(c.name) === region);
                         if (items.length === 0) return null;
-                        const isOpen = q ? true : !!expandedRegions[region];
+                        // Europe starts expanded by default; every other region
+                        // (and Europe itself, once toggled) respects the saved state.
+                        const isOpen = q ? true : (region === "Europe" ? expandedRegions[region] ?? true : !!expandedRegions[region]);
                         return (
                           <div key={region}>
                             <div role="button" tabIndex={0} onClick={() => toggleRegion(region)}
@@ -2628,16 +2607,19 @@ export default function CampaignCanvas({ wrikeData = [], folderCampaigns = [], t
                   );
                 })()}
               </CollapsibleCard>
+              )}
 
               <div className="mt-6 space-y-6">
+                <NotesCanvasCard
+                  isOpen={expandedRegions["notesCanvas"] ?? false}
+                  onToggle={() => toggleRegion("notesCanvas")}
+                  department={department}
+                />
                 <EndOfCampaignNotesCard
                   isOpen={expandedRegions["eocNotes"] ?? false}
                   onToggle={() => toggleRegion("eocNotes")}
                   campaigns={campaigns}
-                />
-                <NotesCanvasCard
-                  isOpen={expandedRegions["notesCanvas"] ?? false}
-                  onToggle={() => toggleRegion("notesCanvas")}
+                  department={department}
                 />
               </div>
             </div>

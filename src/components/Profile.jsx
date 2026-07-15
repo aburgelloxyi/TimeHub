@@ -22,6 +22,7 @@ import {
   Check,
   LogOut,
   ExternalLink,
+  Highlighter,
 } from "lucide-react";
 import { supabase } from "../lib/supabaseClient";
 import PageHeader from "./shared/PageHeader";
@@ -32,6 +33,7 @@ import { fetchTasksByIds } from "../hooks/useWrikeCache";
 import { startWrikeOAuth, disconnectWrike, fetchWrikeOAuthStatus } from "../lib/wrikeApi";
 import { subscribeToWrikeTaskEvents } from "../lib/wrikeWebhookSubscription";
 import TaskDetailModal from "./TaskDetailModal";
+import PdfAnnotator from "./shared/PdfAnnotator";
 import { formatDurationText } from "../utils/timeHelpers";
 import { getTagStyle, getBorderColorClass } from "../utils/tagStyles";
 import { TERRITORY_FLAGS } from "../constants";
@@ -287,6 +289,7 @@ function JobsSection({ wrikeUser, filter, wrikeData, onLogTime, triggerToast, jo
   const [loading, setLoading] = useState(false);
   const [fetched, setFetched] = useState(false);
   const [selectedTask, setSelectedTask] = useState(null);
+  const [pdfAnnotatorOpen, setPdfAnnotatorOpen] = useState(false);
   const getCascadeRef = useCascadeRefs();
 
   // Extracted out of fetchTasks (which used to close over statusNameMap
@@ -485,12 +488,25 @@ function JobsSection({ wrikeUser, filter, wrikeData, onLogTime, triggerToast, jo
 
   if (fetched && sorted.length === 0)
     return (
-      <Empty
-        icon={Icon}
-        message={`No ${
-          filter === "completed" ? "completed" : "active"
-        } jobs found.`}
-      />
+      <div className="space-y-3">
+        <Empty
+          icon={Icon}
+          message={`No ${
+            filter === "completed" ? "completed" : "active"
+          } jobs found.`}
+        />
+        {filter === "active" && (
+          <div className="flex justify-center">
+            <button
+              onClick={() => setPdfAnnotatorOpen(true)}
+              className="flex items-center gap-1.5 text-[11px] font-bold text-[#768994] hover:text-[#c2410d] transition-colors"
+            >
+              <Highlighter className="w-3 h-3" /> Add a PDF to highlight
+            </button>
+          </div>
+        )}
+        {pdfAnnotatorOpen && <PdfAnnotator onClose={() => setPdfAnnotatorOpen(false)} />}
+      </div>
     );
 
   return (
@@ -502,12 +518,23 @@ function JobsSection({ wrikeUser, filter, wrikeData, onLogTime, triggerToast, jo
         <span className="text-[10px] font-black text-[#768994] bg-white border border-[#dce4ec] px-2.5 py-1 rounded-full uppercase tracking-wider">
           {sorted.length} {filter === "completed" ? "delivered" : "active"}
         </span>
-        <button
-          onClick={fetchTasks}
-          className="flex items-center gap-1.5 text-[11px] font-bold text-[#768994] hover:text-[#12a0e1] transition-colors"
-        >
-          <RefreshCw className="w-3 h-3" /> Refresh
-        </button>
+        <div className="flex items-center gap-3">
+          {filter === "active" && (
+            <button
+              onClick={() => setPdfAnnotatorOpen(true)}
+              title="Manually add a PDF to highlight & pull text from"
+              className="flex items-center gap-1.5 text-[11px] font-bold text-[#768994] hover:text-[#c2410d] transition-colors"
+            >
+              <Highlighter className="w-3 h-3" /> Add PDF
+            </button>
+          )}
+          <button
+            onClick={fetchTasks}
+            className="flex items-center gap-1.5 text-[11px] font-bold text-[#768994] hover:text-[#12a0e1] transition-colors"
+          >
+            <RefreshCw className="w-3 h-3" /> Refresh
+          </button>
+        </div>
       </div>
 
       {/* Each campaign is its own bordered/shadowed white card — the same
@@ -545,6 +572,8 @@ function JobsSection({ wrikeUser, filter, wrikeData, onLogTime, triggerToast, jo
         triggerToast={triggerToast}
         jobOptions={jobOptions}
       />
+
+      {pdfAnnotatorOpen && <PdfAnnotator onClose={() => setPdfAnnotatorOpen(false)} />}
     </div>
   );
 }

@@ -559,7 +559,6 @@ function NotesCanvasCard({ isOpen, onToggle, department, pinnedFolderIds = [], o
   const savedTimerRef = useRef(null);
   const [colorPickerOpen, setColorPickerOpen] = useState(false);
   const [activeBoard, setActiveBoard] = useState("team");
-  const [searchQuery, setSearchQuery] = useState("");
   const [showTeammates, setShowTeammates] = useState(false);
   // Expand ("focus mode") is controlled by the parent so it can also hide the
   // campaigns panel and let the note take the full page width.
@@ -609,21 +608,6 @@ function NotesCanvasCard({ isOpen, onToggle, department, pinnedFolderIds = [], o
     : activeBoard === "mine"
       ? myFolders
       : folders.filter((f) => f.owner_wrike_id === activeBoard);
-
-  const searchLower = searchQuery.trim().toLowerCase();
-  const filteredFolders = searchLower
-    ? activeBoardFolders.filter((f) =>
-        f.name.toLowerCase().includes(searchLower) ||
-        pages.some((p) => p.folder_id === f.id && (p.title || "Untitled").toLowerCase().includes(searchLower))
-      )
-    : activeBoardFolders;
-
-  const filteredPages = searchLower
-    ? pages.filter((p) =>
-        (p.title || "Untitled").toLowerCase().includes(searchLower) ||
-        (p.folder_id ? folders.find((f) => f.id === p.folder_id)?.name.toLowerCase().includes(searchLower) : false)
-      )
-    : pages;
 
   const setMyColor = async (hex) => {
     if (!currentUserId) return;
@@ -695,6 +679,23 @@ function NotesCanvasCard({ isOpen, onToggle, department, pinnedFolderIds = [], o
     setPageSaveState("idle");
     const p = pages.find((pg) => pg.id === selectedPageId);
     setPageLastSavedAt(p?.updated_at || null);
+  }, [selectedPageId]);
+
+  // Opening a sketch claims the full editing width automatically — a drawing
+  // canvas benefits from the room in a way a text note doesn't, so text notes
+  // are left at the user's own manual expand/collapse choice. Symmetric on
+  // the way out regardless of kind: switching boards or deleting the open
+  // page clears selectedPageId, and without that branch editorExpanded stayed
+  // stuck true — the rail (topics/pages) only renders when NOT expanded, so
+  // with nothing selected and no rail visible there was no way back to the
+  // list short of a page refresh. Keyed on selectedPageId itself (not
+  // editorExpanded) so manually collapsing back while the SAME page stays
+  // open isn't immediately re-expanded by this effect re-firing.
+  useEffect(() => {
+    const openedKind = pages.find((p) => p.id === selectedPageId)?.kind;
+    if (selectedPageId && openedKind === "sketch" && !editorExpanded) toggleEditorExpanded();
+    if (!selectedPageId && editorExpanded) toggleEditorExpanded();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedPageId]);
 
   const selectedPage = pages.find((p) => p.id === selectedPageId);
@@ -782,74 +783,68 @@ function NotesCanvasCard({ isOpen, onToggle, department, pinnedFolderIds = [], o
         className="flex flex-col gap-4 -m-6 sm:-m-8 p-5 sm:p-6 transition-colors duration-300"
         style={{ background: `linear-gradient(180deg, ${boardAccent}14, ${boardAccent}08 40%, ${boardAccent}05)` }}
       >
-        {/* --- Toolbar: segmented board switcher + search --- */}
-        <div className="flex flex-wrap items-center gap-2.5">
-          <div className="inline-flex items-center gap-1 p-1 rounded-2xl bg-white/80 border border-[#ece4d8] shadow-sm">
-            <button
-              onClick={() => { setActiveBoard("team"); setSelectedPageId(null); }}
-              className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold tracking-wide transition-all ${
-                activeBoard === "team"
-                  ? "bg-white shadow-sm text-[#9a3412]"
-                  : "text-[#8a8073] hover:text-[#5a5147]"
-              }`}
+        {/* --- Board switcher: which space am I in --- */}
+        {/* This is the primary navigation for the whole panel — team board vs
+            personal vs a teammate's space — so it gets real visual weight
+            (solid colour fill + icon on the active pill) rather than reading
+            as a quiet segmented control. */}
+        <div className="flex flex-wrap items-center gap-2">
+          <button
+            onClick={() => { setActiveBoard("team"); setSelectedPageId(null); }}
+            className={`inline-flex items-center gap-2 pl-3 pr-4 py-2 rounded-2xl text-sm font-black tracking-wide transition-all ${
+              activeBoard === "team" ? "text-white shadow-md" : "bg-white/80 border border-[#ece4d8] text-[#8a8073] hover:text-[#5a5147] hover:border-[#c2410d]/30"
+            }`}
+            style={activeBoard === "team" ? { background: `linear-gradient(135deg, #c2410d, #9a3412)` } : undefined}
+          >
+            <span
+              className="w-6 h-6 rounded-lg grid place-items-center shrink-0"
+              style={activeBoard === "team" ? { backgroundColor: "#ffffff2a" } : { backgroundColor: "#c2410d14", color: "#c2410d" }}
             >
-              <span className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: "#c2410d" }} />
-              {boardLabelFor(department)}
-            </button>
+              <Users className="w-3.5 h-3.5" />
+            </span>
+            {boardLabelFor(department)}
+          </button>
 
-            {currentUserId && (
-              <button
-                onClick={() => { setActiveBoard("mine"); setSelectedPageId(null); }}
-                className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold tracking-wide transition-all ${
-                  activeBoard === "mine" ? "bg-white shadow-sm" : "text-[#8a8073] hover:text-[#5a5147]"
-                }`}
-                style={activeBoard === "mine" ? { color: myColor } : undefined}
+          {currentUserId && (
+            <button
+              onClick={() => { setActiveBoard("mine"); setSelectedPageId(null); }}
+              className={`inline-flex items-center gap-2 pl-3 pr-4 py-2 rounded-2xl text-sm font-black tracking-wide transition-all ${
+                activeBoard === "mine" ? "text-white shadow-md" : "bg-white/80 border border-[#ece4d8] text-[#8a8073] hover:text-[#5a5147]"
+              }`}
+              style={activeBoard === "mine" ? { background: `linear-gradient(135deg, ${myColor}, ${myColor}cc)` } : { borderColor: `${myColor}30` }}
+            >
+              <span
+                className="w-6 h-6 rounded-lg grid place-items-center text-[10px] font-black shrink-0"
+                style={activeBoard === "mine" ? { backgroundColor: "#ffffff2a", color: "#fff" } : { backgroundColor: `${myColor}18`, color: myColor }}
               >
-                <span className="w-4 h-4 rounded-full grid place-items-center text-[8px] font-black text-white" style={{ backgroundColor: myColor }}>
-                  {(myName || "M").charAt(0)}
+                {(myName || "M").charAt(0)}
+              </span>
+              {myName}
+            </button>
+          )}
+
+          {teammateIds.map((id) => {
+            const color = colorFor(id);
+            const isActive = activeBoard === id;
+            return (
+              <button
+                key={id}
+                onClick={() => { setActiveBoard(id); setSelectedPageId(null); }}
+                className={`inline-flex items-center gap-2 pl-3 pr-4 py-2 rounded-2xl text-sm font-black tracking-wide transition-all ${
+                  isActive ? "text-white shadow-md" : "bg-white/80 border border-[#ece4d8] text-[#8a8073] hover:text-[#5a5147]"
+                }`}
+                style={isActive ? { background: `linear-gradient(135deg, ${color}, ${color}cc)` } : { borderColor: `${color}30` }}
+              >
+                <span
+                  className="w-6 h-6 rounded-lg grid place-items-center text-[10px] font-black shrink-0"
+                  style={isActive ? { backgroundColor: "#ffffff2a", color: "#fff" } : { backgroundColor: `${color}18`, color }}
+                >
+                  {nameFor(id).charAt(0)}
                 </span>
-                {myName}
+                <span className="truncate max-w-[90px]">{nameFor(id)}</span>
               </button>
-            )}
-
-            {teammateIds.map((id) => {
-              const color = colorFor(id);
-              const isActive = activeBoard === id;
-              return (
-                <button
-                  key={id}
-                  onClick={() => { setActiveBoard(id); setSelectedPageId(null); }}
-                  className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold tracking-wide transition-all ${
-                    isActive ? "bg-white shadow-sm" : "text-[#8a8073] hover:text-[#5a5147]"
-                  }`}
-                  style={isActive ? { color } : undefined}
-                >
-                  <span className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: color }} />
-                  <span className="truncate max-w-[90px]">{nameFor(id)}</span>
-                </button>
-              );
-            })}
-          </div>
-
-          <div className="flex-1 min-w-[140px] max-w-[280px] ml-auto">
-            <div className="relative">
-              <Search className="w-3.5 h-3.5 text-[#b0a89a] absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
-              <input
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                placeholder="Search notes…"
-                className="w-full pl-9 pr-7 py-2 rounded-xl border border-[#ece4d8] bg-white/80 outline-none text-xs font-semibold text-[#3a352e] placeholder:text-[#b0a89a] focus:border-[#c2410d]/40 focus:bg-white transition-colors"
-              />
-              {searchQuery && (
-                <button
-                  onClick={() => setSearchQuery("")}
-                  className="absolute right-2 top-1/2 -translate-y-1/2 text-[#b0a89a] hover:text-[#3a352e]"
-                >
-                  <X className="w-3.5 h-3.5" />
-                </button>
-              )}
-            </div>
-          </div>
+            );
+          })}
         </div>
 
         {/* --- Main content: two-column layout --- */}
@@ -931,13 +926,13 @@ function NotesCanvasCard({ isOpen, onToggle, department, pinnedFolderIds = [], o
             )}
 
             <div className="flex-1 overflow-y-auto px-2 pb-3">
-              {filteredFolders.length === 0 ? (
+              {activeBoardFolders.length === 0 ? (
                 <p className="text-xs font-semibold text-[#a79f93] px-2 py-4">
-                  {searchQuery ? "No matches." : "No topics yet — add one with the + above."}
+                  No topics yet — add one with the + above.
                 </p>
               ) : (
-                filteredFolders.map((folder) => {
-                  const folderPages = filteredPages.filter((p) => p.folder_id === folder.id);
+                activeBoardFolders.map((folder) => {
+                  const folderPages = pages.filter((p) => p.folder_id === folder.id);
                   const isPinned = pinnedFolderIds.includes(folder.id);
                   return (
                     <div key={folder.id} className="mb-1.5">
@@ -1063,9 +1058,10 @@ function NotesCanvasCard({ isOpen, onToggle, department, pinnedFolderIds = [], o
 
             {selectedPage ? (
               <>
-                {/* Cosy document head — sits above the editor's own scroll so
-                    BlockNote keeps its native positioning (the +/drag handle
-                    lives in its own left gutter and must not be clipped). */}
+                {/* Cosy document head — title/breadcrumb/byline. A sketch has
+                    no title to read and no word count to show, so it skips
+                    straight to the canvas instead of reserving this space. */}
+                {selectedPage.kind !== "sketch" && (
                 <div className={`w-full mx-auto px-6 sm:px-12 pt-7 shrink-0 transition-[max-width] duration-200 ${editorExpanded ? "max-w-[62rem]" : "max-w-[46rem]"}`}>
                   <div className="flex items-center gap-2 text-[11px] font-black uppercase tracking-[0.12em] mb-3" style={{ color: boardAccent }}>
                     <span>{activeBoard === "mine" ? myName : boardLabelFor(department)}</span>
@@ -1083,18 +1079,15 @@ function NotesCanvasCard({ isOpen, onToggle, department, pinnedFolderIds = [], o
                       {(activeBoard === "mine" ? (myName || "M") : boardLabelFor(department)).charAt(0)}
                     </span>
                     <span className="text-[#8a8073] font-semibold">Edited {timeAgo(pageLastSavedAt || selectedPage.updated_at)}</span>
-                    {selectedPage.kind !== "sketch" && (
-                      <>
-                        <span className="w-1 h-1 rounded-full bg-[#d5cdbf]" />
-                        <span className="tabular-nums">{wordCountOf(selectedPage)} words</span>
-                      </>
-                    )}
+                    <span className="w-1 h-1 rounded-full bg-[#d5cdbf]" />
+                    <span className="tabular-nums">{wordCountOf(selectedPage)} words</span>
                   </div>
                 </div>
+                )}
 
                 {selectedPage.kind === "sketch" ? (
-                  <div className="px-6 sm:px-12 pb-8">
-                    <Suspense fallback={<div className="h-[560px] rounded-xl border border-[#ece4d8] bg-[#faf7f2] animate-pulse" />}>
+                  <div className="flex-1 min-h-[640px]">
+                    <Suspense fallback={<div className="h-full min-h-[640px] bg-[#faf7f2] animate-pulse" />}>
                       <ExcalidrawPageEditor
                         key={selectedPage.id}
                         content={selectedPage.content}

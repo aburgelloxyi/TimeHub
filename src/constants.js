@@ -675,6 +675,28 @@ export const MOTION_TEAM_NAME_MAP = {
   Turk: "Turk",
 };
 
+// Wrike lets people decorate their display name with emoji ("Maria Cerrato 🐱",
+// "Nicholas 😎"), and that emoji rides along in the firstName/lastName the API
+// returns. Matching the team roster on the exact string then silently drops a
+// member the moment they add or change an emoji — so a task assigned only to
+// them never reaches the Motion Board or the shared cache. Strip emoji,
+// variation selectors, ZWJ and keycaps, collapse whitespace, then match on
+// that, so decoration can't break roster membership.
+export const normalizeName = (s) =>
+  (s || "")
+    .replace(/[\p{Extended_Pictographic}‍️⃣]/gu, "")
+    .replace(/\s+/g, " ")
+    .trim();
+
+const MOTION_TEAM_NORMALIZED = Object.fromEntries(
+  Object.entries(MOTION_TEAM_NAME_MAP).map(([name, short]) => [normalizeName(name), short])
+);
+
+// The team short-name for a Wrike full name (emoji-insensitive), or undefined
+// if the person isn't on the Motion team.
+export const motionTeamShortName = (fullName) =>
+  MOTION_TEAM_NORMALIZED[normalizeName(fullName)];
+
 export const REGION_ALIASES = {
   // Original entries
   TR: "Türkiye",

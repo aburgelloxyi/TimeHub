@@ -11,7 +11,7 @@ import {
 } from "lucide-react";
 import gsap from "gsap";
 import { useGSAP } from "@gsap/react";
-import { TERRITORY_FLAGS, MOTION_TEAM_NAME_MAP } from "../constants";
+import { TERRITORY_FLAGS, MOTION_TEAM_NAME_MAP, normalizeName } from "../constants";
 import { supabase } from "../lib/supabaseClient";
 import { fullName as cleanFullName } from "../lib/formatName";
 import { useMotionBoardTasks } from "../hooks/useMotionBoardTasks";
@@ -640,10 +640,13 @@ export default function TodaysList({ wrikeData, triggerToast: _triggerToast, isA
           permalink: wrikeLink,
         });
       } else {
-        Object.keys(board.nameMap).forEach((wrikeName) => {
-          if (task.assignees.includes(wrikeName)) {
-            const boardName = board.nameMap[wrikeName];
-            if (freshAssignments[boardName]) freshAssignments[boardName].push(card);
+        // Exact match on emoji-stripped full names (see normalizeName): a
+        // trailing "🐱" no longer has to line up, and a short key like "Turk"
+        // can't accidentally match a longer name that merely contains it.
+        const assigneeNames = task.assignees.split(",").map((a) => normalizeName(a));
+        Object.entries(board.nameMap).forEach(([wrikeName, boardName]) => {
+          if (assigneeNames.includes(normalizeName(wrikeName)) && freshAssignments[boardName]) {
+            freshAssignments[boardName].push(card);
           }
         });
       }

@@ -3,10 +3,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import { supabase } from "../lib/supabaseClient";
 import { getFilmName, PRINT_HUB_RE } from "../lib/wrikeEnrich";
 import { fetchTasksByIds } from "../hooks/useWrikeCache";
-import { useCreateBlockNote } from "@blocknote/react";
-import { BlockNoteView } from "@blocknote/mantine";
-import "@blocknote/core/fonts/inter.css";
-import "@blocknote/mantine/style.css";
+import RichNoteEditor from "./shared/RichNoteEditor";
 import PageHeader, { pageHeaderActionClass } from "./shared/PageHeader";
 import HubRow from "./shared/HubRow";
 import { useDepartment } from "../hooks/useDepartment";
@@ -201,37 +198,9 @@ function CollapsibleCard({ icon: Icon, title, subtitle, isOpen, onToggle, childr
   );
 }
 
-// End of Campaign notes are stored as a JSON-stringified BlockNote document in
-// `content` (text column). Older rows may still hold plain markdown from the
-// previous editor — detect and convert those to blocks on first load so no
-// existing notes are lost.
-function EndOfCampaignPageEditor({ initialContent, onSave }) {
-  const editor = useCreateBlockNote();
-  useEffect(() => {
-    (async () => {
-      const raw = (initialContent || "").trim();
-      if (!raw) return;
-      let blocks = null;
-      if (raw.startsWith("[")) {
-        try { blocks = JSON.parse(raw); } catch { blocks = null; }
-      }
-      if (!blocks) blocks = await editor.tryParseMarkdownToBlocks(raw);
-      if (blocks?.length) editor.replaceBlocks(editor.document, blocks);
-    })();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-  const saveTimerRef = useRef(null);
-  const handleChange = () => {
-    clearTimeout(saveTimerRef.current);
-    saveTimerRef.current = setTimeout(() => onSave(JSON.stringify(editor.document)), 800);
-  };
-  useEffect(() => () => clearTimeout(saveTimerRef.current), []);
-  return (
-    <div className="min-h-[340px] max-h-[600px] overflow-y-auto pt-4 px-1">
-      <BlockNoteView editor={editor} onChange={handleChange} theme="light" />
-    </div>
-  );
-}
+// End of Campaign notes are stored as a JSON-stringified TipTap document in
+// `content` (text column) — parsed/stringified at the call site since
+// RichNoteEditor itself is storage-format-agnostic.
 
 // --- Reference > End of Campaign Notes: pick a campaign, write wrap-up notes ---
 // Notes are per (campaign, department) — Print's wrap-up on a campaign is a
@@ -369,10 +338,11 @@ function EndOfCampaignNotesCard({ isOpen, onToggle, campaigns, department }) {
           {selectedCampaignId && loaded ? (
             <>
               <div className="rounded-xl overflow-hidden border border-[#dce4ec] bg-white">
-                <EndOfCampaignPageEditor
+                <RichNoteEditor
                   key={selectedCampaignId}
-                  initialContent={content}
-                  onSave={(json) => setContent(json)}
+                  content={(() => { try { return content ? JSON.parse(content) : null; } catch { return null; } })()}
+                  onChange={(json) => setContent(JSON.stringify(json))}
+                  className="min-h-[340px] max-h-[600px] overflow-y-auto pt-4 px-1"
                 />
               </div>
               <div className="flex items-center justify-end pt-1">
@@ -390,25 +360,8 @@ function EndOfCampaignNotesCard({ isOpen, onToggle, campaigns, department }) {
   );
 }
 
-// --- Reference > Notes Canvas: folders/topics of freeform BlockNote pages ---
-function NotesCanvasPageEditor({ page, onSave }) {
-  const editor = useCreateBlockNote({
-    initialContent: page.content && page.content.length ? page.content : undefined,
-  });
-  const saveTimerRef = useRef(null);
-  const handleChange = () => {
-    clearTimeout(saveTimerRef.current);
-    saveTimerRef.current = setTimeout(() => onSave(editor.document), 800);
-  };
-  useEffect(() => () => clearTimeout(saveTimerRef.current), []);
-  // No own scroll/height — the parent editor column scrolls the whole document
-  // (title + metadata + body) as one, so the writing surface reads continuous.
-  return (
-    <div className="notes-prose min-h-[280px] max-h-[540px] overflow-y-auto pt-1 pb-8">
-      <BlockNoteView editor={editor} onChange={handleChange} theme="light" />
-    </div>
-  );
-}
+// --- Reference > Notes Canvas: folders/topics of freeform pages, written
+// with RichNoteEditor (see src/components/shared/RichNoteEditor.jsx). ---
 
 // Accent palette for personal spaces. A teammate who hasn't picked a colour
 // yet gets a deterministic one from this set (hashed off their id) so their
@@ -589,7 +542,7 @@ function PageList({ folder, pages, selectedPageId, onSelectPage, onDeletePage, o
   );
 }
 
-function NotesCanvasCard({ isOpen, onToggle, department, pinnedFolderIds = [], onTogglePin, focusFolder }) {
+function NotesCanvasCard({ isOpen, onToggle, department, pinnedFolderIds = [], onTogglePin, focusFolder, editorExpanded = false, onToggleEditorExpanded }) {
   const [folders, setFolders] = useState([]);
   const [pages, setPages] = useState([]);
   const [profiles, setProfiles] = useState([]);
@@ -604,7 +557,9 @@ function NotesCanvasCard({ isOpen, onToggle, department, pinnedFolderIds = [], o
   const [activeBoard, setActiveBoard] = useState("team");
   const [searchQuery, setSearchQuery] = useState("");
   const [showTeammates, setShowTeammates] = useState(false);
-  const [editorExpanded, setEditorExpanded] = useState(false);
+  // Expand ("focus mode") is controlled by the parent so it can also hide the
+  // campaigns panel and let the note take the full page width.
+  const toggleEditorExpanded = onToggleEditorExpanded || (() => {});
 
   const currentUserId = useMemo(() => localStorage.getItem("wrike_user_id") || null, []);
 
@@ -746,18 +701,19 @@ function NotesCanvasCard({ isOpen, onToggle, department, pinnedFolderIds = [], o
   // "whose space am I in" at a glance, not just a coloured pill.
   const boardAccent = activeBoard === "team" ? "#c2410d" : activeBoard === "mine" ? myColor : colorFor(activeBoard);
 
-  // Pull plain text out of stored BlockNote blocks — powers the note-list
-  // preview snippet and the editor's live word count.
-  const blocksText = (blocks) => {
-    if (!Array.isArray(blocks)) return "";
+  // Pull plain text out of a stored TipTap document — powers the note-list
+  // preview snippet and the editor's live word count. Accepts either a full
+  // ProseMirror doc ({type:"doc", content:[...]}) or a bare content array.
+  const blocksText = (doc) => {
+    if (!doc) return "";
+    const nodes = Array.isArray(doc) ? doc : doc.content;
+    if (!Array.isArray(nodes)) return "";
     const walk = (nodes) =>
       (nodes || []).map((n) => {
         if (typeof n?.text === "string") return n.text;
-        let s = Array.isArray(n?.content) ? walk(n.content) : "";
-        if (Array.isArray(n?.children) && n.children.length) s += " " + walk(n.children);
-        return s;
+        return Array.isArray(n?.content) ? walk(n.content) : "";
       }).join(" ");
-    return walk(blocks).replace(/\s+/g, " ").trim();
+    return walk(nodes).replace(/\s+/g, " ").trim();
   };
   const snippetOf = (page) => blocksText(page?.content).slice(0, 60);
   const wordCountOf = (page) => {
@@ -820,17 +776,6 @@ function NotesCanvasCard({ isOpen, onToggle, department, pinnedFolderIds = [], o
         className="flex flex-col gap-4 -m-6 sm:-m-8 p-5 sm:p-6 transition-colors duration-300"
         style={{ background: `linear-gradient(180deg, ${boardAccent}14, ${boardAccent}08 40%, ${boardAccent}05)` }}
       >
-        {/* Comfortable, warm typography for the BlockNote writing surface —
-            larger measure/line-height and a warm ink, so notes feel inviting
-            rather than like a cramped form field. */}
-        <style>{`
-          .notes-prose .bn-editor { background: transparent; max-width: 46rem; margin-inline: auto; }
-          .notes-prose .ProseMirror { font-size: 16px; line-height: 1.7; color: #2a2620; }
-          .notes-prose .bn-block-content[data-content-type="heading"][data-level="1"] { font-size: 1.55rem; }
-          .notes-prose .bn-block-content[data-content-type="heading"][data-level="2"] { font-size: 1.28rem; }
-          .notes-prose .bn-block-content[data-content-type="heading"] { font-weight: 750; letter-spacing: -.01em; }
-          .notes-prose .bn-inline-content { caret-color: ${boardAccent}; }
-        `}</style>
         {/* --- Toolbar: segmented board switcher + search --- */}
         <div className="flex flex-wrap items-center gap-2.5">
           <div className="inline-flex items-center gap-1 p-1 rounded-2xl bg-white/80 border border-[#ece4d8] shadow-sm">
@@ -1080,8 +1025,8 @@ function NotesCanvasCard({ isOpen, onToggle, department, pinnedFolderIds = [], o
               {selectedPage && <SaveStatus state={pageSaveState} lastSavedAt={pageLastSavedAt} />}
               {selectedPage && (
                 <button
-                  onClick={() => setEditorExpanded((v) => !v)}
-                  title={editorExpanded ? "Show notes list" : "Focus mode"}
+                  onClick={toggleEditorExpanded}
+                  title={editorExpanded ? "Exit full width" : "Expand to full width"}
                   className="p-1.5 rounded-lg hover:bg-black/5 text-[#8a8073] shrink-0 transition-colors"
                 >
                   {editorExpanded ? <Minimize2 className="w-4 h-4" /> : <Maximize2 className="w-4 h-4" />}
@@ -1094,7 +1039,7 @@ function NotesCanvasCard({ isOpen, onToggle, department, pinnedFolderIds = [], o
                 {/* Cosy document head — sits above the editor's own scroll so
                     BlockNote keeps its native positioning (the +/drag handle
                     lives in its own left gutter and must not be clipped). */}
-                <div className="w-full max-w-[46rem] mx-auto px-6 sm:px-12 pt-7 shrink-0">
+                <div className={`w-full mx-auto px-6 sm:px-12 pt-7 shrink-0 transition-[max-width] duration-200 ${editorExpanded ? "max-w-[62rem]" : "max-w-[46rem]"}`}>
                   <div className="flex items-center gap-2 text-[11px] font-black uppercase tracking-[0.12em] mb-3" style={{ color: boardAccent }}>
                     <span>{activeBoard === "mine" ? myName : boardLabelFor(department)}</span>
                     {selectedPageFolder && <><span className="opacity-40">/</span><span className="text-[#a79f93] truncate">{selectedPageFolder.name}</span></>}
@@ -1102,8 +1047,8 @@ function NotesCanvasCard({ isOpen, onToggle, department, pinnedFolderIds = [], o
                   <input
                     value={selectedPage.title}
                     onChange={(e) => renamePage(selectedPage.id, e.target.value)}
-                    className="w-full outline-none bg-transparent font-bold text-[#221f1a] placeholder:text-[#cdc5b7] leading-tight"
-                    style={{ fontFamily: "ui-serif, Georgia, 'Iowan Old Style', serif", letterSpacing: "-0.02em", fontSize: "clamp(26px, 3.4vw, 34px)" }}
+                    className="w-full outline-none bg-transparent font-display font-bold tracking-tight text-[#221f1a] placeholder:text-[#cdc5b7] leading-tight"
+                    style={{ fontSize: "clamp(26px, 3.4vw, 34px)" }}
                     placeholder="Untitled note"
                   />
                   <div className="flex items-center gap-2.5 mt-3 mb-1 text-[12px] text-[#a79f93]">
@@ -1116,10 +1061,17 @@ function NotesCanvasCard({ isOpen, onToggle, department, pinnedFolderIds = [], o
                   </div>
                 </div>
 
-                <NotesCanvasPageEditor
+                <RichNoteEditor
                   key={selectedPage.id}
-                  page={selectedPage}
-                  onSave={(blocks) => savePageContent(selectedPage.id, blocks)}
+                  content={selectedPage.content}
+                  onChange={(json) => savePageContent(selectedPage.id, json)}
+                  accent={boardAccent}
+                  wide={editorExpanded}
+                  className={
+                    editorExpanded
+                      ? "min-h-[45vh] max-h-[60vh] overflow-y-auto pt-1 pb-8"
+                      : "min-h-[320px] max-h-[600px] overflow-y-auto pt-1 pb-8"
+                  }
                 />
               </>
             ) : (
@@ -1758,6 +1710,8 @@ export default function CampaignCanvas({ wrikeData = [], folderCampaigns = [], t
   const [browseGallery, setBrowseGallery] = useState(false);
   const [campFilter, setCampFilter] = useState("");        // compact-list search
   const [collapsedStudios, setCollapsedStudios] = useState({}); // {studio: true} = folded
+  // Notes "expand" → full page width: hides the campaigns panel + the notes rail.
+  const [notesExpanded, setNotesExpanded] = useState(false);
 
   // --- SIDE PANEL STATE ---
   const [showFoldersPanel, setShowFoldersPanel] = useState(false);
@@ -3462,9 +3416,10 @@ export default function CampaignCanvas({ wrikeData = [], folderCampaigns = [], t
 
               {/* ============ WORKSPACE — Notes (left) + compact campaign list (right) ============ */}
               {!browseGallery && (
-                <div className="grid grid-cols-1 lg:grid-cols-5 gap-6 mb-10 items-start">
-                  {/* Notes Canvas — the primary workspace surface, leads the page */}
-                  <div className="lg:col-span-3 min-w-0">
+                <div className={`grid grid-cols-1 gap-6 mb-10 items-start ${notesExpanded ? "" : "lg:grid-cols-5"}`}>
+                  {/* Notes Canvas — the primary workspace surface, leads the page.
+                      When expanded it spans the full width (campaigns hidden). */}
+                  <div className={notesExpanded ? "min-w-0" : "lg:col-span-3 min-w-0"}>
                     <NotesCanvasCard
                       isOpen={expandedRegions["notesCanvas"] ?? true}
                       onToggle={() => toggleRegion("notesCanvas")}
@@ -3472,12 +3427,15 @@ export default function CampaignCanvas({ wrikeData = [], folderCampaigns = [], t
                       pinnedFolderIds={pinnedFolders.map((f) => f.id)}
                       onTogglePin={toggleNotePin}
                       focusFolder={focusFolder}
+                      editorExpanded={notesExpanded}
+                      onToggleEditorExpanded={() => setNotesExpanded((v) => !v)}
                     />
                   </div>
 
                   {/* Campaigns — a compact, scannable list beside Notes. The full
                       studio art-wall lives one click away behind "Browse gallery".
                       Rows open the same campaign modal as the gallery cards. */}
+                  {!notesExpanded && (
                   <div className="lg:col-span-2 min-w-0">
                     <div className="rounded-3xl border border-[#dce4ec] bg-white shadow-sm overflow-hidden flex flex-col">
                       <div className="flex items-center justify-between gap-3 px-3.5 pt-3.5 pb-2.5">
@@ -3593,6 +3551,7 @@ export default function CampaignCanvas({ wrikeData = [], folderCampaigns = [], t
                       </div>
                     </div>
                   </div>
+                  )}
                 </div>
               )}
 

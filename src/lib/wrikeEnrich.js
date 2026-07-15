@@ -1,4 +1,4 @@
-import { FILM_MAPPINGS, MOTION_TEAM_NAME_MAP, TERRITORIES, REGION_ALIASES } from "../constants.js";
+import { FILM_MAPPINGS, motionTeamShortName, TERRITORIES, REGION_ALIASES } from "../constants.js";
 
 // Resolve a film-code folder/name (e.g. "ZAL", "ody", "DDA") to its full
 // title via FILM_MAPPINGS; returns the title-cased input untouched when no
@@ -243,7 +243,7 @@ export function filterToMotionTeam(tasks, folderDictionary, contactDictionary) {
       upper.includes("DOOH") || upper.includes("DINTH") || upper.includes("MATRIX") ||
       PRINT_HUB_RE.test(task.title);
     const matchesAssignee = task.responsibleIds?.some(
-      (id) => contactDictionary[id] && MOTION_TEAM_NAME_MAP[contactDictionary[id]]
+      (id) => motionTeamShortName(contactDictionary[id])
     );
     const matchesDigital = task.parentIds?.some((pid) =>
       folderDictionary[pid]?.title?.toUpperCase().includes("DIGITAL")
@@ -260,7 +260,7 @@ export function filterToMotionTeam(tasks, folderDictionary, contactDictionary) {
         subUpper.includes("DINTH") ||
         subUpper.includes("MATRIX") ||
         sub.parentIds?.some((pid) => folderDictionary[pid]?.title?.toUpperCase().includes("DIGITAL")) ||
-        sub.responsibleIds?.some((id) => contactDictionary[id] && MOTION_TEAM_NAME_MAP[contactDictionary[id]])
+        sub.responsibleIds?.some((id) => motionTeamShortName(contactDictionary[id]))
       );
     }) ?? false;
   });

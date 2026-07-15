@@ -3,7 +3,7 @@ import { supabase } from "../lib/supabaseClient";
 import { enrichTasks, buildChildToParent } from "../lib/wrikeEnrich";
 import { subscribeToWrikeTaskEvents } from "../lib/wrikeWebhookSubscription";
 import { fetchTasksByIds } from "./useWrikeCache";
-import { MOTION_TEAM_NAME_MAP } from "../constants";
+import { motionTeamShortName, normalizeName } from "../constants";
 
 const FIELDS = encodeURIComponent("[customFields,parentIds,responsibleIds,subTaskIds,description]");
 
@@ -36,11 +36,13 @@ async function fetchContactDictionary() {
 }
 
 function resolveTeamIds(contacts) {
-  const names = Object.keys(MOTION_TEAM_NAME_MAP);
   return contacts
     .filter((c) => {
       const name = `${c.firstName || ""} ${c.lastName || ""}`.trim();
-      return names.includes(name) || name.includes("Riccardo");
+      // Emoji-insensitive: a display name like "Maria Cerrato 🐱" still resolves
+      // to the roster (see motionTeamShortName). Without this, a task assigned
+      // only to an emoji-decorated member never reaches the board.
+      return motionTeamShortName(name) || normalizeName(name).includes("Riccardo");
     })
     .map((c) => c.id);
 }

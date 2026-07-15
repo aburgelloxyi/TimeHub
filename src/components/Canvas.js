@@ -1,9 +1,12 @@
-import React, { useState, useEffect, useRef, useCallback, useMemo } from "react";
+import React, { useState, useEffect, useRef, useCallback, useMemo, lazy, Suspense } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { supabase } from "../lib/supabaseClient";
 import { getFilmName, PRINT_HUB_RE } from "../lib/wrikeEnrich";
 import { fetchTasksByIds } from "../hooks/useWrikeCache";
 import RichNoteEditor from "./shared/RichNoteEditor";
+// Lazy — Excalidraw is a sizeable bundle + its own CSS; only a sketch page
+// being opened should pay for it, not every Notes Canvas visit.
+const ExcalidrawPageEditor = lazy(() => import("./shared/ExcalidrawPageEditor"));
 import PageHeader, { pageHeaderActionClass } from "./shared/PageHeader";
 import HubRow from "./shared/HubRow";
 import { useDepartment } from "../hooks/useDepartment";
@@ -49,6 +52,7 @@ import {
   Maximize2,
   Minimize2,
   Printer,
+  PenTool,
 } from "lucide-react";
 
 // --- DOOH country → region grouping ---
@@ -653,10 +657,10 @@ function NotesCanvasCard({ isOpen, onToggle, department, pinnedFolderIds = [], o
     if (selectedFolderId === folderId) { setSelectedFolderId(null); setSelectedPageId(null); }
   };
 
-  const addPage = async (folderId) => {
+  const addPage = async (folderId, kind = "text") => {
     const { data } = await supabase
       .from("canvas_notes_pages")
-      .insert({ folder_id: folderId, title: "Untitled", content: [] })
+      .insert({ folder_id: folderId, title: "Untitled", content: kind === "sketch" ? {} : [], kind })
       .select()
       .single();
     if (data) {
@@ -749,14 +753,16 @@ function NotesCanvasCard({ isOpen, onToggle, department, pinnedFolderIds = [], o
   // One-click "New note": drop a page into the active topic (the one whose note
   // is open, else the first topic on this board). With no topic yet, start a
   // topic draft instead so the user is never stuck at an empty board.
-  const handleNewNote = () => {
+  const handleNewNote = (kind = "text") => {
     const target =
       (selectedFolderId && activeBoardFolders.some((f) => f.id === selectedFolderId) && selectedFolderId) ||
       activeBoardFolders[0]?.id;
     if (target) {
       setSelectedFolderId(target);
-      addPage(target);
+      addPage(target, kind);
     } else {
+      // No topic to hold the page yet — same starting-point regardless of
+      // kind; the first page added once the topic exists defaults to text.
       startDraft(activeBoard === "mine" ? currentUserId : null);
     }
   };
@@ -855,13 +861,21 @@ function NotesCanvasCard({ isOpen, onToggle, department, pinnedFolderIds = [], o
             className="flex flex-col rounded-2xl border shadow-sm overflow-hidden max-h-[600px]"
             style={activeBoard === "mine" ? { borderColor: `${myColor}44`, backgroundColor: `${myColor}08` } : { borderColor: "#ece4d8", backgroundColor: "#ffffff" }}
           >
-            <div className="p-2.5 border-b" style={{ borderColor: "#f0e9df" }}>
+            <div className="p-2.5 border-b flex items-center gap-1.5" style={{ borderColor: "#f0e9df" }}>
               <button
-                onClick={handleNewNote}
-                className="w-full flex items-center justify-center gap-2 px-3 py-2.5 rounded-xl text-white text-[13px] font-bold shadow-sm transition-all hover:brightness-105 active:scale-[.98]"
+                onClick={() => handleNewNote("text")}
+                className="flex-1 flex items-center justify-center gap-2 px-3 py-2.5 rounded-xl text-white text-[13px] font-bold shadow-sm transition-all hover:brightness-105 active:scale-[.98]"
                 style={{ background: `linear-gradient(135deg, ${boardAccent}, ${boardAccent}cc)` }}
               >
                 <Plus className="w-4 h-4" /> New note
+              </button>
+              <button
+                onClick={() => handleNewNote("sketch")}
+                title="New sketch"
+                className="shrink-0 flex items-center justify-center w-10 h-10 rounded-xl border shadow-sm transition-all hover:brightness-105 active:scale-[.98]"
+                style={{ borderColor: `${boardAccent}55`, color: boardAccent, background: "#fff" }}
+              >
+                <PenTool className="w-4 h-4" />
               </button>
             </div>
 
@@ -959,16 +973,29 @@ function NotesCanvasCard({ isOpen, onToggle, department, pinnedFolderIds = [], o
 
                       {/* Notes — always visible, no expand gate */}
                       {folderPages.length === 0 ? (
-                        <button
-                          onClick={() => addPage(folder.id)}
-                          className="flex items-center gap-1.5 mx-1 px-2 py-1.5 text-[11px] font-semibold text-[#b0a89a] hover:text-[#c2410d] transition-colors"
-                        >
-                          <Plus className="w-3 h-3" /> Add the first note
-                        </button>
+                        <div className="flex items-center gap-2 mx-1 px-1 py-1">
+                          <button
+                            onClick={() => addPage(folder.id, "text")}
+                            className="flex items-center gap-1.5 px-1 py-0.5 text-[11px] font-semibold text-[#b0a89a] hover:text-[#c2410d] transition-colors"
+                          >
+                            <Plus className="w-3 h-3" /> Add the first note
+                          </button>
+                          <button
+                            onClick={() => addPage(folder.id, "sketch")}
+                            title="Add a sketch"
+                            className="flex items-center gap-1 px-1 py-0.5 text-[11px] font-semibold text-[#b0a89a] hover:text-[#c2410d] transition-colors"
+                          >
+                            <PenTool className="w-3 h-3" />
+                          </button>
+                        </div>
                       ) : (
                         folderPages.map((page) => {
                           const active = selectedPageId === page.id;
-                          const snippet = snippetOf(page);
+                          const isSketch = page.kind === "sketch";
+                          const shapeCount = page.content?.elements?.length || 0;
+                          const snippet = isSketch
+                            ? (shapeCount ? `${shapeCount} shape${shapeCount === 1 ? "" : "s"}` : "")
+                            : snippetOf(page);
                           return (
                             <div
                               key={page.id}
@@ -983,14 +1010,14 @@ function NotesCanvasCard({ isOpen, onToggle, department, pinnedFolderIds = [], o
                                 className="w-6 h-6 rounded-md grid place-items-center shrink-0 mt-0.5"
                                 style={{ backgroundColor: active ? `${boardAccent}18` : "#00000008", color: active ? boardAccent : "#b0a89a" }}
                               >
-                                <FileText className="w-3.5 h-3.5" />
+                                {isSketch ? <PenTool className="w-3.5 h-3.5" /> : <FileText className="w-3.5 h-3.5" />}
                               </span>
                               <span className="min-w-0 flex-1">
                                 <span className="block text-[13px] font-semibold truncate leading-tight" style={{ color: active ? boardAccent : "#3a352e" }}>
                                   {page.title || "Untitled"}
                                 </span>
                                 <span className="block text-[11px] text-[#a79f93] truncate mt-0.5">
-                                  {snippet || "Empty note"}
+                                  {snippet || (isSketch ? "Empty sketch" : "Empty note")}
                                 </span>
                               </span>
                               <button
@@ -1056,23 +1083,39 @@ function NotesCanvasCard({ isOpen, onToggle, department, pinnedFolderIds = [], o
                       {(activeBoard === "mine" ? (myName || "M") : boardLabelFor(department)).charAt(0)}
                     </span>
                     <span className="text-[#8a8073] font-semibold">Edited {timeAgo(pageLastSavedAt || selectedPage.updated_at)}</span>
-                    <span className="w-1 h-1 rounded-full bg-[#d5cdbf]" />
-                    <span className="tabular-nums">{wordCountOf(selectedPage)} words</span>
+                    {selectedPage.kind !== "sketch" && (
+                      <>
+                        <span className="w-1 h-1 rounded-full bg-[#d5cdbf]" />
+                        <span className="tabular-nums">{wordCountOf(selectedPage)} words</span>
+                      </>
+                    )}
                   </div>
                 </div>
 
-                <RichNoteEditor
-                  key={selectedPage.id}
-                  content={selectedPage.content}
-                  onChange={(json) => savePageContent(selectedPage.id, json)}
-                  accent={boardAccent}
-                  wide={editorExpanded}
-                  className={
-                    editorExpanded
-                      ? "min-h-[45vh] max-h-[60vh] overflow-y-auto pt-1 pb-8"
-                      : "min-h-[320px] max-h-[600px] overflow-y-auto pt-1 pb-8"
-                  }
-                />
+                {selectedPage.kind === "sketch" ? (
+                  <div className="px-6 sm:px-12 pb-8">
+                    <Suspense fallback={<div className="h-[560px] rounded-xl border border-[#ece4d8] bg-[#faf7f2] animate-pulse" />}>
+                      <ExcalidrawPageEditor
+                        key={selectedPage.id}
+                        content={selectedPage.content}
+                        onChange={(scene) => savePageContent(selectedPage.id, scene)}
+                      />
+                    </Suspense>
+                  </div>
+                ) : (
+                  <RichNoteEditor
+                    key={selectedPage.id}
+                    content={selectedPage.content}
+                    onChange={(json) => savePageContent(selectedPage.id, json)}
+                    accent={boardAccent}
+                    wide={editorExpanded}
+                    className={
+                      editorExpanded
+                        ? "min-h-[45vh] max-h-[60vh] overflow-y-auto pt-1 pb-8"
+                        : "min-h-[320px] max-h-[600px] overflow-y-auto pt-1 pb-8"
+                    }
+                  />
+                )}
               </>
             ) : (
               <div className="flex-1 flex flex-col items-center justify-center text-center py-16 px-6 gap-4">
@@ -1085,13 +1128,22 @@ function NotesCanvasCard({ isOpen, onToggle, department, pinnedFolderIds = [], o
                     Pick a note on the left, or start a new one and type <span className="font-mono font-bold text-[#3a352e]">/</span> for headings, checklists and more.
                   </p>
                 </div>
-                <button
-                  onClick={handleNewNote}
-                  className="flex items-center gap-2 px-4 py-2.5 rounded-xl text-white text-[13px] font-bold shadow-sm transition-all hover:brightness-105 active:scale-95"
-                  style={{ background: `linear-gradient(135deg, ${boardAccent}, ${boardAccent}cc)` }}
-                >
-                  <Plus className="w-4 h-4" /> New note
-                </button>
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => handleNewNote("text")}
+                    className="flex items-center gap-2 px-4 py-2.5 rounded-xl text-white text-[13px] font-bold shadow-sm transition-all hover:brightness-105 active:scale-95"
+                    style={{ background: `linear-gradient(135deg, ${boardAccent}, ${boardAccent}cc)` }}
+                  >
+                    <Plus className="w-4 h-4" /> New note
+                  </button>
+                  <button
+                    onClick={() => handleNewNote("sketch")}
+                    className="flex items-center gap-2 px-4 py-2.5 rounded-xl border text-[13px] font-bold transition-all hover:brightness-105 active:scale-95"
+                    style={{ borderColor: `${boardAccent}55`, color: boardAccent, background: "#fff" }}
+                  >
+                    <PenTool className="w-4 h-4" /> New sketch
+                  </button>
+                </div>
               </div>
             )}
           </div>

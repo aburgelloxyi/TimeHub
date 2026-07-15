@@ -1,4 +1,5 @@
 import React, { useEffect, useRef, useState, useCallback } from "react";
+import { createPortal } from "react-dom";
 import { useEditor, EditorContent } from "@tiptap/react";
 import StarterKit from "@tiptap/starter-kit";
 import Placeholder from "@tiptap/extension-placeholder";
@@ -66,30 +67,29 @@ export default function RichNoteEditor({
   const dragFromRef = useRef(null);
   const wrapRef = useRef(null);
 
-  // All floating UI is positioned in the wrapper's own coordinate space
-  // (absolute inside wrapRef) rather than fixed-to-viewport — a scaled or
-  // transformed ancestor silently reparents position:fixed and threw these
-  // dozens of px off (bubble landing on top of the text, handle below the row).
+  // All floating UI (bubble menu, slash menu, drag handle, drop indicator) is
+  // position:fixed and rendered through a portal to <body>. It has to be a
+  // real portal, not just absolutely positioned inside this editor's own
+  // wrapper: a wrapper-relative element is a normal descendant of whatever
+  // card holds this editor, so it's subject to that card's own stacking order
+  // and `overflow: hidden` clipping — a sibling panel painting later (or the
+  // card's own clipped bounds) can sit on top of or cut off a merely-absolute
+  // bubble menu, which is exactly "goes below elements, invisible and
+  // unclickable". Escaping to <body> with a high z-index guarantees it always
+  // paints above the rest of the page, regardless of how this editor ends up
+  // nested.
   //
   // The app applies `html { zoom: 1.1 }` globally (src/tailwind.css). Under a
   // non-1 CSS `zoom`, getBoundingClientRect()/coordsAtPos()/clientX/Y all
   // report already-zoomed VISUAL pixels, but an inline `style.top`/`left`
-  // value is a LAYOUT length that the browser zooms AGAIN before painting.
-  // Feeding a raw viewport-pixel delta straight into `top:`/`left:` silently
-  // multiplies it by the zoom factor a second time — the farther down the
-  // page (the more accumulated offset), the further the drift, which is
-  // exactly the "handle drifts below the row" symptom. Dividing the delta by
-  // the current zoom factor before assigning it as a style value cancels
-  // that out. wrap.scrollTop is a layout value already in local units, so it
-  // is added AFTER the divide, not before.
+  // value is a LAYOUT length that the browser zooms AGAIN before painting —
+  // and that applies equally whether the element is fixed-and-portaled or
+  // absolute-in-place, since `zoom` scales the whole document including
+  // portaled fixed children of <body>. So every raw viewport-pixel value
+  // still needs dividing by the zoom factor before it's assigned as a style
+  // value; only the portal (for stacking/clipping) is the new piece here.
   const zoomFactor = () => parseFloat(getComputedStyle(document.documentElement).zoom) || 1;
-  const toWrap = (viewportTop, viewportLeft) => {
-    const wrap = wrapRef.current;
-    if (!wrap) return { top: viewportTop, left: viewportLeft };
-    const r = wrap.getBoundingClientRect();
-    const z = zoomFactor();
-    return { top: (viewportTop - r.top) / z + wrap.scrollTop, left: (viewportLeft - r.left) / z };
-  };
+  const toFixed = (v) => v / zoomFactor();
 
   const checkSlash = useCallback((editor) => {
     const { $from } = editor.state.selection;
@@ -100,8 +100,7 @@ export default function RichNoteEditor({
       const from = $from.pos - match[0].length;
       slashRangeRef.current = { from, to: $from.pos };
       const coords = editor.view.coordsAtPos(from);
-      const p = toWrap(coords.bottom, coords.left);
-      setSlash({ top: p.top, left: p.left, query, index: 0 });
+      setSlash({ top: toFixed(coords.bottom), left: toFixed(coords.left), query, index: 0 });
     } else {
       slashRangeRef.current = null;
       setSlash(null);
@@ -113,8 +112,7 @@ export default function RichNoteEditor({
     if (empty) { setBubble(null); return; }
     const start = editor.view.coordsAtPos(from);
     const end = editor.view.coordsAtPos(to);
-    const p = toWrap(Math.min(start.top, end.top), (start.left + end.left) / 2);
-    setBubble({ top: p.top, left: p.left });
+    setBubble({ top: toFixed(Math.min(start.top, end.top)), left: toFixed((start.left + end.left) / 2) });
   }, []);
 
   const editor = useEditor({
@@ -187,6 +185,15 @@ export default function RichNoteEditor({
   // last successfully computed — visibly stuck on some earlier row instead
   // of tracking the cursor. */
   const handleMouseMove = useCallback((e) => {
+    // While a drag is in flight, leave the handle anchored on the block that
+    // was actually picked up. Native mousemove keeps firing on the wrapper
+    // for the same pointer movement the document-level drag listeners are
+    // tracking, so without this guard the handle icon re-targets to whatever
+    // row is currently under the cursor — and since it has an opaque
+    // background, once it lands on the same row the drop-indicator line is
+    // drawn on, it paints right over that thin line, making the indicator
+    // look like it vanished rather than just being covered.
+    if (dragFromRef.current) return;
     if (!editor || slash) { setDragHandle(null); return; }
     const wrap = wrapRef.current;
     const pmDom = editor.view.dom;
@@ -208,13 +215,15 @@ export default function RichNoteEditor({
       const info = blockInfoAt(editor.state.doc, editor.view.posAtDOM(match.el, 0));
       if (!info) { setDragHandle(null); return; }
       // Position/size the handle strip to match the row's own top+height
-      // exactly. Both the position AND the height must go through the same
-      // zoom correction as toWrap — a raw viewport-pixel height fed straight
-      // into style.height gets zoomed a second time same as top/left would.
-      const p = toWrap(match.rect.top, 0);
+      // exactly, at the wrapper's left edge (fixed-positioned now, so that
+      // edge must be measured explicitly rather than implied by nesting).
+      // top/left/height all go through the same zoom correction — a raw
+      // viewport-pixel value fed straight into style.top/left/height gets
+      // zoomed a second time by the browser otherwise.
       setDragHandle({
-        top: p.top,
-        height: match.rect.height / zoomFactor(),
+        top: toFixed(match.rect.top),
+        left: toFixed(wrapRect.left),
+        height: toFixed(match.rect.height),
         from: info.from, to: info.to,
       });
     } catch {
@@ -225,24 +234,42 @@ export default function RichNoteEditor({
   // Pointer-based block reorder. Native HTML5 drag over a ProseMirror editable
   // is swallowed by PM's own drop handling and never reorders; a manual pointer
   // drag is reliable and lets us draw a clear insertion line.
+  //
+  // Row-matched by Y across the whole wrapper width — same approach as the
+  // hover handler above, and for the same reason: `document.elementFromPoint`
+  // only resolves to real editor content, but the gutter column the handle
+  // itself lives in (deliberately outside the text's centered, max-width
+  // content box, so the handle doesn't crowd the prose) has nothing under it
+  // to hit. That made dragging straight down through the gutter — the
+  // natural way to drag a handle — never find a drop target; only straying
+  // over the actual paragraph text resolved anything.
   const blockUnderPointer = useCallback((clientX, clientY) => {
+    const wrap = wrapRef.current;
     const pmDom = editor.view.dom;
-    let el = document.elementFromPoint(clientX, clientY);
-    if (!el || !pmDom.contains(el)) return null;
-    while (el && el.parentElement !== pmDom) el = el.parentElement;
-    if (!el?.getBoundingClientRect) return null;
-    const info = blockInfoAt(editor.state.doc, editor.view.posAtDOM(el, 0));
+    if (!wrap || !pmDom) return null;
+    const wrapRect = wrap.getBoundingClientRect();
+    if (clientX < wrapRect.left || clientX > wrapRect.right) return null;
+    let match = null;
+    for (const child of pmDom.children) {
+      const r = child.getBoundingClientRect();
+      if (r.height > 0 && clientY >= r.top && clientY <= r.bottom) { match = { el: child, rect: r }; break; }
+    }
+    if (!match) return null;
+    const info = blockInfoAt(editor.state.doc, editor.view.posAtDOM(match.el, 0));
     if (!info) return null;
-    const rect = el.getBoundingClientRect();
-    return { info, rect, after: clientY > rect.top + rect.height / 2 };
+    return { info, rect: match.rect, after: clientY > match.rect.top + match.rect.height / 2 };
   }, [editor]);
 
   const onDragPointerMove = useCallback((e) => {
     const t = blockUnderPointer(e.clientX, e.clientY);
     const wrap = wrapRef.current;
     if (!t || !wrap) { setDropIndicator(null); return; }
-    const p = toWrap(t.after ? t.rect.bottom : t.rect.top, 0);
-    setDropIndicator({ top: p.top });
+    const wrapRect = wrap.getBoundingClientRect();
+    setDropIndicator({
+      top: toFixed(t.after ? t.rect.bottom : t.rect.top),
+      left: toFixed(wrapRect.left) + 20,
+      width: toFixed(wrapRect.width) - 40,
+    });
   }, [blockUnderPointer]);
 
   const onDragPointerUp = useCallback((e) => {
@@ -311,7 +338,7 @@ export default function RichNoteEditor({
       className={`rne-root ${className}`}
       style={{ "--rne-accent": accent, "--rne-measure": wide ? "62rem" : "46rem", position: "relative" }}
       onMouseMove={handleMouseMove}
-      onMouseLeave={() => setDragHandle(null)}
+      onMouseLeave={() => { if (!dragFromRef.current) setDragHandle(null); }}
     >
       <style>{`
         .rne-root .ProseMirror { outline: none; font-size: 16px; line-height: 1.7; color: #2a2620; max-width: var(--rne-measure, 46rem); margin-inline: auto; padding: 4px 24px 48px; transition: max-width 0.2s ease; }
@@ -345,17 +372,18 @@ export default function RichNoteEditor({
       `}</style>
       <EditorContent editor={editor} />
 
-      {dropIndicator && (
+      {dropIndicator && createPortal(
         <div
           style={{
-            position: "absolute", left: 20, right: 20, top: dropIndicator.top - 1, height: 2,
-            background: "var(--rne-accent)", borderRadius: 2, zIndex: 39, pointerEvents: "none",
+            position: "fixed", left: dropIndicator.left, width: dropIndicator.width, top: dropIndicator.top - 1, height: 2,
+            background: "var(--rne-accent)", borderRadius: 2, zIndex: 139, pointerEvents: "none",
             boxShadow: "0 0 0 2px color-mix(in srgb, var(--rne-accent) 20%, transparent)",
           }}
-        />
+        />,
+        document.body
       )}
 
-      {dragHandle && (
+      {dragHandle && createPortal(
         // The whole gutter column for this row is the drag target — not just
         // the visible icon — so starting a drag doesn't require pinpointing a
         // 26px square. The icon is centered inside via flex, so it always
@@ -366,23 +394,24 @@ export default function RichNoteEditor({
           onPointerDown={startDrag}
           title="Drag to move this block"
           style={{
-            position: "absolute", top: dragHandle.top, left: 0, width: 34, height: dragHandle.height,
+            position: "fixed", top: dragHandle.top, left: dragHandle.left, width: 34, height: dragHandle.height,
             display: "flex", alignItems: "center", justifyContent: "center", cursor: "grab", touchAction: "none",
-            background: "transparent", border: "none", padding: 0, zIndex: 40,
+            background: "transparent", border: "none", padding: 0, zIndex: 140,
           }}
         >
           <span className="rne-drag-handle-icon">
             <GripVertical size={15} />
           </span>
-        </button>
+        </button>,
+        document.body
       )}
 
-      {bubble && (
+      {bubble && createPortal(
         <div
           style={{
-            position: "absolute", top: bubble.top, left: bubble.left, transform: "translate(-50%, calc(-100% - 8px))",
+            position: "fixed", top: bubble.top, left: bubble.left, transform: "translate(-50%, calc(-100% - 8px))",
             display: "flex", alignItems: "center", gap: 2, background: "#fff", border: "1px solid #ece4d8",
-            borderRadius: 11, boxShadow: "0 10px 28px -12px rgba(0,0,0,0.25)", padding: 5, zIndex: 50,
+            borderRadius: 11, boxShadow: "0 10px 28px -12px rgba(0,0,0,0.25)", padding: 5, zIndex: 150,
           }}
         >
           {[
@@ -426,15 +455,16 @@ export default function RichNoteEditor({
               </button>
             )
           )}
-        </div>
+        </div>,
+        document.body
       )}
 
-      {slash && (
+      {slash && createPortal(
         <div
           style={{
-            position: "absolute", top: slash.top, left: slash.left, width: 210, background: "#fff",
+            position: "fixed", top: slash.top, left: slash.left, width: 210, background: "#fff",
             border: "1px solid #ece4d8", borderRadius: 11, boxShadow: "0 10px 28px -12px rgba(0,0,0,0.25)",
-            padding: 6, zIndex: 50, display: "flex", flexDirection: "column", marginTop: 8,
+            padding: 6, zIndex: 150, display: "flex", flexDirection: "column", marginTop: 8,
           }}
         >
           {filteredSlash.length === 0 && (
@@ -457,7 +487,8 @@ export default function RichNoteEditor({
               {c.title}
             </div>
           ))}
-        </div>
+        </div>,
+        document.body
       )}
     </div>
   );

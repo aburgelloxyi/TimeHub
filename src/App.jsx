@@ -41,7 +41,7 @@ import { notify } from "./lib/toast";
 import { confirmAction } from "./lib/confirm";
 import Home from "./components/Home";
 import { useWrikeCache } from "./hooks/useWrikeCache";
-import { isPrintLaunchTask, PRINT_HUB_RE } from "./lib/wrikeEnrich";
+import { PRINT_HUB_RE } from "./lib/wrikeEnrich";
 import { PAGES, pagesFor, boardLabelFor } from "./lib/departments";
 import { useDepartment } from "./hooks/useDepartment";
 import { MANAGEMENT_IDS } from "./lib/access";
@@ -291,7 +291,7 @@ export default function App() {
     return globalWrikeData.filter(
       (task) =>
         task.title?.toUpperCase().includes("MATRIX") ||
-        (task.title && isPrintLaunchTask(task.title)) ||
+        (task.title && PRINT_HUB_RE.test(task.title)) ||
         hubSubIds.has(task.id)
     );
   }, [globalWrikeData]);

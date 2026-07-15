@@ -401,8 +401,10 @@ function NotesCanvasPageEditor({ page, onSave }) {
     saveTimerRef.current = setTimeout(() => onSave(editor.document), 800);
   };
   useEffect(() => () => clearTimeout(saveTimerRef.current), []);
+  // No own scroll/height — the parent editor column scrolls the whole document
+  // (title + metadata + body) as one, so the writing surface reads continuous.
   return (
-    <div className="min-h-[420px] max-h-[600px] overflow-y-auto pt-4 px-1">
+    <div className="notes-prose min-h-[280px] max-h-[540px] overflow-y-auto pt-1 pb-8">
       <BlockNoteView editor={editor} onChange={handleChange} theme="light" />
     </div>
   );
@@ -587,7 +589,7 @@ function PageList({ folder, pages, selectedPageId, onSelectPage, onDeletePage, o
   );
 }
 
-function NotesCanvasCard({ isOpen, onToggle, department }) {
+function NotesCanvasCard({ isOpen, onToggle, department, pinnedFolderIds = [], onTogglePin, focusFolder }) {
   const [folders, setFolders] = useState([]);
   const [pages, setPages] = useState([]);
   const [profiles, setProfiles] = useState([]);
@@ -739,10 +741,69 @@ function NotesCanvasCard({ isOpen, onToggle, department }) {
   const selectedPage = pages.find((p) => p.id === selectedPageId);
   const selectedPageFolder = selectedPage ? folders.find((f) => f.id === selectedPage.folder_id) : null;
   const selectedAccent = selectedPageFolder?.owner_wrike_id ? colorFor(selectedPageFolder.owner_wrike_id) : "#c2410d";
-  const boardAccent = activeBoard === "mine" ? myColor : "#c2410d";
+  // One accent for the whole active board: terracotta for the team board, the
+  // owner's colour for a personal/teammate space — so the section reads as
+  // "whose space am I in" at a glance, not just a coloured pill.
+  const boardAccent = activeBoard === "team" ? "#c2410d" : activeBoard === "mine" ? myColor : colorFor(activeBoard);
+
+  // Pull plain text out of stored BlockNote blocks — powers the note-list
+  // preview snippet and the editor's live word count.
+  const blocksText = (blocks) => {
+    if (!Array.isArray(blocks)) return "";
+    const walk = (nodes) =>
+      (nodes || []).map((n) => {
+        if (typeof n?.text === "string") return n.text;
+        let s = Array.isArray(n?.content) ? walk(n.content) : "";
+        if (Array.isArray(n?.children) && n.children.length) s += " " + walk(n.children);
+        return s;
+      }).join(" ");
+    return walk(blocks).replace(/\s+/g, " ").trim();
+  };
+  const snippetOf = (page) => blocksText(page?.content).slice(0, 60);
+  const wordCountOf = (page) => {
+    const t = blocksText(page?.content);
+    return t ? t.split(/\s+/).filter(Boolean).length : 0;
+  };
+  const timeAgo = (iso) => {
+    if (!iso) return "not saved yet";
+    const d = Math.floor((Date.now() - new Date(iso).getTime()) / 86400000);
+    if (d <= 0) return "today";
+    if (d === 1) return "yesterday";
+    if (d < 7) return `${d}d ago`;
+    if (d < 30) return `${Math.floor(d / 7)}w ago`;
+    return `${Math.floor(d / 30)}mo ago`;
+  };
 
   const toggleFolder = (id) => setSelectedFolderId((prev) => (prev === id ? null : id));
   const startDraft = (owner) => { setFolderDraft({ owner }); setNewFolderName(""); };
+
+  // A pinned-topic card on the shelf was clicked: jump to the board that owns
+  // the folder and open it. focusFolder bumps its `n` each click so re-clicking
+  // the same topic still re-triggers.
+  useEffect(() => {
+    if (!focusFolder?.id || !folders.length) return;
+    const folder = folders.find((f) => f.id === focusFolder.id);
+    if (!folder) return;
+    setActiveBoard(
+      !folder.owner_wrike_id ? "team" : folder.owner_wrike_id === currentUserId ? "mine" : folder.owner_wrike_id
+    );
+    setSelectedFolderId(folder.id);
+  }, [focusFolder, folders, currentUserId]);
+
+  // One-click "New note": drop a page into the active topic (the one whose note
+  // is open, else the first topic on this board). With no topic yet, start a
+  // topic draft instead so the user is never stuck at an empty board.
+  const handleNewNote = () => {
+    const target =
+      (selectedFolderId && activeBoardFolders.some((f) => f.id === selectedFolderId) && selectedFolderId) ||
+      activeBoardFolders[0]?.id;
+    if (target) {
+      setSelectedFolderId(target);
+      addPage(target);
+    } else {
+      startDraft(activeBoard === "mine" ? currentUserId : null);
+    }
+  };
 
   return (
     <CollapsibleCard
@@ -752,61 +813,86 @@ function NotesCanvasCard({ isOpen, onToggle, department }) {
       isOpen={isOpen}
       onToggle={onToggle}
     >
-      <div className="flex flex-col gap-3">
-        {/* --- Board switcher: pill toggle --- */}
-        <div className="flex flex-wrap items-center gap-2">
-          <button
-            onClick={() => { setActiveBoard("team"); setSelectedPageId(null); }}
-            className={`px-3 py-1.5 rounded-full text-xs font-black uppercase tracking-widest transition-all ${
-              activeBoard === "team"
-                ? "bg-[#c2410d] text-white shadow-sm"
-                : "bg-white text-[#768994] hover:bg-[#c2410d]/5 hover:text-[#c2410d]"
-            }`}
-          >
-            {boardLabelFor(department)}
-          </button>
-
-          {currentUserId && (
+      {/* Surface bleeds to the card edges (covers the CollapsibleCard's cool
+          slate-50 inner) and takes on the active board's accent, so the whole
+          Notes Canvas reads as "whose space am I in". */}
+      <div
+        className="flex flex-col gap-4 -m-6 sm:-m-8 p-5 sm:p-6 transition-colors duration-300"
+        style={{ background: `linear-gradient(180deg, ${boardAccent}14, ${boardAccent}08 40%, ${boardAccent}05)` }}
+      >
+        {/* Comfortable, warm typography for the BlockNote writing surface —
+            larger measure/line-height and a warm ink, so notes feel inviting
+            rather than like a cramped form field. */}
+        <style>{`
+          .notes-prose .bn-editor { background: transparent; max-width: 46rem; margin-inline: auto; }
+          .notes-prose .ProseMirror { font-size: 16px; line-height: 1.7; color: #2a2620; }
+          .notes-prose .bn-block-content[data-content-type="heading"][data-level="1"] { font-size: 1.55rem; }
+          .notes-prose .bn-block-content[data-content-type="heading"][data-level="2"] { font-size: 1.28rem; }
+          .notes-prose .bn-block-content[data-content-type="heading"] { font-weight: 750; letter-spacing: -.01em; }
+          .notes-prose .bn-inline-content { caret-color: ${boardAccent}; }
+        `}</style>
+        {/* --- Toolbar: segmented board switcher + search --- */}
+        <div className="flex flex-wrap items-center gap-2.5">
+          <div className="inline-flex items-center gap-1 p-1 rounded-2xl bg-white/80 border border-[#ece4d8] shadow-sm">
             <button
-              onClick={() => { setActiveBoard("mine"); setSelectedPageId(null); }}
-              className={`px-3 py-1.5 rounded-full text-xs font-black uppercase tracking-widest transition-all ${
-                activeBoard === "mine"
-                  ? "text-white shadow-sm"
-                  : "bg-white text-[#768994] hover:bg-black/5 hover:text-[#122027]"
+              onClick={() => { setActiveBoard("team"); setSelectedPageId(null); }}
+              className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold tracking-wide transition-all ${
+                activeBoard === "team"
+                  ? "bg-white shadow-sm text-[#9a3412]"
+                  : "text-[#8a8073] hover:text-[#5a5147]"
               }`}
-              style={activeBoard === "mine" ? { backgroundColor: myColor } : undefined}
             >
-              {myName}
+              <span className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: "#c2410d" }} />
+              {boardLabelFor(department)}
             </button>
-          )}
 
-          {teammateIds.length > 0 && (
-            <>
-              <div className="w-px h-5 bg-[#dce4ec]" />
+            {currentUserId && (
               <button
-                onClick={() => setShowTeammates((v) => !v)}
-                className="flex items-center gap-1.5 px-2 py-1.5 rounded-full text-xs font-black uppercase tracking-widest text-[#94a3b8] hover:text-[#768994] hover:bg-black/5 transition-colors"
+                onClick={() => { setActiveBoard("mine"); setSelectedPageId(null); }}
+                className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold tracking-wide transition-all ${
+                  activeBoard === "mine" ? "bg-white shadow-sm" : "text-[#8a8073] hover:text-[#5a5147]"
+                }`}
+                style={activeBoard === "mine" ? { color: myColor } : undefined}
               >
-                <Users className="w-3.5 h-3.5" />
-                <span>Teammates</span>
-                <ChevronRight className={`w-3 h-3 transition-transform ${showTeammates ? "rotate-90" : ""}`} />
+                <span className="w-4 h-4 rounded-full grid place-items-center text-[8px] font-black text-white" style={{ backgroundColor: myColor }}>
+                  {(myName || "M").charAt(0)}
+                </span>
+                {myName}
               </button>
-            </>
-          )}
+            )}
+
+            {teammateIds.map((id) => {
+              const color = colorFor(id);
+              const isActive = activeBoard === id;
+              return (
+                <button
+                  key={id}
+                  onClick={() => { setActiveBoard(id); setSelectedPageId(null); }}
+                  className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold tracking-wide transition-all ${
+                    isActive ? "bg-white shadow-sm" : "text-[#8a8073] hover:text-[#5a5147]"
+                  }`}
+                  style={isActive ? { color } : undefined}
+                >
+                  <span className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: color }} />
+                  <span className="truncate max-w-[90px]">{nameFor(id)}</span>
+                </button>
+              );
+            })}
+          </div>
 
           <div className="flex-1 min-w-[140px] max-w-[280px] ml-auto">
             <div className="relative">
-              <Search className="w-3.5 h-3.5 text-[#94a3b8] absolute left-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+              <Search className="w-3.5 h-3.5 text-[#b0a89a] absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
               <input
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
-                placeholder="Search…"
-                className="w-full pl-8 pr-7 py-1.5 rounded-full border border-[#dce4ec] bg-white outline-none text-xs font-semibold text-[#122027] placeholder:text-[#94a3b8] focus:border-[#c2410d]/40 transition-colors"
+                placeholder="Search notes…"
+                className="w-full pl-9 pr-7 py-2 rounded-xl border border-[#ece4d8] bg-white/80 outline-none text-xs font-semibold text-[#3a352e] placeholder:text-[#b0a89a] focus:border-[#c2410d]/40 focus:bg-white transition-colors"
               />
               {searchQuery && (
                 <button
                   onClick={() => setSearchQuery("")}
-                  className="absolute right-2 top-1/2 -translate-y-1/2 text-[#94a3b8] hover:text-[#122027]"
+                  className="absolute right-2 top-1/2 -translate-y-1/2 text-[#b0a89a] hover:text-[#3a352e]"
                 >
                   <X className="w-3.5 h-3.5" />
                 </button>
@@ -815,55 +901,39 @@ function NotesCanvasCard({ isOpen, onToggle, department }) {
           </div>
         </div>
 
-        {/* --- Teammates section --- */}
-        {showTeammates && teammateIds.length > 0 && (
-          <div className="flex flex-wrap gap-2">
-            {teammateIds.map((id) => {
-              const color = colorFor(id);
-              const name = nameFor(id);
-              const isActive = activeBoard === id;
-              return (
-                <button
-                  key={id}
-                  onClick={() => { setActiveBoard(id); setSelectedPageId(null); }}
-                  className="flex items-center gap-2 px-3 py-1.5 rounded-full border transition-all text-xs font-bold"
-                  style={isActive
-                    ? { borderColor: `${color}66`, backgroundColor: `${color}0d`, color }
-                    : { borderColor: "#dce4ec", color: "#768994" }
-                  }
-                >
-                  <span className="w-2 h-2 rounded-full" style={{ backgroundColor: color }} />
-                  <span className="truncate max-w-[120px]">{name}</span>
-                </button>
-              );
-            })}
-          </div>
-        )}
-
         {/* --- Main content: two-column layout --- */}
-        <div className={`grid gap-3 ${editorExpanded ? "grid-cols-1" : "grid-cols-[220px_1fr]"}`}>
-          {/* Folders column */}
-          <div className="rounded-2xl border p-3 shadow-sm overflow-y-auto max-h-[560px]"
-            style={activeBoard === "mine" ? { borderColor: `${myColor}55`, backgroundColor: `${myColor}0d` } : { borderColor: "#dce4ec", backgroundColor: "#ffffff" }}
+        <div className={`grid gap-4 ${editorExpanded ? "grid-cols-1" : "grid-cols-[248px_1fr]"}`}>
+          {/* Notes rail — New note button, then topics as quiet section
+              headers with their notes listed flat beneath (no expand gate). */}
+          {!editorExpanded && (
+          <div
+            className="flex flex-col rounded-2xl border shadow-sm overflow-hidden max-h-[600px]"
+            style={activeBoard === "mine" ? { borderColor: `${myColor}44`, backgroundColor: `${myColor}08` } : { borderColor: "#ece4d8", backgroundColor: "#ffffff" }}
           >
-            <div className="flex items-center gap-2 mb-2">
-              {activeBoard === "mine" ? (
+            <div className="p-2.5 border-b" style={{ borderColor: "#f0e9df" }}>
+              <button
+                onClick={handleNewNote}
+                className="w-full flex items-center justify-center gap-2 px-3 py-2.5 rounded-xl text-white text-[13px] font-bold shadow-sm transition-all hover:brightness-105 active:scale-[.98]"
+                style={{ background: `linear-gradient(135deg, ${boardAccent}, ${boardAccent}cc)` }}
+              >
+                <Plus className="w-4 h-4" /> New note
+              </button>
+            </div>
+
+            <div className="flex items-center gap-2 px-3 pt-2.5 pb-1">
+              <span className="text-[10px] font-black uppercase tracking-[0.13em] text-[#a79f93] flex-1 truncate">
+                {activeBoard === "mine" ? myName : boardLabelFor(department)}
+              </span>
+              {activeBoard === "mine" && (
                 <button
                   onClick={() => setColorPickerOpen((v) => !v)}
                   title="Change my colour"
-                  className="relative w-6 h-6 rounded-lg flex items-center justify-center shrink-0"
+                  className="w-5 h-5 rounded-md flex items-center justify-center shrink-0"
                   style={{ backgroundColor: `${myColor}22`, color: myColor }}
                 >
                   <User className="w-3 h-3" />
                 </button>
-              ) : (
-                <div className="w-6 h-6 rounded-lg bg-[#c2410d]/10 text-[#c2410d] flex items-center justify-center shrink-0">
-                  <Users className="w-3 h-3" />
-                </div>
               )}
-              <span className="text-[11px] font-black uppercase tracking-widest text-[#122027] flex-1 truncate">
-                {activeBoard === "mine" ? myName : boardLabelFor(department)}
-              </span>
               <button
                 onClick={() => startDraft(activeBoard === "mine" ? currentUserId : null)}
                 title="New topic"
@@ -875,7 +945,7 @@ function NotesCanvasCard({ isOpen, onToggle, department }) {
             </div>
 
             {activeBoard === "mine" && colorPickerOpen && (
-              <div className="flex items-center gap-1 p-1.5 mb-2 rounded-lg border border-[#dce4ec] bg-white shadow-sm w-fit">
+              <div className="flex items-center gap-1 mx-3 mb-2 p-1.5 rounded-lg border border-[#ece4d8] bg-white shadow-sm w-fit">
                 {CANVAS_COLOR_PALETTE.map((hex) => (
                   <button
                     key={hex}
@@ -888,142 +958,188 @@ function NotesCanvasCard({ isOpen, onToggle, department }) {
             )}
 
             {folderDraft?.owner === (activeBoard === "mine" ? currentUserId : null) && (
-              <div className="flex items-center gap-1.5 mb-2">
+              <div className="flex items-center gap-1.5 mx-3 mb-2">
                 <input
                   autoFocus
                   value={newFolderName}
                   onChange={(e) => setNewFolderName(e.target.value)}
                   onKeyDown={(e) => { if (e.key === "Enter") addFolder(); if (e.key === "Escape") setFolderDraft(null); }}
                   placeholder="Topic name…"
-                  className="flex-1 px-2 py-1 rounded-lg border border-[#dce4ec] outline-none text-xs font-bold"
+                  className="flex-1 px-2 py-1 rounded-lg border border-[#ece4d8] outline-none text-xs font-bold"
                 />
                 <button onClick={addFolder} className="p-1 rounded hover:bg-black/5"><Check className="w-3.5 h-3.5 text-[#c2410d]" /></button>
               </div>
             )}
 
-            {filteredFolders.length === 0 ? (
-              <p className="text-xs font-semibold text-[#768994] px-1">
-                {searchQuery ? "No matches." : "No topics yet."}
-              </p>
-            ) : (
-              <div className="space-y-0.5">
-                {filteredFolders.map((folder) => {
+            <div className="flex-1 overflow-y-auto px-2 pb-3">
+              {filteredFolders.length === 0 ? (
+                <p className="text-xs font-semibold text-[#a79f93] px-2 py-4">
+                  {searchQuery ? "No matches." : "No topics yet — add one with the + above."}
+                </p>
+              ) : (
+                filteredFolders.map((folder) => {
                   const folderPages = filteredPages.filter((p) => p.folder_id === folder.id);
-                  const isSelected = selectedFolderId === folder.id;
-                  const isExpanded = isSelected;
+                  const isPinned = pinnedFolderIds.includes(folder.id);
                   return (
-                    <div key={folder.id}>
-                      <div
-                        role="button"
-                        tabIndex={0}
-                        onClick={() => toggleFolder(folder.id)}
-                        className={`group/folder flex items-center gap-1.5 px-1.5 py-1 rounded-lg cursor-pointer transition-colors ${isSelected ? "bg-black/5" : "hover:bg-black/5"}`}
-                      >
-                        <ChevronRight className={`w-3 h-3 shrink-0 text-[#768994] transition-transform ${isExpanded ? "rotate-90" : ""}`} />
-                        <Folder className="w-3.5 h-3.5 shrink-0" style={{ color: boardAccent }} />
-                        <span className="text-xs font-bold truncate flex-1 text-[#122027]">{folder.name}</span>
-                        <span className="text-[10px] font-black text-[#768994]">{folderPages.length}</span>
+                    <div key={folder.id} className="mb-1.5">
+                      {/* Topic header */}
+                      <div className="group/folder flex items-center gap-1.5 px-2 pt-2.5 pb-1">
+                        <span className="text-[10px] font-black uppercase tracking-[0.12em] text-[#8a8073] truncate">{folder.name}</span>
+                        <span className="text-[10px] font-bold text-[#c4bcae] tabular-nums">{folderPages.length}</span>
+                        <div className="flex-1" />
+                        {onTogglePin && (
+                          <button
+                            onClick={(e) => { e.stopPropagation(); onTogglePin(folder); }}
+                            title={isPinned ? "Unpin topic" : "Pin topic to shelf"}
+                            className={`p-0.5 rounded transition-all ${isPinned ? "text-amber-500" : "text-[#d5cdbf] opacity-0 group-hover/folder:opacity-100 hover:text-amber-500"}`}
+                          >
+                            <Pin className={`w-3 h-3 ${isPinned ? "fill-current" : ""}`} />
+                          </button>
+                        )}
+                        <button
+                          onClick={() => addPage(folder.id)}
+                          title="New note in this topic"
+                          className="p-0.5 rounded text-[#c4bcae] opacity-0 group-hover/folder:opacity-100 hover:text-[#c2410d] transition-all"
+                        >
+                          <Plus className="w-3.5 h-3.5" />
+                        </button>
                         <button
                           onClick={(e) => { e.stopPropagation(); deleteFolder(folder.id); }}
-                          className="opacity-0 group-hover/folder:opacity-100 p-0.5 rounded hover:bg-red-50 text-red-400"
+                          title="Delete topic"
+                          className="opacity-0 group-hover/folder:opacity-100 p-0.5 rounded hover:bg-red-50 text-red-400 transition-all"
                         >
                           <Trash2 className="w-3 h-3" />
                         </button>
                       </div>
-                      {isExpanded && (
-                        <div className="ml-4 mt-0.5 space-y-0.5">
-                          {folderPages.map((page) => (
+
+                      {/* Notes — always visible, no expand gate */}
+                      {folderPages.length === 0 ? (
+                        <button
+                          onClick={() => addPage(folder.id)}
+                          className="flex items-center gap-1.5 mx-1 px-2 py-1.5 text-[11px] font-semibold text-[#b0a89a] hover:text-[#c2410d] transition-colors"
+                        >
+                          <Plus className="w-3 h-3" /> Add the first note
+                        </button>
+                      ) : (
+                        folderPages.map((page) => {
+                          const active = selectedPageId === page.id;
+                          const snippet = snippetOf(page);
+                          return (
                             <div
                               key={page.id}
                               role="button"
                               tabIndex={0}
-                              onClick={() => setSelectedPageId(page.id)}
-                              className={`group/page flex items-center gap-1.5 px-1.5 py-1 rounded-lg cursor-pointer transition-colors ${
-                                selectedPageId === page.id ? "bg-black/5" : "hover:bg-black/5"
+                              onClick={() => { setSelectedFolderId(folder.id); setSelectedPageId(page.id); }}
+                              className={`group/page flex items-start gap-2.5 mx-1 px-2 py-2 rounded-lg cursor-pointer transition-colors ${
+                                active ? "bg-white shadow-sm" : "hover:bg-black/[0.03]"
                               }`}
                             >
-                              <FileText className="w-3 h-3 shrink-0 text-[#768994]" />
-                              <span className="text-xs font-semibold truncate flex-1 text-[#122027]">{page.title || "Untitled"}</span>
+                              <span
+                                className="w-6 h-6 rounded-md grid place-items-center shrink-0 mt-0.5"
+                                style={{ backgroundColor: active ? `${boardAccent}18` : "#00000008", color: active ? boardAccent : "#b0a89a" }}
+                              >
+                                <FileText className="w-3.5 h-3.5" />
+                              </span>
+                              <span className="min-w-0 flex-1">
+                                <span className="block text-[13px] font-semibold truncate leading-tight" style={{ color: active ? boardAccent : "#3a352e" }}>
+                                  {page.title || "Untitled"}
+                                </span>
+                                <span className="block text-[11px] text-[#a79f93] truncate mt-0.5">
+                                  {snippet || "Empty note"}
+                                </span>
+                              </span>
                               <button
                                 onClick={(e) => { e.stopPropagation(); deletePage(page.id); }}
-                                className="opacity-0 group-hover/page:opacity-100 p-0.5 rounded hover:bg-red-50 text-red-400"
+                                className="opacity-0 group-hover/page:opacity-100 p-0.5 rounded hover:bg-red-50 text-red-400 transition-all mt-0.5"
                               >
                                 <Trash2 className="w-3 h-3" />
                               </button>
                             </div>
-                          ))}
-                          <button
-                            onClick={() => addPage(folder.id)}
-                            className="flex items-center gap-1 px-1.5 py-1 text-[11px] font-black hover:opacity-80"
-                            style={{ color: boardAccent }}
-                          >
-                            <Plus className="w-3 h-3" /> New page
-                          </button>
-                        </div>
+                          );
+                        })
                       )}
                     </div>
                   );
-                })}
-              </div>
-            )}
+                })
+              )}
+            </div>
           </div>
+          )}
 
-          {/* Pages/Editor column */}
-          <div className="flex flex-col min-w-0 rounded-xl border border-[#dce4ec] overflow-hidden"
-            style={selectedPage ? { borderLeft: `3px solid ${selectedAccent}`, backgroundColor: `${selectedAccent}0a` } : undefined}
+          {/* Editor column */}
+          <div className="flex flex-col min-w-0 rounded-2xl border shadow-sm overflow-hidden bg-white"
+            style={selectedPage ? { borderColor: `${selectedAccent}33`, borderLeftWidth: 3, borderLeftColor: selectedAccent } : { borderColor: "#ece4d8" }}
           >
-            <div className="flex items-center gap-2 px-3 py-2 border-b border-[#eef1f5] shrink-0">
-              {selectedPage ? (
-                <>
-                  <input
-                    value={selectedPage.title}
-                    onChange={(e) => renamePage(selectedPage.id, e.target.value)}
-                    className="flex-1 min-w-0 px-2 py-1 outline-none bg-transparent text-sm font-black text-[#122027]"
-                    placeholder="Untitled"
-                  />
-                  <div className="px-2 shrink-0">
-                    <SaveStatus state={pageSaveState} lastSavedAt={pageLastSavedAt} />
-                  </div>
-                  <button
-                    onClick={() => setEditorExpanded((v) => !v)}
-                    title={editorExpanded ? "Show folders" : "Expand editor"}
-                    className="p-1.5 rounded-md hover:bg-black/5 text-[#768994] shrink-0"
-                  >
-                    {editorExpanded ? <Minimize2 className="w-3.5 h-3.5" /> : <Maximize2 className="w-3.5 h-3.5" />}
-                  </button>
-                </>
-              ) : (
-                <span className="flex-1 text-[11px] font-black uppercase tracking-widest text-[#94a3b8]">
-                  {activeBoard === "mine" ? myName : boardLabelFor(department)}
-                </span>
+            {/* Slim top bar — orientation + save state + focus toggle */}
+            <div className="flex items-center gap-2 px-4 py-2 border-b shrink-0" style={{ borderColor: "#f0e9df" }}>
+              <span className="flex items-center gap-1.5 text-[10px] font-black uppercase tracking-[0.13em]" style={{ color: `${boardAccent}` }}>
+                <span className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: boardAccent }} />
+                {activeBoard === "mine" ? myName : activeBoard === "team" ? boardLabelFor(department) : nameFor(activeBoard)}
+              </span>
+              <div className="flex-1" />
+              {selectedPage && <SaveStatus state={pageSaveState} lastSavedAt={pageLastSavedAt} />}
+              {selectedPage && (
+                <button
+                  onClick={() => setEditorExpanded((v) => !v)}
+                  title={editorExpanded ? "Show notes list" : "Focus mode"}
+                  className="p-1.5 rounded-lg hover:bg-black/5 text-[#8a8073] shrink-0 transition-colors"
+                >
+                  {editorExpanded ? <Minimize2 className="w-4 h-4" /> : <Maximize2 className="w-4 h-4" />}
+                </button>
               )}
             </div>
 
             {selectedPage ? (
-              <NotesCanvasPageEditor
-                key={selectedPage.id}
-                page={selectedPage}
-                onSave={(blocks) => savePageContent(selectedPage.id, blocks)}
-              />
+              <>
+                {/* Cosy document head — sits above the editor's own scroll so
+                    BlockNote keeps its native positioning (the +/drag handle
+                    lives in its own left gutter and must not be clipped). */}
+                <div className="w-full max-w-[46rem] mx-auto px-6 sm:px-12 pt-7 shrink-0">
+                  <div className="flex items-center gap-2 text-[11px] font-black uppercase tracking-[0.12em] mb-3" style={{ color: boardAccent }}>
+                    <span>{activeBoard === "mine" ? myName : boardLabelFor(department)}</span>
+                    {selectedPageFolder && <><span className="opacity-40">/</span><span className="text-[#a79f93] truncate">{selectedPageFolder.name}</span></>}
+                  </div>
+                  <input
+                    value={selectedPage.title}
+                    onChange={(e) => renamePage(selectedPage.id, e.target.value)}
+                    className="w-full outline-none bg-transparent font-bold text-[#221f1a] placeholder:text-[#cdc5b7] leading-tight"
+                    style={{ fontFamily: "ui-serif, Georgia, 'Iowan Old Style', serif", letterSpacing: "-0.02em", fontSize: "clamp(26px, 3.4vw, 34px)" }}
+                    placeholder="Untitled note"
+                  />
+                  <div className="flex items-center gap-2.5 mt-3 mb-1 text-[12px] text-[#a79f93]">
+                    <span className="w-6 h-6 rounded-full grid place-items-center text-[9px] font-black text-white shrink-0" style={{ backgroundColor: boardAccent }}>
+                      {(activeBoard === "mine" ? (myName || "M") : boardLabelFor(department)).charAt(0)}
+                    </span>
+                    <span className="text-[#8a8073] font-semibold">Edited {timeAgo(pageLastSavedAt || selectedPage.updated_at)}</span>
+                    <span className="w-1 h-1 rounded-full bg-[#d5cdbf]" />
+                    <span className="tabular-nums">{wordCountOf(selectedPage)} words</span>
+                  </div>
+                </div>
+
+                <NotesCanvasPageEditor
+                  key={selectedPage.id}
+                  page={selectedPage}
+                  onSave={(blocks) => savePageContent(selectedPage.id, blocks)}
+                />
+              </>
             ) : (
-              <div className="flex-1 flex flex-col items-center justify-center text-center py-16 px-4 gap-4">
-                <div className="w-14 h-14 rounded-2xl bg-[#12a0e1]/10 text-[#12a0e1] flex items-center justify-center">
-                  <FileText className="w-7 h-7" />
+              <div className="flex-1 flex flex-col items-center justify-center text-center py-16 px-6 gap-4">
+                <div className="w-16 h-16 rounded-2xl flex items-center justify-center" style={{ backgroundColor: `${boardAccent}14`, color: boardAccent }}>
+                  <FileText className="w-8 h-8" />
                 </div>
                 <div>
-                  <p className="text-sm font-bold text-[#122027]">No page selected</p>
-                  <p className="text-xs font-semibold text-[#768994] mt-1">
-                    Pick a topic on the left, then create a page to start scribbling.
+                  <p className="text-base font-bold text-[#221f1a]">A calm place to write</p>
+                  <p className="text-[13px] font-medium text-[#8a8073] mt-1 max-w-[280px]">
+                    Pick a note on the left, or start a new one and type <span className="font-mono font-bold text-[#3a352e]">/</span> for headings, checklists and more.
                   </p>
                 </div>
-                {filteredFolders.length > 0 && (
-                  <button
-                    onClick={() => { setSelectedFolderId(filteredFolders[0].id); addPage(filteredFolders[0].id); }}
-                    className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-[#12a0e1] hover:bg-[#0f88c0] text-white text-xs font-black uppercase tracking-widest transition-colors active:scale-95"
-                  >
-                    <Plus className="w-4 h-4" /> New page
-                  </button>
-                )}
+                <button
+                  onClick={handleNewNote}
+                  className="flex items-center gap-2 px-4 py-2.5 rounded-xl text-white text-[13px] font-bold shadow-sm transition-all hover:brightness-105 active:scale-95"
+                  style={{ background: `linear-gradient(135deg, ${boardAccent}, ${boardAccent}cc)` }}
+                >
+                  <Plus className="w-4 h-4" /> New note
+                </button>
               </div>
             )}
           </div>
@@ -1637,6 +1753,12 @@ export default function CampaignCanvas({ wrikeData = [], folderCampaigns = [], t
   // --- ACCORDION ANIMATION & SCROLL STATE ---
   const [expandedCampId, setExpandedCampId] = useState(null);
 
+  // Workspace vs. gallery. Default view is the two-column workspace (Notes +
+  // compact campaign list); "Browse gallery" swaps in the full studio art-wall.
+  const [browseGallery, setBrowseGallery] = useState(false);
+  const [campFilter, setCampFilter] = useState("");        // compact-list search
+  const [collapsedStudios, setCollapsedStudios] = useState({}); // {studio: true} = folded
+
   // --- SIDE PANEL STATE ---
   const [showFoldersPanel, setShowFoldersPanel] = useState(false);
 
@@ -1651,6 +1773,13 @@ export default function CampaignCanvas({ wrikeData = [], folderCampaigns = [], t
 
   // --- PINNED CAMPAIGNS ---
   const [pinnedIds, setPinnedIds] = useState([]);
+  // Pinned notes topics (folders) live alongside campaigns on the shelf. Stored
+  // as full folder objects ({id, name, owner_wrike_id, department}) so the shelf
+  // can render + the child NotesCanvasCard can derive its own pinned-state.
+  const [pinnedFolders, setPinnedFolders] = useState([]);
+  // A pinned-topic card click asks the Notes panel to open that folder. Bumped
+  // each click so the child re-focuses even when the same folder is re-clicked.
+  const [focusFolder, setFocusFolder] = useState(null); // { id, n } | null
 
   // --- DOOH SPECS ---
   const [doohCountries, setDoohCountries] = useState([]);
@@ -1762,6 +1891,16 @@ export default function CampaignCanvas({ wrikeData = [], folderCampaigns = [], t
       const { data: pinData } = await supabase.from("canvas_pinned_campaigns").select("campaign_id");
       if (pinData?.length) setPinnedIds(pinData.map((r) => r.campaign_id));
 
+      // Pinned notes topics (folders) — joined with folder detail so the shelf
+      // can render them (name + which board they belong to) without a second
+      // round-trip. Stale pins auto-drop via the FK's ON DELETE CASCADE.
+      const { data: pinNoteData } = await supabase
+        .from("canvas_pinned_notes")
+        .select("folder_id, canvas_notes_folders(id, name, owner_wrike_id, department)");
+      if (pinNoteData?.length) {
+        setPinnedFolders(pinNoteData.map((r) => r.canvas_notes_folders).filter(Boolean));
+      }
+
       // DOOH Specs — countries + their assets
       const { data: countryData } = await supabase
         .from("dooh_countries")
@@ -1852,6 +1991,13 @@ export default function CampaignCanvas({ wrikeData = [], folderCampaigns = [], t
     const wrikeGroupedCampaigns = {};
 
     wrikeData.forEach((task) => {
+      // The studio gallery is MATRIX-only. wrikeData also carries Print launch
+      // hubs + their per-market subtasks now (for the Launch Tracker card), and
+      // those must NOT be grouped into campaign/studio cards — the Launch
+      // Tracker reads them through its own derivation. Skip anything that isn't
+      // a MATRIX so the gallery keeps showing only the crafted matrices.
+      if (!task.title?.toUpperCase().includes("MATRIX")) return;
+
       let campaignTitle = task.projectName;
 
       // --- BULLETPROOF CAMPAIGN TITLE EXTRACTOR ---
@@ -2198,6 +2344,22 @@ export default function CampaignCanvas({ wrikeData = [], folderCampaigns = [], t
       await supabase.from("canvas_pinned_campaigns").delete().eq("campaign_id", campId);
     } else {
       await supabase.from("canvas_pinned_campaigns").insert({ campaign_id: campId });
+    }
+  };
+
+  // Pin/unpin a Notes topic (folder). Takes the whole folder object so the
+  // shelf has the detail it needs the moment it's pinned (no refetch). Called
+  // from NotesCanvasCard's topic rows via the onTogglePin prop.
+  const toggleNotePin = async (folder) => {
+    if (!folder?.id) return;
+    const isPinned = pinnedFolders.some((f) => f.id === folder.id);
+    setPinnedFolders((prev) =>
+      isPinned ? prev.filter((f) => f.id !== folder.id) : [...prev, folder]
+    );
+    if (isPinned) {
+      await supabase.from("canvas_pinned_notes").delete().eq("folder_id", folder.id);
+    } else {
+      await supabase.from("canvas_pinned_notes").insert({ folder_id: folder.id });
     }
   };
 
@@ -3205,6 +3367,245 @@ export default function CampaignCanvas({ wrikeData = [], folderCampaigns = [], t
           // ============ GALLERY VIEW (studio cards) ============
           return (
             <div key="studio-gallery" className="mt-2 py-4 px-6 w-full">
+              {/* ============ PINNED SHELF (top) — horizontal quick-access cards ============ */}
+              {(pinnedCamps.length > 0 || pinnedFolders.length > 0) && (
+                <section className="mb-8 animate-in fade-in slide-in-from-bottom-4 duration-500">
+                  <div className="flex items-center justify-between gap-2.5 mb-3 px-1">
+                    <p className="text-[11px] font-black text-[#768994] uppercase tracking-widest">Pinned</p>
+                  </div>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+                    {pinnedCamps.map((camp) => {
+                      const cover = covers[camp.id] || CAMPAIGN_COVERS[camp.id];
+                      const ts = camp.lastMatrixUpdate;
+                      const isActive = ts && (Date.now() - ts) < 14 * 24 * 60 * 60 * 1000;
+                      const auto = detectStudio(camp.links);
+                      const studio = studioOverrides[camp.id] || auto || camp.studioHint || "Others";
+                      const assetCount = camp.links?.length || 0;
+                      return (
+                        <button
+                          key={`pin-${camp.id}`}
+                          onClick={() => handleToggleCamp(camp.id)}
+                          className="group/pin relative text-left rounded-2xl border border-[#dce4ec] bg-white p-3.5 hover:border-[#c2410d]/40 hover:shadow-md transition-all"
+                        >
+                          <span
+                            onClick={(e) => { e.stopPropagation(); togglePin(camp.id); }}
+                            title="Unpin"
+                            className="absolute top-2.5 right-2.5 p-1 rounded-lg text-amber-500 hover:bg-amber-50 transition-colors"
+                          >
+                            <Pin className="w-3.5 h-3.5 fill-current" />
+                          </span>
+                          <div className="flex items-center gap-3">
+                            <span
+                              className="relative w-10 h-10 rounded-xl overflow-hidden shrink-0 shadow-sm flex items-center justify-center"
+                              style={{ background: cover ? "#122027" : generateGradient(camp.title) }}
+                            >
+                              {cover ? (
+                                <img src={cover} alt="" className="w-full h-full object-cover" />
+                              ) : (
+                                <Film className="w-4 h-4 text-white/50" />
+                              )}
+                            </span>
+                            <div className="min-w-0 pr-5">
+                              <p className="text-[9px] font-black uppercase tracking-widest text-[#94a3b8] truncate">{studio} · Campaign</p>
+                              <p className="text-sm font-black text-[#122027] truncate leading-tight mt-0.5">{camp.title}</p>
+                            </div>
+                          </div>
+                          <p className="flex items-center gap-1.5 text-[10px] font-bold text-[#768994] mt-2.5">
+                            {isActive && <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 shrink-0" />}
+                            {isActive ? "Live" : relativeDate(ts) || "No matrix"}
+                            {assetCount > 0 && <span className="text-[#c2d0da]">· {assetCount} asset{assetCount === 1 ? "" : "s"}</span>}
+                          </p>
+                        </button>
+                      );
+                    })}
+
+                    {/* Pinned Notes topics — sit alongside campaigns on the shelf.
+                        Clicking opens the topic in the Notes panel (focusFolder). */}
+                    {pinnedFolders.map((folder) => {
+                      const me = localStorage.getItem("wrike_user_id");
+                      const eyebrow = !folder.owner_wrike_id
+                        ? `${boardLabelFor(folder.department || department)} · Topic`
+                        : folder.owner_wrike_id === me
+                          ? "My Space · Topic"
+                          : "Shared · Topic";
+                      return (
+                        <button
+                          key={`pin-folder-${folder.id}`}
+                          onClick={() => setFocusFolder({ id: folder.id, n: Date.now() })}
+                          className="group/pin relative text-left rounded-2xl border border-[#dce4ec] bg-white p-3.5 hover:border-indigo-400/50 hover:shadow-md transition-all"
+                        >
+                          <span
+                            onClick={(e) => { e.stopPropagation(); toggleNotePin(folder); }}
+                            title="Unpin topic"
+                            className="absolute top-2.5 right-2.5 p-1 rounded-lg text-amber-500 hover:bg-amber-50 transition-colors"
+                          >
+                            <Pin className="w-3.5 h-3.5 fill-current" />
+                          </span>
+                          <div className="flex items-center gap-3">
+                            <span className="relative w-10 h-10 rounded-xl shrink-0 shadow-sm flex items-center justify-center bg-gradient-to-br from-indigo-500 to-slate-700">
+                              <FileText className="w-4 h-4 text-white/80" />
+                            </span>
+                            <div className="min-w-0 pr-5">
+                              <p className="text-[9px] font-black uppercase tracking-widest text-[#94a3b8] truncate">{eyebrow}</p>
+                              <p className="text-sm font-black text-[#122027] truncate leading-tight mt-0.5">{folder.name}</p>
+                            </div>
+                          </div>
+                          <p className="flex items-center gap-1.5 text-[10px] font-bold text-[#768994] mt-2.5">
+                            Open in Notes Canvas
+                          </p>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </section>
+              )}
+
+              {/* ============ WORKSPACE — Notes (left) + compact campaign list (right) ============ */}
+              {!browseGallery && (
+                <div className="grid grid-cols-1 lg:grid-cols-5 gap-6 mb-10 items-start">
+                  {/* Notes Canvas — the primary workspace surface, leads the page */}
+                  <div className="lg:col-span-3 min-w-0">
+                    <NotesCanvasCard
+                      isOpen={expandedRegions["notesCanvas"] ?? true}
+                      onToggle={() => toggleRegion("notesCanvas")}
+                      department={department}
+                      pinnedFolderIds={pinnedFolders.map((f) => f.id)}
+                      onTogglePin={toggleNotePin}
+                      focusFolder={focusFolder}
+                    />
+                  </div>
+
+                  {/* Campaigns — a compact, scannable list beside Notes. The full
+                      studio art-wall lives one click away behind "Browse gallery".
+                      Rows open the same campaign modal as the gallery cards. */}
+                  <div className="lg:col-span-2 min-w-0">
+                    <div className="rounded-3xl border border-[#dce4ec] bg-white shadow-sm overflow-hidden flex flex-col">
+                      <div className="flex items-center justify-between gap-3 px-3.5 pt-3.5 pb-2.5">
+                        <h2 className="flex items-center gap-2 text-[13px] font-black text-[#122027] uppercase tracking-widest">
+                          <Film className="w-4 h-4 text-[#c2410d]" /> Campaigns
+                        </h2>
+                        <button
+                          onClick={() => setBrowseGallery(true)}
+                          className="flex items-center gap-1.5 shrink-0 text-[11px] font-black text-[#c2410d] uppercase tracking-widest hover:text-[#9a3412] transition-colors"
+                        >
+                          <LayoutGrid className="w-3.5 h-3.5" /> Browse gallery
+                        </button>
+                      </div>
+
+                      {/* Filter — client-side title match across all studios */}
+                      <div className="px-3.5 pb-2.5">
+                        <div className="relative">
+                          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-[#94a3b8]" />
+                          <input
+                            value={campFilter}
+                            onChange={(e) => setCampFilter(e.target.value)}
+                            placeholder="Filter campaigns…"
+                            className="w-full pl-9 pr-3 py-2 rounded-xl bg-slate-50 border border-transparent focus:border-[#c2410d]/40 focus:bg-white text-[12px] font-semibold text-[#122027] placeholder:text-[#94a3b8] outline-none transition-colors"
+                          />
+                        </div>
+                      </div>
+
+                      {/* Height tuned to match the Notes card's fixed open height
+                          (~520px scroll area) so the two columns read as equal
+                          modules; the list scrolls internally past that. */}
+                      <div className="max-h-[468px] overflow-y-auto px-2 pb-2">
+                        {(() => {
+                          const q = campFilter.trim().toLowerCase();
+                          const sections = gallerySections
+                            .map((section) => ({
+                              section,
+                              camps: (grouped[section] || []).filter(
+                                (c) => !q || c.title.toLowerCase().includes(q)
+                              ),
+                            }))
+                            .filter((s) => s.camps.length > 0);
+
+                          if (sections.length === 0) {
+                            return (
+                              <p className="text-center text-[12px] font-bold text-[#94a3b8] py-12">
+                                {q ? "No campaigns match." : "No campaigns yet."}
+                              </p>
+                            );
+                          }
+
+                          return sections.map(({ section, camps }) => {
+                            const folded = collapsedStudios[section];
+                            return (
+                              <div key={section} className="mb-1">
+                                <button
+                                  onClick={() => setCollapsedStudios((p) => ({ ...p, [section]: !p[section] }))}
+                                  className="w-full flex items-center gap-2 px-2 pt-3 pb-1.5 group/hdr"
+                                >
+                                  <ChevronRight className={`w-3 h-3 text-[#94a3b8] transition-transform ${folded ? "" : "rotate-90"}`} />
+                                  <span className="text-[10px] font-black uppercase tracking-widest text-[#768994] group-hover/hdr:text-[#122027]">{section}</span>
+                                  <div className="h-px flex-1 bg-[#eef1f5]" />
+                                  <span className="text-[10px] font-bold text-[#b0bcc6] tabular-nums">{camps.length}</span>
+                                </button>
+                                {!folded && camps.map((camp) => {
+                                  const cover = covers[camp.id] || CAMPAIGN_COVERS[camp.id];
+                                  const ts = camp.lastMatrixUpdate;
+                                  const isActive = ts && (Date.now() - ts) < 14 * 24 * 60 * 60 * 1000;
+                                  const isOpen = expandedCampId === camp.id;
+                                  const isPinned = pinnedIds.includes(camp.id);
+                                  const assetCount = camp.links?.length || 0;
+                                  const sub = [
+                                    isActive ? "Live" : relativeDate(ts),
+                                    assetCount ? `${assetCount} asset${assetCount === 1 ? "" : "s"}` : null,
+                                  ].filter(Boolean).join(" · ") || "No matrix";
+                                  return (
+                                    <div
+                                      key={camp.id}
+                                      className={`group/row relative flex items-center gap-3 p-1.5 rounded-xl transition-colors ${isOpen ? "bg-[#c2410d]/10" : "hover:bg-slate-50"}`}
+                                    >
+                                      <button onClick={() => handleToggleCamp(camp.id)} className="flex items-center gap-3 flex-1 min-w-0 text-left">
+                                        <span
+                                          className="relative w-9 h-12 rounded-lg overflow-hidden shrink-0 shadow-sm flex items-center justify-center"
+                                          style={{ background: cover ? "#122027" : generateGradient(camp.title), filter: isActive ? "none" : "grayscale(55%) brightness(0.85)" }}
+                                        >
+                                          {cover ? (
+                                            <img src={cover} alt="" className="w-full h-full object-cover" />
+                                          ) : (
+                                            <Film className="w-4 h-4 text-white/40" />
+                                          )}
+                                        </span>
+                                        <span className="flex-1 min-w-0">
+                                          <span className={`block text-[12px] font-black truncate ${isOpen ? "text-[#c2410d]" : "text-[#122027]"}`}>{camp.title}</span>
+                                          <span className="flex items-center gap-1.5 text-[10px] font-bold text-[#94a3b8]">
+                                            {isActive && <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 shrink-0" />}
+                                            <span className="truncate uppercase tracking-wide">{sub}</span>
+                                          </span>
+                                        </span>
+                                      </button>
+                                      <button
+                                        onClick={(e) => { e.stopPropagation(); togglePin(camp.id); }}
+                                        title={isPinned ? "Unpin" : "Pin"}
+                                        className={`shrink-0 p-1.5 rounded-lg transition-all ${isPinned ? "text-amber-500" : "text-[#c2d0da] opacity-0 group-hover/row:opacity-100 hover:text-amber-500"}`}
+                                      >
+                                        <Pin className={`w-3.5 h-3.5 ${isPinned ? "fill-current" : ""}`} />
+                                      </button>
+                                    </div>
+                                  );
+                                })}
+                              </div>
+                            );
+                          });
+                        })()}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* ============ GALLERY — the studio art-wall, behind "Browse gallery" ============ */}
+              {browseGallery && (
+              <>
+              <button
+                onClick={() => setBrowseGallery(false)}
+                className="flex items-center gap-1.5 mb-5 -ml-1 px-2.5 py-1.5 rounded-lg text-[12px] font-black text-[#768994] hover:text-[#122027] hover:bg-slate-50 transition-colors"
+              >
+                <ChevronLeft className="w-4 h-4" /> Back to workspace
+              </button>
+
               <div className="flex items-center gap-2.5 mb-4 px-1">
                 <div className="w-9 h-9 rounded-xl bg-[#c2410d]/10 text-[#c2410d] flex items-center justify-center shadow-sm">
                   <Film className="w-5 h-5" />
@@ -3307,34 +3708,7 @@ export default function CampaignCanvas({ wrikeData = [], folderCampaigns = [], t
                   );
                 })()}
               </AnimatePresence>
-
-              {/* ============ PINNED CAMPAIGNS ============ */}
-              {pinnedCamps.length > 0 && (
-                <section className="mt-10 animate-in fade-in slide-in-from-bottom-4 duration-500">
-                  <div className="flex items-center gap-2.5 mb-4 px-1">
-                    <div className="w-9 h-9 rounded-xl bg-amber-100 text-amber-600 flex items-center justify-center shadow-sm">
-                      <Pin className="w-5 h-5 fill-current" />
-                    </div>
-                    <div>
-                      <h2 className="text-lg font-black text-[#122027] tracking-tight leading-none">Pinned</h2>
-                      <p className="text-[11px] font-bold text-[#768994] uppercase tracking-widest mt-1">Quick access · {pinnedCamps.length}</p>
-                    </div>
-                  </div>
-                  <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 xl:grid-cols-6 gap-4">
-                    {pinnedCamps.map((camp, i) => (
-                      <div key={`pin-${camp.id}`} className="relative group/pin">
-                        {renderCampaignCard(camp, i)}
-                        <button
-                          onClick={(e) => { e.stopPropagation(); togglePin(camp.id); }}
-                          title="Unpin"
-                          className="absolute top-2.5 left-2.5 z-20 p-1.5 rounded-lg bg-amber-400/95 hover:bg-amber-400 text-[#122027] shadow opacity-0 group-hover/pin:opacity-100 transition-opacity backdrop-blur-sm"
-                        >
-                          <Pin className="w-3.5 h-3.5 fill-current" />
-                        </button>
-                      </div>
-                    ))}
-                  </div>
-                </section>
+              </>
               )}
 
               {/* ============ REFERENCE TAB BAR ============ */}
@@ -3343,12 +3717,9 @@ export default function CampaignCanvas({ wrikeData = [], folderCampaigns = [], t
                   scrolling through all of them. The active tab body renders
                   below; the others are unmounted so their editors don't fight
                   for scroll position or steal cmd-k shortcuts. */}
-              {/* ============ REFERENCE ============ */}
-              <div className="mt-12 mb-8 flex items-center gap-4" aria-hidden="true">
-                <div className="h-px flex-1 bg-gradient-to-r from-transparent via-[#cdd7e1] to-[#cdd7e1]" />
-                <span className="text-[10px] font-black uppercase tracking-[0.2em] text-[#94a3b8]">Reference</span>
-                <div className="h-px flex-1 bg-gradient-to-l from-transparent via-[#cdd7e1] to-[#cdd7e1]" />
-              </div>
+              {/* Reference surfaces (Launch Tracker / DOOH / EoC) follow as their
+                  own cards — no divider, they read as more modular blocks. */}
+              <div className="mt-6" />
               {/* ============ LAUNCH TRACKER (PRINT) ============ */}
               {department === "Print" && (
                 <PrintLaunchTrackerCard
@@ -3486,11 +3857,6 @@ export default function CampaignCanvas({ wrikeData = [], folderCampaigns = [], t
               )}
 
               <div className="mt-6 space-y-6">
-                <NotesCanvasCard
-                  isOpen={expandedRegions["notesCanvas"] ?? false}
-                  onToggle={() => toggleRegion("notesCanvas")}
-                  department={department}
-                />
                 <EndOfCampaignNotesCard
                   isOpen={expandedRegions["eocNotes"] ?? false}
                   onToggle={() => toggleRegion("eocNotes")}

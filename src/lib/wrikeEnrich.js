@@ -212,14 +212,13 @@ export function getStudioName(task, folderDictionary, childToParent = {}) {
 // ---------------------------------------------------------------------------
 // Print coordinates each launch wave through a hub task ("*_Launch_Print_Requests"
 // / "*_Print_Teaser_Launch_Markets") whose subtasks are the per-market requests
-// ("AB3_INTL_Print_Teaser1SHT_Birds_CMYK_KR"). Both must match on their OWN
-// title: webhook events fetch single tasks, so a subtask that only matched "via
-// its hub" would fail the filter on its next status change and get purged.
+// ("AB3_INTL_Print_Teaser1SHT_Birds_CMYK_KR"). Only the HUB matches by title;
+// its per-market subtasks are kept by MEMBERSHIP (the sync/webhook look up
+// hub.subTaskIds — see useWrikeCache). Matching subtasks by title instead would
+// need a broad "_INTL_PRINT_" pattern that also swept in every unrelated print
+// asset in the workspace (e.g. ODY_INTL_PRINT_SilverSoldiers_Banner), bloating
+// the cache and polluting the Canvas gallery/notes with non-launch tasks.
 export const PRINT_HUB_RE = /print_?requests|launch_?markets/i;
-const PRINT_DELIVERABLE_RE = /^[A-Z0-9]{2,10}_(INTL?|DOM)_print_/i;
-
-export const isPrintLaunchTask = (title) =>
-  PRINT_HUB_RE.test(title) || PRINT_DELIVERABLE_RE.test(title);
 
 // Which tasks keep their parsed description through enrichment (and are
 // therefore worth a description backfill when pagination drops it): MATRIX
@@ -242,7 +241,7 @@ export function filterToMotionTeam(tasks, folderDictionary, contactDictionary) {
 
     const matchesKeywords =
       upper.includes("DOOH") || upper.includes("DINTH") || upper.includes("MATRIX") ||
-      isPrintLaunchTask(task.title);
+      PRINT_HUB_RE.test(task.title);
     const matchesAssignee = task.responsibleIds?.some(
       (id) => contactDictionary[id] && MOTION_TEAM_NAME_MAP[contactDictionary[id]]
     );

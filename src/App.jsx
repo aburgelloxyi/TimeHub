@@ -41,6 +41,7 @@ import { notify } from "./lib/toast";
 import { confirmAction } from "./lib/confirm";
 import Home from "./components/Home";
 import { useWrikeCache } from "./hooks/useWrikeCache";
+import { isPrintLaunchTask, PRINT_HUB_RE } from "./lib/wrikeEnrich";
 import { PAGES, pagesFor, boardLabelFor } from "./lib/departments";
 import { useDepartment } from "./hooks/useDepartment";
 import { MANAGEMENT_IDS } from "./lib/access";
@@ -273,14 +274,27 @@ export default function App() {
     []
   );
 
-  // Only MATRIX tasks go to the Canvas
-  const filteredData = useMemo(
-    () =>
-      globalWrikeData.filter((task) =>
-        task.title?.toUpperCase().includes("MATRIX")
-      ),
-    [globalWrikeData]
-  );
+  // Only Canvas-relevant tasks go to the Canvas: MATRIX tasks (the campaign
+  // gallery) plus Print launch hubs + their per-market request subtasks (the
+  // Print Launch Tracker tab). Hub subtasks are included BY MEMBERSHIP, not
+  // just by title — digital/online launch waves' per-market subtasks carry no
+  // "_Print_" marker, so a title-only filter starved the Launch Tracker of
+  // exactly those hubs' markets ("No market subtasks synced yet") even though
+  // the cache layer (sync/webhook/backfill, which already use this membership
+  // rule) had every one of them loaded in memory.
+  const filteredData = useMemo(() => {
+    const hubSubIds = new Set(
+      globalWrikeData
+        .filter((t) => t.title && PRINT_HUB_RE.test(t.title))
+        .flatMap((t) => t.subTaskIds || [])
+    );
+    return globalWrikeData.filter(
+      (task) =>
+        task.title?.toUpperCase().includes("MATRIX") ||
+        (task.title && isPrintLaunchTask(task.title)) ||
+        hubSubIds.has(task.id)
+    );
+  }, [globalWrikeData]);
 
   // --- Global command palette ---
   const [isPaletteOpen, setIsPaletteOpen] = useState(false);

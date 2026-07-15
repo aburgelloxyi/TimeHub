@@ -661,6 +661,7 @@ export const FILM_MAPPINGS = {
   JWR: "Jurassic World Rebirth",
   TR3: "Trolls 3 Band Together",
   STH4: "Sonic The Hedgehog 4",
+  ZAL: "Not Alone",
 };
 
 export const MOTION_TEAM_NAME_MAP = {

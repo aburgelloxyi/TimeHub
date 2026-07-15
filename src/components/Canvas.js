@@ -742,6 +742,7 @@ function NotesCanvasCard({ isOpen, onToggle, department }) {
   const boardAccent = activeBoard === "mine" ? myColor : "#c2410d";
 
   const toggleFolder = (id) => setSelectedFolderId((prev) => (prev === id ? null : id));
+  const startDraft = (owner) => { setFolderDraft({ owner }); setNewFolderName(""); };
 
   return (
     <CollapsibleCard

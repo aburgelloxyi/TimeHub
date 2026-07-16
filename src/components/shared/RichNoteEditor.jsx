@@ -13,6 +13,7 @@ import CollaborationCaret from "@tiptap/extension-collaboration-caret";
 import * as Y from "yjs";
 import { supabase } from "../../lib/supabaseClient";
 import { createSupabaseYProvider } from "../../lib/yjsSupabaseProvider";
+import { reportError } from "../../lib/monitoring";
 import {
   Bold as BoldIcon, Italic as ItalicIcon, Underline as UnderlineIcon, Strikethrough,
   Heading2, Heading3, List, ListOrdered, ListChecks, Quote, Code2, Link as LinkIcon, GripVertical,
@@ -115,6 +116,16 @@ const decodeYState = (str) => {
   return out;
 };
 
+// Does this stored note actually hold anything? Covers both shapes the column
+// has held: TipTap's {type:"doc",content:[...]} and the bare arrays left over
+// from the BlockNote era. An empty doc is a single empty paragraph, which has
+// a content array but no text in it.
+const hasContent = (content) => {
+  if (!content) return false;
+  const json = JSON.stringify(content);
+  return json.includes('"text"') || json.includes('"image"');
+};
+
 const TEXT_COLORS = [
   { label: "Default", value: null },
   { label: "Gray", value: "#78716c" },
@@ -189,6 +200,9 @@ function NoteEditor({
   const dragFromRef = useRef(null);
   const wrapRef = useRef(null);
   const imageInputRef = useRef(null);
+  // Has this editor ever displayed content in this session? Gates the
+  // empty-save guard in onUpdate — see there.
+  const sawContentRef = useRef(false);
 
   // All floating UI (bubble menu, slash menu, drag handle, drop indicator) is
   // position:fixed and rendered through a portal to <body>. It has to be a
@@ -274,13 +288,28 @@ function NoteEditor({
           ]
         : []),
     ],
-    // With Collaboration on, the Y.Doc is the document — handing TipTap
-    // `content` as well would append it on top of what Yjs already holds and
-    // duplicate the note. Only seed when this doc has never been collaborated
-    // on (no persisted Yjs state), which is what collab.seed reports.
+    // Never hand `content` to a collaborative editor. Collaboration builds the
+    // document from the Y.Doc and ignores this option entirely — passing a
+    // note's JSON here looked like seeding but did nothing, so the editor came
+    // up empty and the autosave below wrote that emptiness over the real note.
+    // That destroyed one. Seeding now happens in onCreate, against the actual
+    // editor, where the result can be observed.
     content: collab
-      ? (collab.seed ? content : undefined)
+      ? undefined
       : (content && (Array.isArray(content) ? content.length : Object.keys(content).length) ? content : ""),
+    onCreate: ({ editor }) => {
+      if (!collab) return;
+      // Only a doc with no persisted CRDT state needs its old JSON converting,
+      // and only if Yjs really did come up empty — isEmpty is asked of the
+      // editor after Collaboration has populated it, rather than assumed.
+      if (collab.seed && editor.isEmpty && hasContent(content)) {
+        editor.commands.setContent(content);
+      }
+      // Whatever we ended up with is the baseline the save guard measures
+      // against: an editor that has shown content may later legitimately be
+      // emptied by its author, but one that never did must not be persisted.
+      if (!editor.isEmpty) sawContentRef.current = true;
+    },
     editorProps: {
       handleKeyDown(view, event) {
         if (!slashRangeRef.current) return false;
@@ -307,6 +336,28 @@ function NoteEditor({
     },
     onUpdate: ({ editor }) => {
       checkSlash(editor);
+
+      if (!editor.isEmpty) sawContentRef.current = true;
+
+      // The guard that should have existed before any of this shipped. An
+      // author emptying their own note is legitimate — but they must have seen
+      // the note's contents first. An editor that has never once been
+      // non-empty, for a note the database says has text, means loading or
+      // seeding failed, and persisting that would destroy the note. It already
+      // did once. Refusing the write costs a stale projection until the next
+      // real edit; allowing it costs the note.
+      if (editor.isEmpty && !sawContentRef.current && hasContent(content)) {
+        console.error(
+          "[RichNoteEditor] refusing to save an empty document over a note that has content — " +
+          "the note failed to load rather than being emptied by its author."
+        );
+        reportError(new Error("Blocked empty-document save over non-empty note"), {
+          collab: !!collab,
+          seeded: collab?.seed,
+        });
+        return;
+      }
+
       clearTimeout(saveTimerRef.current);
       // Collaborating peers all hold the same converged document, so whoever
       // stops typing first writes it — last-write-wins is safe here precisely

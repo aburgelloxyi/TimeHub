@@ -24,8 +24,11 @@ import {
   FileSpreadsheet,
   Eye,
   EyeOff,
+  Moon,
+  Sun,
 } from "lucide-react";
 import { supabase } from "../lib/supabaseClient";
+import { isDarkMode, toggleDarkMode } from "../lib/theme";
 import PageHeader from "./shared/PageHeader";
 import HubRow from "./shared/HubRow";
 import { useTasks } from "../hooks/useTasks";
@@ -1140,66 +1143,64 @@ function HistorySection({ tasks }) {
                   })
                 : null;
             return (
-              <div key={dayKey}>
-                {/* Day group header */}
-                <div
-                  className={`flex items-center gap-2 text-xs font-black uppercase tracking-widest mb-3 border-b border-[#dce4ec] pb-2 ${dc.text}`}
-                >
-                  <span
-                    className={`px-2 py-0.5 rounded-md text-[10px] ${dc.pill}`}
-                  >
+              // Same "each group is its own bordered/shadowed white card"
+              // treatment as Completed's per-campaign cards (JobsSection),
+              // just grouped by day instead of by campaign.
+              <div key={dayKey} className="bg-white rounded-2xl border border-[#dce4ec] shadow-sm overflow-hidden">
+                {/* Day group header — mirrors the campaign header: identity
+                    chip, label, count/total pill on the right. */}
+                <div className="flex items-center gap-2.5 px-4 py-3 border-b border-[#dce4ec] bg-white">
+                  <span className={`w-7 h-7 rounded-xl flex items-center justify-center shrink-0 ${dc.pill}`}>
+                    <Clock className="w-3.5 h-3.5" />
+                  </span>
+                  <span className="font-display font-bold tracking-tight text-[#122027] text-sm truncate">
                     {weekdayName}
                   </span>
                   {dateLabel && (
-                    <span className="text-[10px] font-bold text-[#768994] normal-case tracking-normal">
+                    <span className="text-[11px] font-semibold text-[#768994] truncate">
                       {dateLabel}
                     </span>
                   )}
-                  <span className="ml-auto bg-slate-100 text-[#768994] px-2 py-0.5 rounded text-[10px] normal-case tracking-normal font-bold shrink-0">
+                  <span className="ml-auto bg-slate-50 text-[#768994] px-2 py-0.5 rounded-full text-[10px] font-bold border border-[#dce4ec] shrink-0">
                     {formatDurationText(groupTotal)} · {rows.length}{" "}
                     {rows.length === 1 ? "row" : "rows"}
                   </span>
                 </div>
 
-                {/* Subtask rows — left-bordered like tracker history */}
-                <div className="space-y-2">
+                {/* Faint tint so the white rows read as cards, same as the
+                    campaign cards' job-list body. */}
+                <div className="p-2.5 space-y-1.5 bg-slate-50/50">
                   {rows.map((t, i) => {
                     const dc = DAY_COLORS[t.dayOfWeek] || DEFAULT_DAY;
                     return (
                       <div
                         key={t.id}
                         ref={getCascadeRef(t.id, i)}
-                        className={`border-y border-r border-l-4 ${dc.border} border-y-[#dce4ec] border-r-[#dce4ec] rounded-2xl ${dc.bg} p-4 flex items-center gap-4`}
+                        className={`flex items-center gap-3 px-4 py-2.5 border-y border-r border-l-4 rounded-xl bg-white border-y-[#dce4ec] border-r-[#dce4ec] ${dc.border}`}
                       >
-                        {/* Date stamp */}
-                        <div className="shrink-0 text-center w-14">
-                          {t.date && (
-                            <p className="text-[11px] font-bold text-[#768994]">
-                              {t.date}
-                            </p>
-                          )}
-                        </div>
-
-                        {/* Meta */}
-                        <div className="flex-1 min-w-0">
-                          <p className="text-sm font-black text-[#122027] truncate">
+                        {/* Title + inline meta, single row like the
+                            Completed job cards — the date stamp this used to
+                            carry is redundant now that the whole card is
+                            grouped under a dated header. */}
+                        <div className="flex-1 min-w-0 flex items-baseline gap-2.5">
+                          <p className="font-display font-bold tracking-tight text-[15px] text-[#122027] truncate">
                             {t.jobNumber || "Unknown job"}
                           </p>
-                          <div className="flex items-center gap-2 flex-wrap mt-0.5">
+                          <div className="hidden sm:flex items-center gap-2 shrink-0">
                             {t.territory && (
-                              <span className="text-[11px] font-bold text-[#768994]">
+                              <span className="text-[11px] font-semibold text-[#768994] whitespace-nowrap">
                                 {TERRITORY_FLAGS[t.territory] || "🌍"}{" "}
                                 {t.territory}
                               </span>
                             )}
                             {t.category && (
-                              <span className="text-[10px] font-black text-[#768994] bg-white border border-[#dce4ec] px-2 py-0.5 rounded-full">
+                              <span className="text-[10px] font-black text-[#768994] bg-white border border-[#dce4ec] px-2 py-0.5 rounded-full whitespace-nowrap">
                                 {t.category}
                               </span>
                             )}
                           </div>
                           {t.notes && (
-                            <p className="text-[11px] text-[#768994] mt-1 italic truncate">
+                            <p className="text-[11px] text-[#768994] italic truncate">
                               {t.notes}
                             </p>
                           )}
@@ -1400,6 +1401,7 @@ function AnalyticsSection({ tasks }) {
 function SettingsSection({ onSave }) {
   const [status, setStatus] = useState({ checked: false, connected: false });
   const [disconnecting, setDisconnecting] = useState(false);
+  const [dark, setDark] = useState(isDarkMode);
 
   useEffect(() => {
     fetchWrikeOAuthStatus().then((s) =>
@@ -1464,6 +1466,43 @@ function SettingsSection({ onSave }) {
               <ExternalLink className="w-4 h-4" /> Connect to Wrike
             </button>
           )}
+        </div>
+      </div>
+
+      {/* Appearance card */}
+      <div className="border border-[#dce4ec] rounded-2xl overflow-hidden">
+        <div className="bg-slate-50 border-b border-[#dce4ec] px-5 py-3 flex items-center gap-2">
+          <Moon className="w-4 h-4 text-[#12a0e1]" />
+          <span className="text-sm font-black text-[#122027]">Appearance</span>
+        </div>
+        <div className="p-5 flex items-center gap-4">
+          <div className="flex-1 min-w-0">
+            <p className="text-sm font-bold text-[#122027]">Dark mode</p>
+            <p className="text-xs text-[#768994] mt-0.5 leading-relaxed">
+              Dims the whole app. Remembered on this device.
+            </p>
+          </div>
+          <button
+            onClick={() => setDark(toggleDarkMode())}
+            role="switch"
+            aria-checked={dark}
+            aria-label="Dark mode"
+            className={`relative w-12 h-7 rounded-full shrink-0 transition-colors ${
+              dark ? "bg-[#12a0e1]" : "bg-slate-200"
+            }`}
+          >
+            <span
+              className={`absolute top-1 w-5 h-5 rounded-full bg-white shadow-sm flex items-center justify-center transition-all ${
+                dark ? "left-6" : "left-1"
+              }`}
+            >
+              {dark ? (
+                <Moon className="w-2.5 h-2.5 text-[#12a0e1]" />
+              ) : (
+                <Sun className="w-2.5 h-2.5 text-[#768994]" />
+              )}
+            </span>
+          </button>
         </div>
       </div>
 

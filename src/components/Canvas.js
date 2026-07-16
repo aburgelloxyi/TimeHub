@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo, lazy, Suspense } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { supabase } from "../lib/supabaseClient";
+import { toggleDarkMode } from "../lib/theme";
 import { getFilmName, PRINT_HUB_RE } from "../lib/wrikeEnrich";
 import { fetchTasksByIds } from "../hooks/useWrikeCache";
 import RichNoteEditor from "./shared/RichNoteEditor";
@@ -2303,7 +2304,7 @@ export default function CampaignCanvas({ wrikeData = [], folderCampaigns = [], t
         triggerToast("Canvas data copied to clipboard!", "success");
       }
       if (result.id === "action-dark") {
-        document.documentElement.classList.toggle("dark-theme");
+        toggleDarkMode();
       }
       if (result.id === "action-sync") {
         triggerToast("Wrike Sync triggered! (Placeholder)");

@@ -33,12 +33,13 @@ import {
 } from "lucide-react";
 import "./Timesheeter.css";
 import Rail from "./components/shared/Rail";
-import ThemeToggle from "./components/shared/ThemeToggle";
+import QuickActions from "./components/shared/QuickActions";
 import ToastHost from "./components/shared/ToastHost";
 import ConfirmHost from "./components/shared/ConfirmHost";
 import DepartmentPreviewBanner from "./components/shared/DepartmentPreviewBanner";
 import { notify } from "./lib/toast";
 import { confirmAction } from "./lib/confirm";
+import { toggleDarkMode } from "./lib/theme";
 import Home from "./components/Home";
 import { useWrikeCache } from "./hooks/useWrikeCache";
 import { PRINT_HUB_RE } from "./lib/wrikeEnrich";
@@ -451,7 +452,7 @@ export default function App() {
       setActivePage(action.id.replace("nav-", ""));
       closePalette();
     } else if (action.id === "action-dark") {
-      document.documentElement.classList.toggle("dark-theme");
+      toggleDarkMode();
       closePalette();
     } else if (action.id === "action-copy-ts") {
       const data = localStorage.getItem("xyi_timesheet_tasks_v5");
@@ -594,8 +595,10 @@ export default function App() {
       )}
 
       {/* ── 5:30pm reminder ───────────────────────────────────────────────── */}
+      {/* Sits above the quick-actions bubble rather than on top of it — this
+          corner is the bubble's home, and the reminder is the transient guest. */}
       {showReminder && (
-        <div className="fixed bottom-6 right-6 z-[9998] w-80 bg-white border border-[#dce4ec] rounded-2xl shadow-xl overflow-hidden">
+        <div className="fixed bottom-24 right-6 z-[9998] w-80 bg-white border border-[#dce4ec] rounded-2xl shadow-xl overflow-hidden">
           <div className="h-1 bg-gradient-to-r from-amber-400 to-orange-400" />
           <div className="p-4">
             <div className="flex items-start gap-3">
@@ -798,7 +801,18 @@ export default function App() {
         </div>
       )}
 
-      <ThemeToggle />
+      {/* Shortcut bubble — bottom-right. Dark mode used to float here as its
+          own button; it now lives in Profile → Settings (which this bubble
+          links straight to), so the corner carries one affordance instead of
+          two stacked in the same spot. */}
+      <QuickActions
+        activePage={activePage}
+        department={department}
+        onNavigate={(page, section) => {
+          setProfileSection(section ?? null);
+          setActivePage(page);
+        }}
+      />
 
       <ToastHost />
 

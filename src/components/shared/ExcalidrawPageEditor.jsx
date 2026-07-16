@@ -30,14 +30,17 @@ export default function ExcalidrawPageEditor({ content, onChange }) {
     }, 800);
   }, [onChange]);
 
-  const initialData = content?.elements?.length || Object.keys(content?.files || {}).length
-    ? {
-        elements: content.elements || [],
-        appState: content.appState || {},
-        files: content.files || {},
-        scrollToContent: true,
-      }
-    : undefined;
+  // Zoom isn't part of the persisted appState (see the comment on
+  // handleChange above), so every open starts from the same explicit 50% —
+  // sketches tend to be wider than the panel, and starting zoomed out shows
+  // the whole board instead of a cropped-in corner.
+  const hasContent = !!(content?.elements?.length || Object.keys(content?.files || {}).length);
+  const initialData = {
+    elements: content?.elements || [],
+    appState: { ...(content?.appState || {}), zoom: { value: 0.5 } },
+    files: content?.files || {},
+    scrollToContent: hasContent,
+  };
 
   return (
     // The app runs at a deliberate, app-wide `zoom: 1.1` (src/tailwind.css).

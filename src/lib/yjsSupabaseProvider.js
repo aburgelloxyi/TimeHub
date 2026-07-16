@@ -69,12 +69,16 @@ export function createSupabaseYProvider({ doc, room, user, onSynced }) {
   // this, moving the mouse across the editor emits a steady stream of updates
   // to every peer — the dominant cost of collaborative editing by a wide
   // margin, and pure waste since nobody can perceive a cursor moving at 20Hz.
+  const sendAwareness = () => {
+    if (destroyed) return;
+    send("aware", { from: clientId, update: b64.encode(encodeAwarenessUpdate(awareness, [clientId])) });
+  };
+
   const flushAwareness = () => {
     awarenessTimer = null;
     if (!pendingAwareness || destroyed) return;
     pendingAwareness = false;
-    const update = encodeAwarenessUpdate(awareness, [clientId]);
-    send("aware", { from: clientId, update: b64.encode(update) });
+    sendAwareness();
   };
 
   const onAwarenessUpdate = ({ added, updated, removed }) => {
@@ -102,6 +106,11 @@ export function createSupabaseYProvider({ doc, room, user, onSynced }) {
         // delta it's missing rather than the whole document.
         const diff = Y.encodeStateAsUpdate(doc, b64.decode(payload.sv));
         send("update", { from: clientId, update: b64.encode(diff) });
+        // ...and say who we are. Awareness isn't part of a document state
+        // vector, so the reply above carries none of it: without this a
+        // joiner can't see anyone already in the note until their cursor
+        // happens to move.
+        sendAwareness();
       })
       .subscribe((status) => {
         if (status !== "SUBSCRIBED" || destroyed) return;
@@ -109,6 +118,13 @@ export function createSupabaseYProvider({ doc, room, user, onSynced }) {
         // what we're missing. If nobody answers we simply keep what we loaded
         // from the database, which is the correct outcome for a solo editor.
         send("sync", { from: clientId, sv: b64.encode(Y.encodeStateVector(doc)) });
+        // Announce who we are as well. The local user state is set at
+        // construction, before the awareness listener below exists, so it
+        // never produced a broadcast — and broadcasts aren't retained, so
+        // peers already in the note would otherwise never learn we joined.
+        // Two small messages per join, not per keystroke: the throttling that
+        // matters (cursor spam) is untouched.
+        sendAwareness();
         onSynced?.();
       });
   };
@@ -116,6 +132,12 @@ export function createSupabaseYProvider({ doc, room, user, onSynced }) {
   const disconnect = () => {
     if (!channel) return;
     removeAwarenessStates(awareness, [clientId], "local");
+    // Say goodbye before the channel goes. removeAwarenessStates bumps our
+    // clock and leaves the state null, so this encodes as "I'm gone" and peers
+    // drop us immediately. Without it they keep showing us until awareness
+    // times us out on its own ~30s later — a stale face in the presence list
+    // long after the tab closed.
+    sendAwareness();
     supabase.removeChannel(channel);
     channel = null;
   };
@@ -141,13 +163,16 @@ export function createSupabaseYProvider({ doc, room, user, onSynced }) {
   return {
     awareness,
     destroy() {
-      destroyed = true;
       clearTimeout(awarenessTimer);
       clearTimeout(idleTimer);
       doc.off("update", onDocUpdate);
       awareness.off("update", onAwarenessUpdate);
       document.removeEventListener("visibilitychange", onVisibility);
+      // Before `destroyed`, deliberately: disconnect() broadcasts our goodbye,
+      // and send() is a no-op once destroyed is set. Flipping the flag first
+      // silently swallowed that last message.
       disconnect();
+      destroyed = true;
       awareness.destroy();
     },
   };

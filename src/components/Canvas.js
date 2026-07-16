@@ -614,6 +614,10 @@ function NotesCanvasCard({ isOpen, onToggle, department, pinnedFolderIds = [], o
   };
   const colorFor = (id) => profileFor(id)?.canvas_color || hashColor(id);
   const myColor = currentUserId ? colorFor(currentUserId) : CANVAS_COLOR_PALETTE[0];
+  // The person. Used wherever a human is named (presence, carets).
+  const myFirstName = (currentUserId && profileFor(currentUserId)?.first_name) || "Someone";
+  // The place. Used for the personal-board pill only — don't hand this to
+  // anything that says "<x> is here".
   const myName = currentUserId && profileFor(currentUserId)?.first_name
     ? `${profileFor(currentUserId).first_name}'s Space`
     : "My Space";
@@ -729,9 +733,13 @@ function NotesCanvasCard({ isOpen, onToggle, department, pinnedFolderIds = [], o
   // Memoised: this is handed to the editor, which uses it to build the Yjs
   // awareness state at mount. A fresh object literal each render would look
   // like a changed identity to anything downstream keyed on it.
+  // myName is the *board pill's* label ("Antonio's Space" / "My Space") — a
+  // place, not a person. Presence and carets name a human, so they take the
+  // first name straight off the profile: "Antonio is here", not
+  // "Antonio's Space is here".
   const collabUser = useMemo(
-    () => ({ name: myName || "Someone", color: myColor }),
-    [myName, myColor]
+    () => ({ name: myFirstName, color: myColor }),
+    [myFirstName, myColor]
   );
 
   // The live provider for the open note, handed up by the editor once its

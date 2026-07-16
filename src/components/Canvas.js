@@ -1116,6 +1116,7 @@ function NotesCanvasCard({ isOpen, onToggle, department, pinnedFolderIds = [], o
                     <Suspense fallback={<div className="h-full min-h-[640px] bg-[#faf7f2] animate-pulse" />}>
                       <ExcalidrawPageEditor
                         key={selectedPage.id}
+                        pageId={selectedPage.id}
                         content={selectedPage.content}
                         onChange={(scene) => savePageContent(selectedPage.id, scene)}
                       />

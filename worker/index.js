@@ -147,9 +147,31 @@ async function deleteTokenRow(env, sessionToken) {
   });
 }
 
+// Raised when Supabase itself didn't answer — as opposed to answering "there
+// is no such row". Callers that talk to Wrike have to tell those apart; see
+// getWebhookConfig.
+class SupabaseUnavailable extends Error {}
+
+// Returns the row, or null when Supabase positively reports no webhook is
+// configured. Throws SupabaseUnavailable when Supabase couldn't be reached or
+// refused the read (402 over-quota, 5xx, network error).
+//
+// These two used to collapse into the same null, and handleWebhookEvent turned
+// any null into a 404 — so while Supabase was over its quota and 402ing, every
+// Wrike delivery was answered "webhook_not_configured". That reads to Wrike as
+// an endpoint that no longer exists, and it suspends the webhook account-wide.
+// The outage was transient; the suspension it caused was not, since clearing it
+// needs a manual admin re-register long after Supabase recovered.
 async function getWebhookConfig(env) {
-  const res = await sbFetch(env, `/wrike_webhook_config?select=*&limit=1`);
-  if (!res.ok) return null;
+  let res;
+  try {
+    res = await sbFetch(env, `/wrike_webhook_config?select=*&limit=1`);
+  } catch (err) {
+    throw new SupabaseUnavailable(`webhook config fetch failed: ${err.message}`);
+  }
+  if (!res.ok) {
+    throw new SupabaseUnavailable(`webhook config read failed: ${res.status}`);
+  }
   const rows = await res.json();
   return rows[0] || null;
 }
@@ -367,7 +389,20 @@ async function handleWebhookRegister(request, url, env) {
   // half-written — a blank webhookId plus a secret that no longer matches
   // whatever webhook Wrike is still actually delivering with, which silently
   // 401s (and drops) every future delivery until someone notices the outage.
-  const previousConfig = await getWebhookConfig(env);
+  // Bail out early and legibly if Supabase is unreachable. Registering writes
+  // the new secret to Supabase before Wrike validates the hook URL, so there
+  // is no version of this that succeeds while the database is down — without
+  // this the run would get as far as that write and surface an opaque 500.
+  let previousConfig;
+  try {
+    previousConfig = await getWebhookConfig(env);
+  } catch (err) {
+    console.error("[webhook] register aborted, Supabase unavailable:", err.message);
+    return json({
+      error: "database_unavailable",
+      detail: "Couldn't reach the database to save the webhook secret. Live sync can't be enabled until that recovers.",
+    }, { status: 503 });
+  }
 
   // Delete any webhooks already pointing at this Worker before creating a new
   // one. Each register generates a fresh secret, but wrike_webhook_config can
@@ -435,7 +470,21 @@ async function handleWebhookRegister(request, url, env) {
 // {"requestType":"WebHook secret verification"}; real deliveries are a JSON
 // array of event objects. Both are signature-verified the same way first.
 async function handleWebhookEvent(request, env) {
-  const config = await getWebhookConfig(env);
+  let config;
+  try {
+    config = await getWebhookConfig(env);
+  } catch (err) {
+    // Supabase didn't answer, so we can't read the secret — meaning we can
+    // neither verify nor record this delivery. Answering Wrike with an error
+    // would be the honest status, but Wrike responds to a failing endpoint by
+    // suspending the webhook for the whole account, and that suspension
+    // outlives the outage that caused it. Acknowledge and drop instead: the
+    // periodic Wrike sync (useWrikeCache) re-fetches tasks independently of
+    // this feed, so an outage costs freshness until it recovers rather than
+    // taking live sync down until someone notices and re-registers by hand.
+    console.error("[webhook] config unavailable, ACKing to keep hook alive:", err.message);
+    return json({ ok: true, dropped: "config_unavailable" });
+  }
   if (!config) return json({ error: "webhook_not_configured" }, { status: 404 });
 
   const rawBody = await request.text();

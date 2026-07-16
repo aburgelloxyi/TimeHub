@@ -34,6 +34,7 @@ import {
 import "./Timesheeter.css";
 import Rail from "./components/shared/Rail";
 import QuickActions from "./components/shared/QuickActions";
+import AppErrorBoundary from "./components/shared/AppErrorBoundary";
 import ToastHost from "./components/shared/ToastHost";
 import ConfirmHost from "./components/shared/ConfirmHost";
 import DepartmentPreviewBanner from "./components/shared/DepartmentPreviewBanner";
@@ -864,6 +865,12 @@ export default function App() {
             exit="exit"
             className={activePage === "home" ? "" : "pl-20"}
           >
+            {/* The boundary sits around the page content, not the whole app,
+                so a page that throws leaves the Rail mounted and navigable —
+                a white screen with the reason only in the console is the
+                alternative, and that's what used to happen. Keyed on
+                activePage so navigating away clears a caught error. */}
+            <AppErrorBoundary resetKey={activePage} onGoHome={() => setActivePage("home")}>
             {/* Suspense sits INSIDE the motion.div: a still-loading chunk
                 suspends to the quiet PageLoading fallback within the entrance
                 animation, instead of unmounting the AnimatePresence tree. */}
@@ -929,6 +936,7 @@ export default function App() {
             )}
             {activePage === "jobbook" && <JobBook />}
             </Suspense>
+            </AppErrorBoundary>
           </motion.div>
         )}
       </AnimatePresence>

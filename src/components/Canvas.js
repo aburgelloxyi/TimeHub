@@ -563,6 +563,14 @@ function NotesCanvasCard({ isOpen, onToggle, department, pinnedFolderIds = [], o
   // Expand ("focus mode") is controlled by the parent so it can also hide the
   // campaigns panel and let the note take the full page width.
   const toggleEditorExpanded = onToggleEditorExpanded || (() => {});
+  // Separate from editorExpanded: that flag now auto-fires for ANY open note
+  // (see the effect below) purely to reclaim the campaigns column's width —
+  // it says nothing about whether THIS card's own topics/pages rail should
+  // hide. A sketch benefits from every pixel (railCollapsed defaults true for
+  // it); a text note doesn't need the rail gone just because a note is open,
+  // so it stays visible unless the user explicitly asks for full focus via
+  // the maximize button.
+  const [railCollapsed, setRailCollapsed] = useState(false);
 
   const currentUserId = useMemo(() => localStorage.getItem("wrike_user_id") || null, []);
 
@@ -681,24 +689,33 @@ function NotesCanvasCard({ isOpen, onToggle, department, pinnedFolderIds = [], o
     setPageLastSavedAt(p?.updated_at || null);
   }, [selectedPageId]);
 
-  // Opening a sketch claims the full editing width automatically — a drawing
-  // canvas benefits from the room in a way a text note doesn't, so text notes
-  // are left at the user's own manual expand/collapse choice. Symmetric on
-  // the way out regardless of kind: switching boards or deleting the open
-  // page clears selectedPageId, and without that branch editorExpanded stayed
-  // stuck true — the rail (topics/pages) only renders when NOT expanded, so
-  // with nothing selected and no rail visible there was no way back to the
-  // list short of a page refresh. Keyed on selectedPageId itself (not
-  // editorExpanded) so manually collapsing back while the SAME page stays
-  // open isn't immediately re-expanded by this effect re-firing.
+  // Opening ANY note reclaims the campaigns column's width automatically —
+  // once you're reading/writing a specific note, that list isn't doing
+  // anything for you. This only touches the OUTER (parent-controlled)
+  // editorExpanded flag; it says nothing about this card's own rail, which
+  // railCollapsed governs separately below. Symmetric on the way out
+  // regardless of kind: switching boards or deleting the open page clears
+  // selectedPageId, and without that branch editorExpanded stayed stuck
+  // true with no way back short of a page refresh. Keyed on selectedPageId
+  // itself (not editorExpanded) so toggling the parent flag manually doesn't
+  // immediately get overridden by this effect re-firing.
   useEffect(() => {
-    const openedKind = pages.find((p) => p.id === selectedPageId)?.kind;
-    if (selectedPageId && openedKind === "sketch" && !editorExpanded) toggleEditorExpanded();
+    if (selectedPageId && !editorExpanded) toggleEditorExpanded();
     if (!selectedPageId && editorExpanded) toggleEditorExpanded();
+    // Rail stays visible for any newly-opened page, sketch or text — the
+    // user can still collapse it manually via the maximize button.
+    setRailCollapsed(false);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedPageId]);
 
   const selectedPage = pages.find((p) => p.id === selectedPageId);
+  // A text note's own editor column is already the wide 1fr side of the
+  // two-column grid regardless of whether the rail is collapsed — capping
+  // its prose at the same narrow 46rem either way just wastes the room a
+  // wide screen already has. So a normal (non-sketch) note gets the wider
+  // prose measure as soon as it's open; sketches don't use this at all
+  // (they skip the doc-head block entirely).
+  const proseWide = !!selectedPage && selectedPage.kind !== "sketch";
   const selectedPageFolder = selectedPage ? folders.find((f) => f.id === selectedPage.folder_id) : null;
   const selectedAccent = selectedPageFolder?.owner_wrike_id ? colorFor(selectedPageFolder.owner_wrike_id) : "#c2410d";
   // One accent for the whole active board: terracotta for the team board, the
@@ -848,10 +865,10 @@ function NotesCanvasCard({ isOpen, onToggle, department, pinnedFolderIds = [], o
         </div>
 
         {/* --- Main content: two-column layout --- */}
-        <div className={`grid gap-4 ${editorExpanded ? "grid-cols-1" : "grid-cols-[248px_1fr]"}`}>
+        <div className={`grid gap-4 ${railCollapsed ? "grid-cols-1" : "grid-cols-[248px_1fr]"}`}>
           {/* Notes rail — New note button, then topics as quiet section
               headers with their notes listed flat beneath (no expand gate). */}
-          {!editorExpanded && (
+          {!railCollapsed && (
           <div
             className="flex flex-col rounded-2xl border shadow-sm overflow-hidden max-h-[600px]"
             style={activeBoard === "mine" ? { borderColor: `${myColor}44`, backgroundColor: `${myColor}08` } : { borderColor: "#ece4d8", backgroundColor: "#ffffff" }}
@@ -1043,15 +1060,23 @@ function NotesCanvasCard({ isOpen, onToggle, department, pinnedFolderIds = [], o
                 <span className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: boardAccent }} />
                 {activeBoard === "mine" ? myName : activeBoard === "team" ? boardLabelFor(department) : nameFor(activeBoard)}
               </span>
+              {selectedPage?.kind === "sketch" && (
+                <input
+                  value={selectedPage.title}
+                  onChange={(e) => renamePage(selectedPage.id, e.target.value)}
+                  placeholder="Untitled sketch"
+                  className="ml-2 min-w-0 max-w-[260px] text-[13px] font-bold text-[#3a352e] bg-transparent outline-none border-b border-transparent focus:border-[#d5cdbf] px-1 truncate placeholder:text-[#cdc5b7] placeholder:font-medium"
+                />
+              )}
               <div className="flex-1" />
               {selectedPage && <SaveStatus state={pageSaveState} lastSavedAt={pageLastSavedAt} />}
               {selectedPage && (
                 <button
-                  onClick={toggleEditorExpanded}
-                  title={editorExpanded ? "Exit full width" : "Expand to full width"}
+                  onClick={() => setRailCollapsed((v) => !v)}
+                  title={railCollapsed ? "Show notes list" : "Hide notes list"}
                   className="p-1.5 rounded-lg hover:bg-black/5 text-[#8a8073] shrink-0 transition-colors"
                 >
-                  {editorExpanded ? <Minimize2 className="w-4 h-4" /> : <Maximize2 className="w-4 h-4" />}
+                  {railCollapsed ? <Minimize2 className="w-4 h-4" /> : <Maximize2 className="w-4 h-4" />}
                 </button>
               )}
             </div>
@@ -1062,7 +1087,7 @@ function NotesCanvasCard({ isOpen, onToggle, department, pinnedFolderIds = [], o
                     no title to read and no word count to show, so it skips
                     straight to the canvas instead of reserving this space. */}
                 {selectedPage.kind !== "sketch" && (
-                <div className={`w-full mx-auto px-6 sm:px-12 pt-7 shrink-0 transition-[max-width] duration-200 ${editorExpanded ? "max-w-[62rem]" : "max-w-[46rem]"}`}>
+                <div className={`w-full mx-auto px-6 sm:px-12 pt-7 shrink-0 transition-[max-width] duration-200 ${proseWide ? "max-w-[62rem]" : "max-w-[46rem]"}`}>
                   <div className="flex items-center gap-2 text-[11px] font-black uppercase tracking-[0.12em] mb-3" style={{ color: boardAccent }}>
                     <span>{activeBoard === "mine" ? myName : boardLabelFor(department)}</span>
                     {selectedPageFolder && <><span className="opacity-40">/</span><span className="text-[#a79f93] truncate">{selectedPageFolder.name}</span></>}
@@ -1101,9 +1126,9 @@ function NotesCanvasCard({ isOpen, onToggle, department, pinnedFolderIds = [], o
                     content={selectedPage.content}
                     onChange={(json) => savePageContent(selectedPage.id, json)}
                     accent={boardAccent}
-                    wide={editorExpanded}
+                    wide={proseWide}
                     className={
-                      editorExpanded
+                      railCollapsed
                         ? "min-h-[45vh] max-h-[60vh] overflow-y-auto pt-1 pb-8"
                         : "min-h-[320px] max-h-[600px] overflow-y-auto pt-1 pb-8"
                     }

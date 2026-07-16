@@ -1,14 +1,114 @@
 import React, { useEffect, useRef, useState, useCallback } from "react";
 import { createPortal } from "react-dom";
-import { useEditor, EditorContent } from "@tiptap/react";
+import { useEditor, EditorContent, NodeViewWrapper, ReactNodeViewRenderer } from "@tiptap/react";
 import StarterKit from "@tiptap/starter-kit";
 import Placeholder from "@tiptap/extension-placeholder";
 import TaskList from "@tiptap/extension-task-list";
 import TaskItem from "@tiptap/extension-task-item";
+import { TextStyle } from "@tiptap/extension-text-style";
+import Color from "@tiptap/extension-color";
+import { Image } from "@tiptap/extension-image";
+import { supabase } from "../../lib/supabaseClient";
 import {
   Bold as BoldIcon, Italic as ItalicIcon, Underline as UnderlineIcon, Strikethrough,
   Heading2, Heading3, List, ListOrdered, ListChecks, Quote, Code2, Link as LinkIcon, GripVertical,
+  Palette, Image as ImageIcon,
 } from "lucide-react";
+
+// Images live in the public "notes-images" Supabase Storage bucket rather
+// than inline (base64) in the note's JSON — the same pattern DOOH specs use
+// (Canvas.js's "dooh-specs" bucket) — so a page full of screenshots doesn't
+// balloon the jsonb column and every save doesn't have to round-trip the
+// image bytes.
+async function uploadNoteImage(file) {
+  const ext = (file.name.split(".").pop() || "png").toLowerCase();
+  const path = `${crypto.randomUUID()}.${ext}`;
+  const { error } = await supabase.storage.from("notes-images").upload(path, file, { cacheControl: "3600", upsert: false });
+  if (error) return null;
+  const { data } = supabase.storage.from("notes-images").getPublicUrl(path);
+  return data.publicUrl;
+}
+
+async function insertUploadedImage(view, file, atPos) {
+  const url = await uploadNoteImage(file);
+  if (!url) return;
+  const { state, dispatch } = view;
+  const pos = atPos ?? state.selection.from;
+  const node = state.schema.nodes.image.create({ src: url });
+  dispatch(state.tr.insert(pos, node));
+}
+
+// Drag-to-resize handle on the bottom-right corner, shown only while the
+// image node is the current ProseMirror selection. Width is stored as a
+// node attribute (part of the doc JSON, so it round-trips through
+// save/load like any other content) rather than as transient DOM state.
+function ImageResizeView({ node, updateAttributes, selected }) {
+  const { src, alt, width } = node.attrs;
+  const imgRef = useRef(null);
+
+  const onResizeStart = useCallback((e) => {
+    e.preventDefault();
+    const startX = e.clientX;
+    const startWidth = imgRef.current.getBoundingClientRect().width;
+    const zoom = parseFloat(getComputedStyle(document.documentElement).zoom) || 1;
+    const onMove = (ev) => {
+      const dx = (ev.clientX - startX) / zoom;
+      updateAttributes({ width: Math.max(80, Math.round(startWidth + dx)) });
+    };
+    const onUp = () => {
+      document.removeEventListener("pointermove", onMove);
+      document.removeEventListener("pointerup", onUp);
+    };
+    document.addEventListener("pointermove", onMove);
+    document.addEventListener("pointerup", onUp);
+  }, [updateAttributes]);
+
+  return (
+    <NodeViewWrapper
+      as="span"
+      style={{ display: "inline-block", position: "relative", maxWidth: "100%", lineHeight: 0 }}
+    >
+      <img
+        ref={imgRef}
+        src={src}
+        alt={alt || ""}
+        draggable={false}
+        className="rne-img"
+        style={{ width: width ? `${width}px` : undefined, outline: selected ? "2px solid var(--rne-accent)" : "none", outlineOffset: 2 }}
+      />
+      {selected && (
+        <span
+          onPointerDown={onResizeStart}
+          title="Drag to resize"
+          style={{
+            position: "absolute", right: -5, bottom: -5, width: 14, height: 14, borderRadius: 4,
+            background: "var(--rne-accent)", border: "2px solid #fff", boxShadow: "0 1px 3px rgba(0,0,0,0.3)",
+            cursor: "nwse-resize", touchAction: "none",
+          }}
+        />
+      )}
+    </NodeViewWrapper>
+  );
+}
+
+const ResizableImage = Image.extend({
+  addNodeView() {
+    return ReactNodeViewRenderer(ImageResizeView);
+  },
+});
+
+const TEXT_COLORS = [
+  { label: "Default", value: null },
+  { label: "Gray", value: "#78716c" },
+  { label: "Red", value: "#dc2626" },
+  { label: "Orange", value: "#ea580c" },
+  { label: "Amber", value: "#d97706" },
+  { label: "Green", value: "#16a34a" },
+  { label: "Teal", value: "#0d9488" },
+  { label: "Blue", value: "#2563eb" },
+  { label: "Purple", value: "#9333ea" },
+  { label: "Pink", value: "#db2777" },
+];
 
 // ---------------------------------------------------------------------------
 // RichNoteEditor — shared TipTap-based rich text editor for Notes Canvas and
@@ -34,6 +134,7 @@ const SLASH_COMMANDS = [
   { title: "Quote", kw: "quote blockquote", ic: "❝", run: (e) => e.chain().focus().toggleBlockquote().run() },
   { title: "Code block", kw: "code block", ic: "</>", run: (e) => e.chain().focus().toggleCodeBlock().run() },
   { title: "Divider", kw: "divider hr rule line", ic: "—", run: (e) => e.chain().focus().setHorizontalRule().run() },
+  { title: "Image", kw: "image picture photo upload embed", ic: "🖼", run: (_e, helpers) => helpers?.openImagePicker() },
 ];
 
 // depth 1 = the top-level block (paragraph/heading/list/etc.) directly under
@@ -62,10 +163,12 @@ export default function RichNoteEditor({
   const [slash, setSlash] = useState(null); // {top,left,query,index}
   const [dragHandle, setDragHandle] = useState(null); // {top,left,from,to}
   const [dropIndicator, setDropIndicator] = useState(null); // { top } in wrap coords
+  const [colorPicker, setColorPicker] = useState(false);
   const saveTimerRef = useRef(null);
   const slashRangeRef = useRef(null);
   const dragFromRef = useRef(null);
   const wrapRef = useRef(null);
+  const imageInputRef = useRef(null);
 
   // All floating UI (bubble menu, slash menu, drag handle, drop indicator) is
   // position:fixed and rendered through a portal to <body>. It has to be a
@@ -109,7 +212,7 @@ export default function RichNoteEditor({
 
   const updateBubble = useCallback((editor) => {
     const { from, to, empty } = editor.state.selection;
-    if (empty) { setBubble(null); return; }
+    if (empty) { setBubble(null); setColorPicker(false); return; }
     const start = editor.view.coordsAtPos(from);
     const end = editor.view.coordsAtPos(to);
     setBubble({ top: toFixed(Math.min(start.top, end.top)), left: toFixed((start.left + end.left) / 2) });
@@ -127,6 +230,9 @@ export default function RichNoteEditor({
       Placeholder.configure({ placeholder }),
       TaskList,
       TaskItem.configure({ nested: true }),
+      TextStyle,
+      Color,
+      ResizableImage.configure({ inline: false }),
     ],
     content: content && (Array.isArray(content) ? content.length : Object.keys(content).length) ? content : "",
     editorProps: {
@@ -137,6 +243,21 @@ export default function RichNoteEditor({
         if (event.key === "Enter" || event.key === "Escape") { event.preventDefault(); return true; }
         return false;
       },
+      handlePaste(view, event) {
+        const files = Array.from(event.clipboardData?.files || []).filter((f) => f.type.startsWith("image/"));
+        if (!files.length) return false;
+        event.preventDefault();
+        files.forEach((file) => insertUploadedImage(view, file));
+        return true;
+      },
+      handleDrop(view, event) {
+        const files = Array.from(event.dataTransfer?.files || []).filter((f) => f.type.startsWith("image/"));
+        if (!files.length) return false;
+        event.preventDefault();
+        const pos = view.posAtCoords({ left: event.clientX, top: event.clientY })?.pos ?? view.state.selection.from;
+        files.forEach((file) => insertUploadedImage(view, file, pos));
+        return true;
+      },
     },
     onUpdate: ({ editor }) => {
       checkSlash(editor);
@@ -144,7 +265,7 @@ export default function RichNoteEditor({
       saveTimerRef.current = setTimeout(() => onChange(editor.getJSON()), 800);
     },
     onSelectionUpdate: ({ editor }) => { checkSlash(editor); updateBubble(editor); },
-    onBlur: () => { setTimeout(() => { setBubble(null); setSlash(null); slashRangeRef.current = null; }, 150); },
+    onBlur: () => { setTimeout(() => { setBubble(null); setSlash(null); slashRangeRef.current = null; setColorPicker(false); }, 150); },
   }, []);
 
   useEffect(() => () => clearTimeout(saveTimerRef.current), []);
@@ -327,10 +448,42 @@ export default function RichNoteEditor({
     if (!slashRangeRef.current) return;
     const { from, to } = slashRangeRef.current;
     editor.chain().focus().deleteRange({ from, to }).run();
-    cmd.run(editor);
+    cmd.run(editor, { openImagePicker: () => imageInputRef.current?.click() });
     slashRangeRef.current = null;
     setSlash(null);
   };
+
+  const onImageFileChosen = async (e) => {
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    if (!file) return;
+    const url = await uploadNoteImage(file);
+    if (url) editor.chain().focus().setImage({ src: url }).run();
+  };
+
+  // Right-click anywhere on a block's row opens the slash menu for that
+  // block, without requiring the user to type "/". This reuses
+  // blockUnderPointer's row-matched (Y-only, full wrapper width) hit test
+  // rather than requiring the right-click to land on the 34px drag-handle
+  // button itself — an earlier version tied this to the handle directly,
+  // which only actually has a rendered hitbox exactly where the hover state
+  // last put it, making right-clicks a couple pixels off (or with no
+  // recent hover) fall through to the browser's native context menu
+  // instead. Matching on the whole row removes that precision requirement.
+  // A zero-length slashRangeRef makes runSlash's deleteRange({from, to}) a
+  // no-op, so it behaves exactly like invoking the menu by typing, just
+  // without anything to delete.
+  const onEditorContextMenu = useCallback((e) => {
+    if (!editor) return;
+    const t = blockUnderPointer(e.clientX, e.clientY);
+    if (!t) return; // outside any block — let the native menu show
+    e.preventDefault();
+    const pos = Math.min(t.info.from + 1, t.info.to);
+    editor.chain().focus().setTextSelection(pos).run();
+    const coords = editor.view.coordsAtPos(pos);
+    slashRangeRef.current = { from: pos, to: pos };
+    setSlash({ top: toFixed(coords.bottom), left: toFixed(coords.left), query: "", index: 0 });
+  }, [editor, blockUnderPointer]);
 
   return (
     <div
@@ -339,6 +492,7 @@ export default function RichNoteEditor({
       style={{ "--rne-accent": accent, "--rne-measure": wide ? "62rem" : "46rem", position: "relative" }}
       onMouseMove={handleMouseMove}
       onMouseLeave={() => { if (!dragFromRef.current) setDragHandle(null); }}
+      onContextMenu={onEditorContextMenu}
     >
       <style>{`
         .rne-root .ProseMirror { outline: none; font-size: 16px; line-height: 1.7; color: #2a2620; max-width: var(--rne-measure, 46rem); margin-inline: auto; padding: 4px 24px 48px; transition: max-width 0.2s ease; }
@@ -348,7 +502,10 @@ export default function RichNoteEditor({
         .rne-root p { margin: 0 0 12px; }
         .rne-root .ProseMirror p.is-editor-empty:first-child::before { content: attr(data-placeholder); float: left; color: #cdc5b7; pointer-events: none; height: 0; }
         .rne-root ul, .rne-root ol { padding-left: 22px; margin: 0 0 12px; }
+        .rne-root ul { list-style: disc outside; }
+        .rne-root ol { list-style: decimal outside; }
         .rne-root li { margin-bottom: 5px; }
+        .rne-root li::marker { color: #8a8073; }
         .rne-root blockquote { border-left: 3px solid var(--rne-accent); margin: 0 0 12px; padding: 2px 0 2px 14px; color: #8a8073; font-style: italic; }
         .rne-root pre { background: #22201c; color: #f2ece2; border-radius: 10px; padding: 12px 14px; overflow-x: auto; margin: 0 0 12px; font-size: 13px; }
         .rne-root code { background: color-mix(in srgb, var(--rne-accent) 10%, transparent); color: var(--rne-accent); border-radius: 4px; padding: 1px 5px; font-size: 13px; font-family: ui-monospace, monospace; }
@@ -358,6 +515,7 @@ export default function RichNoteEditor({
         .rne-root ul[data-type="taskList"] li > label { margin-top: 3px; }
         .rne-root ul[data-type="taskList"] input[type="checkbox"] { width: 15px; height: 15px; accent-color: var(--rne-accent); cursor: pointer; }
         .rne-root hr { border: none; border-top: 1px solid #ece4d8; margin: 18px 0; }
+        .rne-root img.rne-img { max-width: 100%; height: auto; border-radius: 10px; margin: 4px 0 14px; display: block; cursor: pointer; }
         .rne-root a { color: var(--rne-accent); text-decoration: underline; text-underline-offset: 2px; cursor: pointer; }
         .rne-root .ProseMirror { caret-color: var(--rne-accent); }
         .rne-root .rne-drag-handle-icon {
@@ -371,6 +529,8 @@ export default function RichNoteEditor({
         }
       `}</style>
       <EditorContent editor={editor} />
+
+      <input ref={imageInputRef} type="file" accept="image/*" onChange={onImageFileChosen} style={{ display: "none" }} />
 
       {dropIndicator && createPortal(
         <div
@@ -392,7 +552,7 @@ export default function RichNoteEditor({
         <button
           className="rne-drag-handle"
           onPointerDown={startDrag}
-          title="Drag to move this block"
+          title="Drag to move · Right-click for the block menu"
           style={{
             position: "fixed", top: dragHandle.top, left: dragHandle.left, width: 34, height: dragHandle.height,
             display: "flex", alignItems: "center", justifyContent: "center", cursor: "grab", touchAction: "none",
@@ -428,6 +588,7 @@ export default function RichNoteEditor({
                 editor.chain().focus().extendMarkRange("link").setLink({ href: url }).run();
               }, title: "Link" },
             { Icon: Code2, active: () => editor.isActive("code"), run: () => editor.chain().focus().toggleCode().run(), title: "Inline code" },
+            { Icon: Palette, active: () => colorPicker || !!editor.getAttributes("textStyle").color, run: () => setColorPicker((v) => !v), title: "Text color" },
             null, // separator
             { Icon: Heading2, active: () => editor.isActive("heading", { level: 2 }), run: () => editor.chain().focus().toggleHeading({ level: 2 }).run(), title: "Heading" },
             { Icon: Heading3, active: () => editor.isActive("heading", { level: 3 }), run: () => editor.chain().focus().toggleHeading({ level: 3 }).run(), title: "Subheading" },
@@ -454,6 +615,37 @@ export default function RichNoteEditor({
                 <item.Icon size={15} />
               </button>
             )
+          )}
+
+          {colorPicker && (
+            <div
+              onMouseDown={(e) => e.preventDefault()}
+              style={{
+                position: "absolute", top: "calc(100% + 6px)", left: 0, display: "flex", flexWrap: "wrap", gap: 6,
+                background: "#fff", border: "1px solid #ece4d8", borderRadius: 10,
+                boxShadow: "0 10px 28px -12px rgba(0,0,0,0.25)", padding: 8, width: 172,
+              }}
+            >
+              {TEXT_COLORS.map((c) => (
+                <button
+                  key={c.label}
+                  title={c.label}
+                  onClick={() => {
+                    if (c.value) editor.chain().focus().setColor(c.value).run();
+                    else editor.chain().focus().unsetColor().run();
+                    setColorPicker(false);
+                  }}
+                  style={{
+                    width: 22, height: 22, borderRadius: "50%", cursor: "pointer",
+                    background: c.value || "#fff",
+                    border: c.value ? "1px solid rgba(0,0,0,0.08)" : "1px dashed #cdc5b7",
+                    display: "flex", alignItems: "center", justifyContent: "center",
+                  }}
+                >
+                  {!c.value && <span style={{ fontSize: 9, color: "#8a8073" }}>×</span>}
+                </button>
+              ))}
+            </div>
           )}
         </div>,
         document.body

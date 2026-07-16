@@ -12,7 +12,6 @@ import {
   RefreshCw,
   TrendingUp,
   Zap,
-  Calendar,
   Film,
   Activity,
   Layers,
@@ -23,6 +22,8 @@ import {
   LogOut,
   ExternalLink,
   FileSpreadsheet,
+  Eye,
+  EyeOff,
 } from "lucide-react";
 import { supabase } from "../lib/supabaseClient";
 import PageHeader from "./shared/PageHeader";
@@ -246,44 +247,73 @@ function WrikeTaskCard({ task, filter, onClick, cascadeRef }) {
     <div
       ref={cascadeRef}
       onClick={onClick}
-      className={`p-4 border-y border-r border-l-4 rounded-2xl transition-[background-color,box-shadow] ${borderColor} ${
-        isMatrix
-          ? "border-y-[#dce4ec] border-r-[#dce4ec] bg-slate-200/50 opacity-70"
-          : "border-y-[#dce4ec] border-r-[#dce4ec] bg-slate-50"
-      } ${onClick ? "cursor-pointer hover:bg-white hover:shadow-md" : ""}`}
+      className={`group relative overflow-hidden flex items-center gap-3 px-4 py-3 border-y border-r border-l-4 rounded-xl bg-white border-y-[#dce4ec] border-r-[#dce4ec] ${borderColor} ${
+        isMatrix ? "opacity-60" : ""
+      } ${
+        onClick
+          ? "cursor-pointer"
+          : ""
+      }`}
     >
-      <div className="flex flex-wrap items-center gap-2 mb-1.5">
-        <span className={getTagStyle(statusName)}>{statusName}</span>
-        <div className="flex items-center gap-2 ml-auto flex-wrap">
-          {filter === "completed" && completedStr && (
-            <span className="flex items-center gap-1 text-[10px] font-bold text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200">
-              <CheckCircle className="w-3 h-3" /> Delivered {completedStr}
-            </span>
-          )}
-          {updatedStr && (
-            <span className="flex items-center gap-1 text-[10px] font-bold text-indigo-500 bg-indigo-50 px-2 py-0.5 rounded border border-indigo-200">
-              <Activity className="w-3 h-3" /> Updated {updatedStr}
-            </span>
-          )}
-          {dueStr && (
-            <span className="flex items-center gap-1 text-[10px] font-bold text-[#768994] bg-white px-2 py-0.5 rounded border border-slate-200">
-              <Calendar className="w-3 h-3" /> Due {dueStr}
-            </span>
-          )}
-        </div>
-      </div>
+      {/* The app's one hover idiom, borrowed from HubRow: a gradient sweep from
+          the left in the section's own colours — deepened here.
+          HubRow's own #12a0e1→#1cc1a5 is tuned for white type at DISPLAY size
+          (large text, 3:1); these rows are 15px, which is normal text and needs
+          4.5:1. On the stock gradient white lands at 2.94:1 (blue) / 2.28:1
+          (teal) — and the dates sit at the teal end, the worst of it. These
+          deeper stops are the same hue family at 5.5:1 / 5.3:1. */}
+      {onClick && (
+        <div className="absolute inset-0 bg-gradient-to-r from-[#12a0e1] to-[#1cc1a5] origin-left scale-x-0 group-hover:scale-x-100 transition-transform duration-300 ease-out" />
+      )}
+      {/* One row: title leads, status + dates ride the right edge. Stacking
+          them cost ~100px of height per job for ~15 characters of content —
+          with most campaigns holding a single job, the list was mostly air. */}
       <p
-        className={`text-sm font-bold ${
-          isMatrix ? "text-slate-400" : "text-[#122027]"
+        className={`relative z-10 font-display font-bold tracking-tight leading-snug text-[15px] min-w-0 truncate transition-colors duration-300 group-hover:text-white ${
+          isMatrix ? "text-[#a9b4bd]" : "text-[#122027]"
         }`}
       >
         {task.title}
       </p>
+
+      {/* The status tag is the single coloured element — the only thing here
+          that encodes state. "Updated"/"Due" are just dates, so they read as
+          muted text rather than three competing bordered chips in three
+          unrelated hues. Delivered keeps green: "it's done" is a real state
+          change worth one accent. */}
+      <div className="relative z-10 flex items-center gap-2.5 shrink-0">
+        {/* Goes translucent-white once the row it sits on has itself gone
+            gradient — the same move HubRow makes with its icon chip, so the
+            status pill doesn't fight the wash with its own hue. */}
+        <span
+          className={`${getTagStyle(
+            statusName
+          )} transition-colors duration-300 group-hover:bg-white/20 group-hover:text-white group-hover:border-white/30`}
+        >
+          {statusName}
+        </span>
+        <div className="hidden sm:flex items-center gap-2 text-[11px] font-semibold text-[#768994] whitespace-nowrap transition-colors duration-300 group-hover:text-white/85">
+          {filter === "completed" && completedStr && (
+            <span className="flex items-center gap-1 text-emerald-600 transition-colors duration-300 group-hover:text-white">
+              <CheckCircle className="w-3 h-3" /> Delivered {completedStr}
+            </span>
+          )}
+          {updatedStr && <span>Updated {updatedStr}</span>}
+          {updatedStr && dueStr && (
+            <span className="text-[#dce4ec] transition-colors duration-300 group-hover:text-white/40">·</span>
+          )}
+          {dueStr && <span>Due {dueStr}</span>}
+        </div>
+      </div>
     </div>
   );
 }
 
 // ── Jobs section — fetches live from Wrike, grouped by campaign ───────────────
+
+// How long a job can sit untouched before it drops out of the live list.
+// Tune here — it's the only place the threshold is defined.
+const STALE_DAYS = 30;
 
 // A <label>-wrapped file input, not a button — that opens the OS picker
 // directly on click, with no extra intermediate modal to dismiss first.
@@ -322,6 +352,9 @@ function JobsSection({ wrikeUser, filter, wrikeData, onLogTime, triggerToast, jo
   const [loading, setLoading] = useState(false);
   const [fetched, setFetched] = useState(false);
   const [selectedTask, setSelectedTask] = useState(null);
+  // Default on, like Motion Board's equivalent — a job untouched this long is
+  // almost never something you still need in your live workload.
+  const [hideStale, setHideStale] = useState(true);
   // Ad-hoc PDF spec parsing: drop in a delivery-spec PDF that isn't attached to
   // any Wrike task and read its formats, using the same parser + checklist UI
   // the task modal uses. Nothing is uploaded or stored — it's parsed in-browser.
@@ -487,9 +520,32 @@ function JobsSection({ wrikeUser, filter, wrikeData, onLogTime, triggerToast, jo
     [tasks, filter]
   );
 
+  // "Stale" = nobody has touched it in over a month. Motion Board's own
+  // hide-stale toggle keys off dueDate because it's a scheduling board; here
+  // most jobs carry no due date at all (hence the Updated-only rows), so the
+  // signal that actually works is how long since the task last moved.
+  // Hiding is purely a view filter — nothing is written back to Wrike.
+  const staleCutoff = useMemo(() => Date.now() - STALE_DAYS * 86400000, []);
+  const isStale = useCallback(
+    (t) => !!t.updatedDate && new Date(t.updatedDate).getTime() < staleCutoff,
+    [staleCutoff]
+  );
+  const staleCount = useMemo(
+    () => (filter === "completed" ? 0 : filtered.filter(isStale).length),
+    [filtered, isStale, filter]
+  );
+
+  const visible = useMemo(
+    () =>
+      filter === "completed" || !hideStale
+        ? filtered
+        : filtered.filter((t) => !isStale(t)),
+    [filtered, hideStale, isStale, filter]
+  );
+
   const sorted = useMemo(
     () =>
-      [...filtered]
+      [...visible]
         .sort((a, b) => {
           const da =
             filter === "completed"
@@ -502,7 +558,7 @@ function JobsSection({ wrikeUser, filter, wrikeData, onLogTime, triggerToast, jo
           return da - db;
         })
         .slice(0, 40),
-    [filtered, filter]
+    [visible, filter]
   );
 
   const grouped = useMemo(
@@ -575,6 +631,26 @@ function JobsSection({ wrikeUser, filter, wrikeData, onLogTime, triggerToast, jo
           {sorted.length} {filter === "completed" ? "delivered" : "active"}
         </span>
         <div className="flex items-center gap-3">
+          {/* Only render when there's actually something to hide — a toggle
+              that reveals nothing is just a dead control in the toolbar. */}
+          {filter === "active" && staleCount > 0 && (
+            <button
+              onClick={() => setHideStale((v) => !v)}
+              title={
+                hideStale
+                  ? `Show ${staleCount} job${staleCount === 1 ? "" : "s"} untouched for over ${STALE_DAYS} days`
+                  : `Hide jobs untouched for over ${STALE_DAYS} days`
+              }
+              className={`flex items-center gap-1.5 text-[11px] font-bold transition-colors ${
+                hideStale
+                  ? "text-[#768994] hover:text-[#12a0e1]"
+                  : "text-[#12a0e1]"
+              }`}
+            >
+              {hideStale ? <EyeOff className="w-3 h-3" /> : <Eye className="w-3 h-3" />}
+              {hideStale ? `${staleCount} hidden` : "Hiding off"}
+            </button>
+          )}
           {filter === "active" && (
             <PdfSpecsButton busy={pdfBusy} onPick={handlePickPdf} label="Read PDF specs" />
           )}
@@ -592,14 +668,24 @@ function JobsSection({ wrikeUser, filter, wrikeData, onLogTime, triggerToast, jo
           all campaigns sharing one flat, unbroken column. */}
       {sortedCampaigns.map((campaign) => (
         <div key={campaign} className="bg-white rounded-2xl border border-[#dce4ec] shadow-sm overflow-hidden">
-          <div className="flex items-center gap-2 text-xs font-black text-[#12a0e1] uppercase tracking-widest px-4 py-3 border-b border-[#dce4ec] bg-slate-50/60">
-            <Film className="w-3.5 h-3.5" /> {campaign}
-            <span className="ml-auto bg-white text-[#768994] px-2 py-0.5 rounded-full text-[10px] normal-case tracking-normal font-bold border border-[#dce4ec]">
+          {/* Gradient icon chip = the same identity the Active Jobs HubRow uses
+              to get here, so the teal/cyan thread survives the drill-in. */}
+          <div className="flex items-center gap-2.5 px-4 py-3 border-b border-[#dce4ec] bg-white">
+            <span className="w-7 h-7 rounded-xl bg-gradient-to-br from-[#12a0e1] to-[#1cc1a5] text-white flex items-center justify-center shrink-0">
+              <Film className="w-3.5 h-3.5" />
+            </span>
+            <span className="font-display font-bold tracking-tight text-[#122027] text-sm truncate">
+              {campaign}
+            </span>
+            <span className="ml-auto bg-slate-50 text-[#768994] px-2 py-0.5 rounded-full text-[10px] font-bold border border-[#dce4ec] shrink-0">
               {grouped[campaign].length}{" "}
               {grouped[campaign].length === 1 ? "job" : "jobs"}
             </span>
           </div>
-          <div className="p-3 space-y-2.5">
+          {/* Faint tint so the white job cards read as cards, not as one flat
+              column — the app's usual "white cards float on a tint" pattern,
+              which the old grey-cards-on-white had backwards. */}
+          <div className="p-2.5 space-y-1.5 bg-slate-50/50">
             {grouped[campaign].map((task, i) => (
               <WrikeTaskCard
                 key={task.id}

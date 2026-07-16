@@ -547,6 +547,17 @@ function PageList({ folder, pages, selectedPageId, onSelectPage, onDeletePage, o
   );
 }
 
+// Kill switch for live collaborative editing on text notes. Collaboration
+// rides Supabase Realtime, and this account has no egress headroom to spare —
+// if it ever starts costing more than it's worth, flip this off and notes fall
+// straight back to the previous single-editor save path with no deploy needed
+// beyond this constant. localStorage lets it be disabled per-browser while
+// testing without touching everyone.
+const NOTES_COLLAB =
+  typeof localStorage !== "undefined" && localStorage.getItem("xyi_notes_collab") === "off"
+    ? false
+    : true;
+
 function NotesCanvasCard({ isOpen, onToggle, department, pinnedFolderIds = [], onTogglePin, focusFolder, editorExpanded = false, onToggleEditorExpanded }) {
   const [folders, setFolders] = useState([]);
   const [pages, setPages] = useState([]);
@@ -674,10 +685,15 @@ function NotesCanvasCard({ isOpen, onToggle, department, pinnedFolderIds = [], o
     await supabase.from("canvas_notes_pages").update({ title }).eq("id", pageId);
   };
 
-  const savePageContent = async (pageId, blocks) => {
+  const savePageContent = async (pageId, blocks, ydoc) => {
+    // Note the local copy deliberately keeps its original `ydoc`: the editor
+    // takes that as its mount-time seed, and rewriting it here would hand a
+    // changed prop back to a live collaborative session.
     setPages((prev) => prev.map((p) => (p.id === pageId ? { ...p, content: blocks } : p)));
     setPageSaveState("saving");
-    await supabase.from("canvas_notes_pages").update({ content: blocks, updated_at: new Date().toISOString() }).eq("id", pageId);
+    const patch = { content: blocks, updated_at: new Date().toISOString() };
+    if (ydoc !== undefined) patch.ydoc = ydoc;
+    await supabase.from("canvas_notes_pages").update(patch).eq("id", pageId);
     setPageSaveState("saved");
     setPageLastSavedAt(new Date().toISOString());
     clearTimeout(savedTimerRef.current);
@@ -708,6 +724,14 @@ function NotesCanvasCard({ isOpen, onToggle, department, pinnedFolderIds = [], o
     setRailCollapsed(false);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedPageId]);
+
+  // Memoised: this is handed to the editor, which uses it to build the Yjs
+  // awareness state at mount. A fresh object literal each render would look
+  // like a changed identity to anything downstream keyed on it.
+  const collabUser = useMemo(
+    () => ({ name: myName || "Someone", color: myColor }),
+    [myName, myColor]
+  );
 
   const selectedPage = pages.find((p) => p.id === selectedPageId);
   // A text note's own editor column is already the wide 1fr side of the
@@ -1126,7 +1150,10 @@ function NotesCanvasCard({ isOpen, onToggle, department, pinnedFolderIds = [], o
                   <RichNoteEditor
                     key={selectedPage.id}
                     content={selectedPage.content}
-                    onChange={(json) => savePageContent(selectedPage.id, json)}
+                    ydoc={selectedPage.ydoc}
+                    collabRoom={NOTES_COLLAB ? selectedPage.id : null}
+                    collabUser={collabUser}
+                    onChange={(json, ydoc) => savePageContent(selectedPage.id, json, ydoc)}
                     accent={boardAccent}
                     wide={proseWide}
                     className={

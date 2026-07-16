@@ -8,7 +8,11 @@ import TaskItem from "@tiptap/extension-task-item";
 import { TextStyle } from "@tiptap/extension-text-style";
 import Color from "@tiptap/extension-color";
 import { Image } from "@tiptap/extension-image";
+import Collaboration from "@tiptap/extension-collaboration";
+import CollaborationCaret from "@tiptap/extension-collaboration-caret";
+import * as Y from "yjs";
 import { supabase } from "../../lib/supabaseClient";
+import { createSupabaseYProvider } from "../../lib/yjsSupabaseProvider";
 import {
   Bold as BoldIcon, Italic as ItalicIcon, Underline as UnderlineIcon, Strikethrough,
   Heading2, Heading3, List, ListOrdered, ListChecks, Quote, Code2, Link as LinkIcon, GripVertical,
@@ -97,6 +101,20 @@ const ResizableImage = Image.extend({
   },
 });
 
+const encodeYState = (doc) => {
+  const bytes = Y.encodeStateAsUpdate(doc);
+  let s = "";
+  for (let i = 0; i < bytes.length; i++) s += String.fromCharCode(bytes[i]);
+  return btoa(s);
+};
+
+const decodeYState = (str) => {
+  const bin = atob(str);
+  const out = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+  return out;
+};
+
 const TEXT_COLORS = [
   { label: "Default", value: null },
   { label: "Gray", value: "#78716c" },
@@ -151,13 +169,14 @@ function blockInfoAt(doc, pos) {
   return node ? { node, from, to: from + node.nodeSize } : null;
 }
 
-export default function RichNoteEditor({
+function NoteEditor({
   content,
   onChange,
   accent = "#c2410d",
   placeholder = "Type “/” for commands, or just start writing…",
   className = "",
   wide = false,
+  collab = null, // { doc, provider, seed } — see RichNoteEditor below
 }) {
   const [bubble, setBubble] = useState(null); // {top,left}
   const [slash, setSlash] = useState(null); // {top,left,query,index}
@@ -226,6 +245,11 @@ export default function RichNoteEditor({
       StarterKit.configure({
         heading: { levels: [2, 3] },
         link: { openOnClick: false, autolink: true, HTMLAttributes: { rel: "noopener noreferrer", target: "_blank" } },
+        // Yjs owns undo/redo when collaborating: StarterKit's history is
+        // per-editor, so leaving it on would let one person's ctrl-Z revert a
+        // colleague's edit. Collaboration ships a history that only undoes
+        // your own changes.
+        ...(collab ? { undoRedo: false } : {}),
       }),
       Placeholder.configure({ placeholder }),
       TaskList,
@@ -233,8 +257,20 @@ export default function RichNoteEditor({
       TextStyle,
       Color,
       ResizableImage.configure({ inline: false }),
+      ...(collab
+        ? [
+            Collaboration.configure({ document: collab.doc }),
+            CollaborationCaret.configure({ provider: collab.provider }),
+          ]
+        : []),
     ],
-    content: content && (Array.isArray(content) ? content.length : Object.keys(content).length) ? content : "",
+    // With Collaboration on, the Y.Doc is the document — handing TipTap
+    // `content` as well would append it on top of what Yjs already holds and
+    // duplicate the note. Only seed when this doc has never been collaborated
+    // on (no persisted Yjs state), which is what collab.seed reports.
+    content: collab
+      ? (collab.seed ? content : undefined)
+      : (content && (Array.isArray(content) ? content.length : Object.keys(content).length) ? content : ""),
     editorProps: {
       handleKeyDown(view, event) {
         if (!slashRangeRef.current) return false;
@@ -262,7 +298,16 @@ export default function RichNoteEditor({
     onUpdate: ({ editor }) => {
       checkSlash(editor);
       clearTimeout(saveTimerRef.current);
-      saveTimerRef.current = setTimeout(() => onChange(editor.getJSON()), 800);
+      // Collaborating peers all hold the same converged document, so whoever
+      // stops typing first writes it — last-write-wins is safe here precisely
+      // because a CRDT can't diverge. A slightly longer debounce keeps the
+      // duplicate writes down without risking data (peers still have it).
+      saveTimerRef.current = setTimeout(() => {
+        onChange(
+          editor.getJSON(),
+          collab ? encodeYState(collab.doc) : undefined
+        );
+      }, collab ? 1500 : 800);
     },
     onSelectionUpdate: ({ editor }) => { checkSlash(editor); updateBubble(editor); },
     onBlur: () => { setTimeout(() => { setBubble(null); setSlash(null); slashRangeRef.current = null; setColorPicker(false); }, 150); },
@@ -516,6 +561,12 @@ export default function RichNoteEditor({
         .rne-root ul[data-type="taskList"] input[type="checkbox"] { width: 15px; height: 15px; accent-color: var(--rne-accent); cursor: pointer; }
         .rne-root hr { border: none; border-top: 1px solid #ece4d8; margin: 18px 0; }
         .rne-root img.rne-img { max-width: 100%; height: auto; border-radius: 10px; margin: 4px 0 14px; display: block; cursor: pointer; }
+        /* Collaborator carets. The name tag only shows on hover — a label
+           parked permanently next to someone's cursor is a lot of visual noise
+           for a two-person note. */
+        .rne-root .collaboration-carets__caret { position: relative; border-left: 1px solid; border-right: 1px solid; margin-left: -1px; margin-right: -1px; pointer-events: none; word-break: normal; }
+        .rne-root .collaboration-carets__label { position: absolute; top: -1.4em; left: -1px; font-size: 11px; font-weight: 700; line-height: 1; white-space: nowrap; border-radius: 4px 4px 4px 0; padding: 2px 5px; color: #fff; opacity: 0; transition: opacity 0.12s; pointer-events: none; user-select: none; }
+        .rne-root .collaboration-carets__caret:hover .collaboration-carets__label { opacity: 1; }
         .rne-root a { color: var(--rne-accent); text-decoration: underline; text-underline-offset: 2px; cursor: pointer; }
         .rne-root .ProseMirror { caret-color: var(--rne-accent); }
         .rne-root .rne-drag-handle-icon {
@@ -684,4 +735,59 @@ export default function RichNoteEditor({
       )}
     </div>
   );
+}
+
+// ---------------------------------------------------------------------------
+// RichNoteEditor — the exported entry point.
+//
+// Without collabRoom this is just NoteEditor, unchanged. With it, the Y.Doc
+// and its provider have to exist *before* the editor is constructed, since
+// TipTap takes the document when it builds the Collaboration extension and
+// can't be handed one later. So this gates rendering until both are ready
+// rather than trying to attach them after mount.
+// ---------------------------------------------------------------------------
+export default function RichNoteEditor(props) {
+  const { collabRoom } = props;
+  if (!collabRoom) return <NoteEditor {...props} />;
+  return <CollaborativeNoteEditor {...props} />;
+}
+
+function CollaborativeNoteEditor(props) {
+  const { collabRoom, ydoc, collabUser } = props;
+  const [collab, setCollab] = useState(null);
+
+  useEffect(() => {
+    const doc = new Y.Doc();
+    // `seed` decides whether NoteEditor is allowed to hand TipTap the JSON:
+    // only a note with no persisted CRDT state needs converting from its old
+    // plain-JSON form. Once state exists, the JSON is a stale projection and
+    // applying it would duplicate the note's contents.
+    let seed = true;
+    if (ydoc) {
+      try {
+        Y.applyUpdate(doc, decodeYState(ydoc));
+        seed = false;
+      } catch {
+        seed = true; // unreadable state — fall back to the JSON projection
+      }
+    }
+    const provider = createSupabaseYProvider({ doc, room: collabRoom, user: collabUser });
+    setCollab({ doc, provider, seed });
+    return () => {
+      provider.destroy();
+      doc.destroy();
+      setCollab(null);
+    };
+    // Deliberately keyed on the room alone. `ydoc` is the state we loaded
+    // from the database and is rewritten by our own saves, and `collabUser` is
+    // an object literal from the caller — including either would tear down the
+    // document and its channel on every save or re-render, dropping the live
+    // session repeatedly. Both are only ever needed at mount, and the caller
+    // remounts this component per page (key={page.id}), so the room changing
+    // and this component remounting are the same event.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [collabRoom]);
+
+  if (!collab) return <div className={props.className} />;
+  return <NoteEditor {...props} collab={collab} />;
 }

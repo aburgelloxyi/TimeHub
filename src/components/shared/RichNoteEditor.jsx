@@ -177,6 +177,7 @@ function NoteEditor({
   className = "",
   wide = false,
   collab = null, // { doc, provider, seed } — see RichNoteEditor below
+  collabUser = null, // { name, color } — identifies this editor to peers
 }) {
   const [bubble, setBubble] = useState(null); // {top,left}
   const [slash, setSlash] = useState(null); // {top,left,query,index}
@@ -260,7 +261,16 @@ function NoteEditor({
       ...(collab
         ? [
             Collaboration.configure({ document: collab.doc }),
-            CollaborationCaret.configure({ provider: collab.provider }),
+            // `user` is not optional in practice: the extension unconditionally
+            // does setLocalStateField("user", options.user) when its plugin
+            // mounts, so omitting it overwrites the identity the provider set
+            // with {name: null, color: null}. y-prosemirror then invents a
+            // fallback — an orange caret labelled "User: <clientId>" — which is
+            // what shipped instead of anyone's actual name.
+            CollaborationCaret.configure({
+              provider: collab.provider,
+              user: collabUser,
+            }),
           ]
         : []),
     ],

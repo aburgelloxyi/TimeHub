@@ -16,7 +16,55 @@ import { AlertTriangle, RefreshCw, Home } from "lucide-react";
 // configured (see lib/monitoring.js), so this is safe either way.
 // ---------------------------------------------------------------------------
 
+// A deploy replaces every hashed chunk, and Cloudflare drops the old ones. A
+// tab opened beforehand still holds the previous build's JS, so the next lazy
+// import asks for a filename that no longer exists — and because assets fall
+// back to index.html for unknown paths, the browser gets HTML where it wanted
+// a module and reports a MIME type error. Nothing is broken; the tab is just
+// out of date, and only a reload can fix it: retrying re-requests the same
+// dead URL.
+const isStaleChunkError = (error) => {
+  const msg = String(error?.message || "");
+  return (
+    /Failed to fetch dynamically imported module/i.test(msg) ||
+    /Importing a module script failed/i.test(msg) ||
+    /error loading dynamically imported module/i.test(msg) ||
+    (/expected a javascript.*module script/i.test(msg) && /mime type/i.test(msg))
+  );
+};
+
+// Timestamped rather than a plain flag: landing here again seconds after a
+// reload means the chunk is genuinely gone, not merely stale, and reloading
+// would spin forever — but a deploy an hour later deserves a fresh attempt,
+// which a once-per-session flag would refuse.
+const RELOAD_AT = "xyi_chunk_reload_at";
+const RELOAD_COOLDOWN_MS = 15_000;
+
+function StaleBuildFallback() {
+  const [failed, setFailed] = React.useState(false);
+
+  React.useEffect(() => {
+    const last = Number(sessionStorage.getItem(RELOAD_AT) || 0);
+    if (Date.now() - last < RELOAD_COOLDOWN_MS) {
+      setFailed(true);
+      return;
+    }
+    sessionStorage.setItem(RELOAD_AT, String(Date.now()));
+    window.location.reload();
+  }, []);
+
+  return (
+    <div className="min-h-[60vh] flex flex-col items-center justify-center gap-3 p-6 text-center">
+      <RefreshCw className={`w-6 h-6 text-[#12a0e1] ${failed ? "" : "animate-spin"}`} />
+      <p className="text-sm font-bold text-[#768994]">
+        {failed ? "Reload didn't help — please hard-refresh (Ctrl+Shift+R)." : "A new version shipped — reloading…"}
+      </p>
+    </div>
+  );
+}
+
 function Fallback({ error, resetError, onGoHome }) {
+  if (isStaleChunkError(error)) return <StaleBuildFallback />;
   return (
     <div className="min-h-[60vh] flex items-center justify-center p-6">
       <div className="bg-white rounded-3xl border border-[#dce4ec] shadow-sm max-w-md w-full overflow-hidden">

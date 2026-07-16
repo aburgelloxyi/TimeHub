@@ -57,7 +57,19 @@ const ACTIONS = [
 ];
 
 export default function QuickActions({ activePage, department, onNavigate }) {
-  const [open, setOpen] = useState(false);
+  // Two independent reasons to be open, OR'd together, rather than one flag
+  // both handlers write to: with a single flag, mouseenter opens the stack
+  // and the bubble's own click then toggles it straight back shut, so a
+  // mouse click closes what the hover just opened. Hover is transient,
+  // pinning is deliberate — kept apart, they can't clobber each other.
+  const [hovered, setHovered] = useState(false);
+  const [pinned, setPinned] = useState(false);
+  const open = hovered || pinned;
+
+  const close = () => {
+    setHovered(false);
+    setPinned(false);
+  };
 
   if (activePage === "home") return null;
 
@@ -68,21 +80,21 @@ export default function QuickActions({ activePage, department, onNavigate }) {
   if (!actions.length) return null;
 
   const go = (action) => {
-    setOpen(false);
+    close();
     onNavigate(action.page, action.section);
   };
 
   return (
-    // Hover opens, but focus-within does too and the bubble itself is a real
-    // button — hover alone would strand keyboard and touch users, who get no
-    // hover event at all.
+    // Hover opens, but focus does too and the bubble itself is a real button
+    // that pins it open — hover alone would strand keyboard and touch users,
+    // who get no hover event at all.
     <div
       className="fixed bottom-6 right-6 z-[100] flex flex-col items-end"
-      onMouseEnter={() => setOpen(true)}
-      onMouseLeave={() => setOpen(false)}
-      onFocus={() => setOpen(true)}
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
+      onFocus={() => setHovered(true)}
       onBlur={(e) => {
-        if (!e.currentTarget.contains(e.relatedTarget)) setOpen(false);
+        if (!e.currentTarget.contains(e.relatedTarget)) close();
       }}
     >
       <AnimatePresence>
@@ -127,7 +139,7 @@ export default function QuickActions({ activePage, department, onNavigate }) {
       </AnimatePresence>
 
       <button
-        onClick={() => setOpen((v) => !v)}
+        onClick={() => setPinned((v) => !v)}
         aria-expanded={open}
         aria-label="Quick actions"
         title="Quick actions"

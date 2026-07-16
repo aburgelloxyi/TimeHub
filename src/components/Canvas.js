@@ -554,10 +554,17 @@ function PageList({ folder, pages, selectedPageId, onSelectPage, onDeletePage, o
 // straight back to the previous single-editor save path with no deploy needed
 // beyond this constant. localStorage lets it be disabled per-browser while
 // testing without touching everyone.
+// OFF pending a fix. The first version seeded a note's Yjs document by handing
+// TipTap the `content` option, which Collaboration ignores — it builds the
+// editor from the Y.Doc instead. So opening a note that had never been
+// collaborated on produced an empty editor, and the autosave then wrote that
+// emptiness over the real content. It destroyed a note (Toolbox Board) on
+// 2026-07-16 before it was caught. Nothing re-enables this until seeding is
+// correct AND a save can no longer replace a non-empty note with an empty one.
 const NOTES_COLLAB =
-  typeof localStorage !== "undefined" && localStorage.getItem("xyi_notes_collab") === "off"
-    ? false
-    : true;
+  typeof localStorage !== "undefined" && localStorage.getItem("xyi_notes_collab") === "on"
+    ? true
+    : false;
 
 function NotesCanvasCard({ isOpen, onToggle, department, pinnedFolderIds = [], onTogglePin, focusFolder, editorExpanded = false, onToggleEditorExpanded }) {
   const [folders, setFolders] = useState([]);

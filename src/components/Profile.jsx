@@ -22,7 +22,7 @@ import {
   Check,
   LogOut,
   ExternalLink,
-  Highlighter,
+  FileSpreadsheet,
 } from "lucide-react";
 import { supabase } from "../lib/supabaseClient";
 import PageHeader from "./shared/PageHeader";
@@ -32,8 +32,9 @@ import { useWrikeUser } from "../hooks/useWrikeUser";
 import { fetchTasksByIds } from "../hooks/useWrikeCache";
 import { startWrikeOAuth, disconnectWrike, fetchWrikeOAuthStatus } from "../lib/wrikeApi";
 import { subscribeToWrikeTaskEvents } from "../lib/wrikeWebhookSubscription";
-import TaskDetailModal from "./TaskDetailModal";
-import PdfAnnotator from "./shared/PdfAnnotator";
+import TaskDetailModal, { CsvPreviewModal } from "./TaskDetailModal";
+import DeliverySpecsModal from "./DeliverySpecsModal";
+import { parsePdfDeliverySpecs } from "../utils/pdfTableParser";
 import { formatDurationText } from "../utils/timeHelpers";
 import { getTagStyle, getBorderColorClass } from "../utils/tagStyles";
 import { TERRITORY_FLAGS } from "../constants";
@@ -284,13 +285,70 @@ function WrikeTaskCard({ task, filter, onClick, cascadeRef }) {
 
 // ── Jobs section — fetches live from Wrike, grouped by campaign ───────────────
 
+// A <label>-wrapped file input, not a button — that opens the OS picker
+// directly on click, with no extra intermediate modal to dismiss first.
+function PdfSpecsButton({ busy, onPick, label }) {
+  return (
+    <label
+      title="Read the delivery-spec table out of any PDF (parsed in your browser, nothing is uploaded)"
+      className={`flex items-center gap-1.5 text-[11px] font-bold transition-colors ${
+        busy ? "text-[#12a0e1] cursor-wait" : "text-[#768994] hover:text-[#12a0e1] cursor-pointer"
+      }`}
+    >
+      {busy ? (
+        <span className="w-3 h-3 border-2 border-[#12a0e1] border-t-transparent rounded-full animate-spin" />
+      ) : (
+        <FileSpreadsheet className="w-3 h-3" />
+      )}
+      {busy ? "Reading…" : label}
+      <input
+        type="file"
+        accept="application/pdf"
+        className="hidden"
+        disabled={busy}
+        onChange={(e) => {
+          const f = e.target.files?.[0];
+          // Reset so picking the same file twice still re-fires onChange.
+          e.target.value = "";
+          onPick(f);
+        }}
+      />
+    </label>
+  );
+}
+
 function JobsSection({ wrikeUser, filter, wrikeData, onLogTime, triggerToast, jobOptions }) {
   const [tasks, setTasks] = useState([]);
   const [loading, setLoading] = useState(false);
   const [fetched, setFetched] = useState(false);
   const [selectedTask, setSelectedTask] = useState(null);
-  const [pdfAnnotatorOpen, setPdfAnnotatorOpen] = useState(false);
+  // Ad-hoc PDF spec parsing: drop in a delivery-spec PDF that isn't attached to
+  // any Wrike task and read its formats, using the same parser + checklist UI
+  // the task modal uses. Nothing is uploaded or stored — it's parsed in-browser.
+  const [pdfSpecs, setPdfSpecs] = useState(null);
+  const [pdfName, setPdfName] = useState("");
+  const [pdfBusy, setPdfBusy] = useState(false);
+  // CSV export re-shapes the SAME already-parsed pdfSpecs — no second file
+  // pick or re-parse — through the identical CsvPreviewModal a task's PDF
+  // attachment uses (Artwork/Campaign/Size/Duration/Country columns).
+  const [csvOpen, setCsvOpen] = useState(false);
   const getCascadeRef = useCascadeRefs();
+
+  const handlePickPdf = useCallback(async (file) => {
+    if (!file) return;
+    setPdfBusy(true);
+    setPdfName(file.name);
+    try {
+      const specs = await parsePdfDeliverySpecs(file);
+      if (specs?.length) setPdfSpecs(specs);
+      else triggerToast?.("No spec table found in that PDF.", "error");
+    } catch (e) {
+      console.error(e);
+      triggerToast?.("Couldn't read that PDF.", "error");
+    } finally {
+      setPdfBusy(false);
+    }
+  }, [triggerToast]);
 
   // Extracted out of fetchTasks (which used to close over statusNameMap
   // directly) so the webhook patch effect below can produce an identically-
@@ -497,15 +555,13 @@ function JobsSection({ wrikeUser, filter, wrikeData, onLogTime, triggerToast, jo
         />
         {filter === "active" && (
           <div className="flex justify-center">
-            <button
-              onClick={() => setPdfAnnotatorOpen(true)}
-              className="flex items-center gap-1.5 text-[11px] font-bold text-[#768994] hover:text-[#c2410d] transition-colors"
-            >
-              <Highlighter className="w-3 h-3" /> Add a PDF to highlight
-            </button>
+            <PdfSpecsButton busy={pdfBusy} onPick={handlePickPdf} label="Read specs from a PDF" />
           </div>
         )}
-        {pdfAnnotatorOpen && <PdfAnnotator onClose={() => setPdfAnnotatorOpen(false)} />}
+        <DeliverySpecsModal specs={pdfSpecs} pdfName={pdfName} onClose={() => setPdfSpecs(null)} onExportCsv={() => setCsvOpen(true)} />
+        {csvOpen && pdfSpecs && (
+          <CsvPreviewModal rawSpecs={pdfSpecs} pdfName={pdfName} onClose={() => setCsvOpen(false)} />
+        )}
       </div>
     );
 
@@ -520,13 +576,7 @@ function JobsSection({ wrikeUser, filter, wrikeData, onLogTime, triggerToast, jo
         </span>
         <div className="flex items-center gap-3">
           {filter === "active" && (
-            <button
-              onClick={() => setPdfAnnotatorOpen(true)}
-              title="Manually add a PDF to highlight & pull text from"
-              className="flex items-center gap-1.5 text-[11px] font-bold text-[#768994] hover:text-[#c2410d] transition-colors"
-            >
-              <Highlighter className="w-3 h-3" /> Add PDF
-            </button>
+            <PdfSpecsButton busy={pdfBusy} onPick={handlePickPdf} label="Read PDF specs" />
           )}
           <button
             onClick={fetchTasks}
@@ -573,7 +623,10 @@ function JobsSection({ wrikeUser, filter, wrikeData, onLogTime, triggerToast, jo
         jobOptions={jobOptions}
       />
 
-      {pdfAnnotatorOpen && <PdfAnnotator onClose={() => setPdfAnnotatorOpen(false)} />}
+      <DeliverySpecsModal specs={pdfSpecs} pdfName={pdfName} onClose={() => setPdfSpecs(null)} onExportCsv={() => setCsvOpen(true)} />
+      {csvOpen && pdfSpecs && (
+        <CsvPreviewModal rawSpecs={pdfSpecs} pdfName={pdfName} onClose={() => setCsvOpen(false)} />
+      )}
     </div>
   );
 }

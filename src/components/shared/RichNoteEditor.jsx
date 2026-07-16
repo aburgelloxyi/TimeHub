@@ -753,8 +753,13 @@ export default function RichNoteEditor(props) {
 }
 
 function CollaborativeNoteEditor(props) {
-  const { collabRoom, ydoc, collabUser } = props;
+  const { collabRoom, ydoc, collabUser, onCollabReady } = props;
   const [collab, setCollab] = useState(null);
+
+  // Held in a ref so a caller passing an inline callback can't retrigger the
+  // effect below — which is keyed on the room alone, on purpose (see there).
+  const onReadyRef = useRef(onCollabReady);
+  useEffect(() => { onReadyRef.current = onCollabReady; });
 
   useEffect(() => {
     const doc = new Y.Doc();
@@ -773,7 +778,12 @@ function CollaborativeNoteEditor(props) {
     }
     const provider = createSupabaseYProvider({ doc, room: collabRoom, user: collabUser });
     setCollab({ doc, provider, seed });
+    // Hand the provider up so a caller can render presence off its awareness.
+    // Awareness has to be read from outside the editor: the "who's here" chip
+    // lives in the note's doc-head, which is this component's sibling.
+    onReadyRef.current?.(provider);
     return () => {
+      onReadyRef.current?.(null);
       provider.destroy();
       doc.destroy();
       setCollab(null);

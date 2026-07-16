@@ -1,0 +1,16 @@
+import { Awareness } from "y-protocols/awareness.js";
+import * as Y from "yjs";
+const doc = new Y.Doc();
+const a = new Awareness(doc);
+console.log("clientID matches doc:", a.clientID === doc.clientID);
+console.log("getStates is Map:", a.getStates() instanceof Map);
+let fired = 0;
+const cb = () => fired++;
+a.on("change", cb);
+a.setLocalStateField("user", { name: "Maria", color: "#f00" });
+console.log("'change' fires:", fired > 0);
+console.log("local state readable:", JSON.stringify(a.getStates().get(a.clientID)));
+a.off("change", cb);
+const before = fired;
+a.setLocalStateField("user", { name: "X", color: "#0f0" });
+console.log("off() detaches:", fired === before);

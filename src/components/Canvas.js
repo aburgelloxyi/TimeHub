@@ -5,6 +5,7 @@ import { toggleDarkMode } from "../lib/theme";
 import { getFilmName, PRINT_HUB_RE } from "../lib/wrikeEnrich";
 import { fetchTasksByIds } from "../hooks/useWrikeCache";
 import RichNoteEditor from "./shared/RichNoteEditor";
+import PresenceStack from "./shared/PresenceStack";
 // Lazy — Excalidraw is a sizeable bundle + its own CSS; only a sketch page
 // being opened should pay for it, not every Notes Canvas visit.
 const ExcalidrawPageEditor = lazy(() => import("./shared/ExcalidrawPageEditor"));
@@ -733,6 +734,11 @@ function NotesCanvasCard({ isOpen, onToggle, department, pinnedFolderIds = [], o
     [myName, myColor]
   );
 
+  // The live provider for the open note, handed up by the editor once its
+  // Y.Doc exists. Only used to read awareness for the presence chip; it's
+  // nulled on unmount, so switching notes can't leave a stale one behind.
+  const [collabProvider, setCollabProvider] = useState(null);
+
   const selectedPage = pages.find((p) => p.id === selectedPageId);
   // A text note's own editor column is already the wide 1fr side of the
   // two-column grid regardless of whether the rail is collapsed — capping
@@ -1131,6 +1137,7 @@ function NotesCanvasCard({ isOpen, onToggle, department, pinnedFolderIds = [], o
                     <span className="text-[#8a8073] font-semibold">Edited {timeAgo(pageLastSavedAt || selectedPage.updated_at)}</span>
                     <span className="w-1 h-1 rounded-full bg-[#d5cdbf]" />
                     <span className="tabular-nums">{wordCountOf(selectedPage)} words</span>
+                    <PresenceStack awareness={collabProvider?.awareness} />
                   </div>
                 </div>
                 )}
@@ -1153,6 +1160,7 @@ function NotesCanvasCard({ isOpen, onToggle, department, pinnedFolderIds = [], o
                     ydoc={selectedPage.ydoc}
                     collabRoom={NOTES_COLLAB ? selectedPage.id : null}
                     collabUser={collabUser}
+                    onCollabReady={setCollabProvider}
                     onChange={(json, ydoc) => savePageContent(selectedPage.id, json, ydoc)}
                     accent={boardAccent}
                     wide={proseWide}

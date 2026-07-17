@@ -2,6 +2,7 @@ import React, { useRef, useCallback, useEffect, useState } from "react";
 import { Excalidraw, getSceneVersion } from "@excalidraw/excalidraw";
 import "@excalidraw/excalidraw/index.css";
 import { supabase } from "../../lib/supabaseClient";
+import { reportError } from "../../lib/monitoring";
 
 // ---------------------------------------------------------------------------
 // ExcalidrawPageEditor — the "sketch" counterpart to RichNoteEditor. Loaded
@@ -53,6 +54,9 @@ export default function ExcalidrawPageEditor({ pageId, content, onChange }) {
   const filesKeyRef = useRef(null);   // last files map we've seen
   const uploadedKeyRef = useRef(null); // files map currently in Storage
   const filesPathRef = useRef(content?.filesPath || null);
+  // The commit the debounce hasn't run yet, so unmount can flush it instead
+  // of discarding it.
+  const pendingRef = useRef(null);
   const [initialData, setInitialData] = useState(null);
 
   // Resolve the scene's images before handing Excalidraw its initialData —
@@ -113,14 +117,27 @@ export default function ExcalidrawPageEditor({ pageId, content, onChange }) {
     sceneVersionRef.current = version;
     filesKeyRef.current = filesKey;
 
-    clearTimeout(saveTimerRef.current);
-    saveTimerRef.current = setTimeout(async () => {
+    const commit = async () => {
+      pendingRef.current = null;
       if (filesKey !== uploadedKeyRef.current) {
         if (Object.keys(files || {}).length) {
           const path = filesPathFor(pageId);
           if (await uploadFiles(path, files)) {
             filesPathRef.current = path;
             uploadedKeyRef.current = filesKey;
+          } else {
+            // The blobs didn't make it to Storage, so a row pointing at (or
+            // worse, away from) them must not be written: for a sketch whose
+            // images were still inline, filesPath is null here, and saving
+            // would overwrite the only copy of those images with a row that
+            // has neither the blobs nor a path to them. Skip this save
+            // entirely and rewind the change-detector so the next edit
+            // retries the upload. This account has actually returned Storage
+            // errors under quota pressure — this path is not hypothetical.
+            filesKeyRef.current = uploadedKeyRef.current;
+            reportError(new Error("Sketch save skipped: image upload failed"), { pageId });
+            console.error("[ExcalidrawPageEditor] image upload failed — save skipped, will retry on next edit");
+            return;
           }
         } else {
           filesPathRef.current = null;
@@ -132,10 +149,23 @@ export default function ExcalidrawPageEditor({ pageId, content, onChange }) {
         appState: { viewBackgroundColor: appState.viewBackgroundColor },
         filesPath: filesPathRef.current,
       });
-    }, 1200);
+    };
+
+    pendingRef.current = commit;
+    clearTimeout(saveTimerRef.current);
+    saveTimerRef.current = setTimeout(commit, 1200);
   }, [pageId, onChange]);
 
-  useEffect(() => () => clearTimeout(saveTimerRef.current), []);
+  // Flush, don't discard: drawing and immediately switching pages used to
+  // throw away the last 1.2s of work when the unmount cleared the timer.
+  useEffect(() => () => {
+    clearTimeout(saveTimerRef.current);
+    if (pendingRef.current) {
+      const commit = pendingRef.current;
+      pendingRef.current = null;
+      commit(); // fire-and-forget: the save talks to Supabase, not this component
+    }
+  }, []);
 
   if (!initialData) {
     return <div className="h-full min-h-[640px] bg-[#faf7f2] animate-pulse" />;

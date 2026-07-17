@@ -203,6 +203,16 @@ function NoteEditor({
   // Has this editor ever displayed content in this session? Gates the
   // empty-save guard in onUpdate — see there.
   const sawContentRef = useRef(false);
+  // The save the debounce hasn't fired yet, as a thunk. Unmount used to just
+  // clearTimeout — silently discarding the last second-or-so of typing
+  // whenever someone edited and immediately switched pages. Held as a thunk
+  // rather than a value so the flush reads the document at unmount time, not
+  // as it was when the timer was scheduled.
+  const pendingSaveRef = useRef(null);
+  // Latest onChange, so the unmount flush doesn't call a stale closure from
+  // whatever render scheduled the timer.
+  const onChangeRef = useRef(onChange);
+  useEffect(() => { onChangeRef.current = onChange; });
 
   // All floating UI (bubble menu, slash menu, drag handle, drop indicator) is
   // position:fixed and rendered through a portal to <body>. It has to be a
@@ -298,19 +308,15 @@ function NoteEditor({
       ? undefined
       : (content && (Array.isArray(content) ? content.length : Object.keys(content).length) ? content : ""),
     onCreate: ({ editor }) => {
-      // Only a doc with no persisted CRDT state needs its old JSON converting,
-      // and only if Yjs really did come up empty — isEmpty is asked of the
-      // editor after Collaboration has populated it, rather than assumed.
-      if (collab && collab.seed && editor.isEmpty && hasContent(content)) {
-        editor.commands.setContent(content);
-      }
-      // Whatever we ended up with is the baseline the save guard measures
-      // against: an editor that has shown content may later legitimately be
-      // emptied by its author, but one that never did must not be persisted.
-      // This runs for BOTH paths — a non-collab editor is populated from the
-      // `content` option at construction, and skipping it here meant the guard
-      // in onUpdate misread a legitimate select-all-delete (as the session's
-      // first edit) as a failed load and silently refused the save.
+      // Seeding a virgin doc from its JSON happens in the deferred,
+      // race-guarded effect below, not here — see it for why. This only
+      // records the save-guard baseline: an editor that has shown content may
+      // later legitimately be emptied by its author, but one that never did
+      // must not be persisted. This runs for BOTH paths — a non-collab editor
+      // is populated from the `content` option at construction, and skipping
+      // it here meant the guard in onUpdate misread a legitimate
+      // select-all-delete (as the session's first edit) as a failed load and
+      // silently refused the save.
       if (!editor.isEmpty) sawContentRef.current = true;
     },
     editorProps: {
@@ -366,18 +372,68 @@ function NoteEditor({
       // stops typing first writes it — last-write-wins is safe here precisely
       // because a CRDT can't diverge. A slightly longer debounce keeps the
       // duplicate writes down without risking data (peers still have it).
+      //
+      // A non-collab save passes ydoc: null — not undefined — on purpose: it
+      // must INVALIDATE any stored CRDT state, because that state no longer
+      // describes this content. Leaving it in place set a trap: edit a note
+      // with collaboration off, re-enable collaboration later, and the editor
+      // would load the stale ydoc (which parses fine, so no re-seed), show the
+      // old text, and persist the revert on the next keystroke. Nulling it
+      // means the next collaborative open re-seeds from the JSON, which is the
+      // newest truth.
+      const payload = () => [
+        editor.getJSON(),
+        collab ? encodeYState(collab.doc) : null,
+      ];
+      pendingSaveRef.current = payload;
       saveTimerRef.current = setTimeout(() => {
-        onChange(
-          editor.getJSON(),
-          collab ? encodeYState(collab.doc) : undefined
-        );
+        pendingSaveRef.current = null;
+        onChangeRef.current(...payload());
       }, collab ? 1500 : 800);
     },
     onSelectionUpdate: ({ editor }) => { checkSlash(editor); updateBubble(editor); },
     onBlur: () => { setTimeout(() => { setBubble(null); setSlash(null); slashRangeRef.current = null; setColorPicker(false); }, 150); },
   }, []);
 
-  useEffect(() => () => clearTimeout(saveTimerRef.current), []);
+  // Deferred seeding for a note with JSON content but no CRDT state. Seeding
+  // immediately in onCreate raced other clients: everyone whose page list
+  // predated the first collaborative save believed the note was virgin, seeded
+  // its own copy, and Yjs faithfully merged them — the note's body, twice.
+  // (Reproduced on the live UI, not hypothesised.) Three defences, outermost
+  // first: the wrapper below refetches the authoritative ydoc at mount, so a
+  // stale page list can't manufacture a seeder; this effect then waits out a
+  // grace period, during which a real peer's state arriving makes the doc
+  // non-empty and cancels seeding; and if peers are present but the doc is
+  // still empty — genuinely simultaneous first opens — only the lowest client
+  // id seeds, so there is exactly one seeder by construction. The empty-save
+  // guard holds throughout the wait, so nothing can persist the interim blank.
+  useEffect(() => {
+    if (!editor || !collab?.seed || !hasContent(content)) return;
+    const t = setTimeout(() => {
+      if (editor.isDestroyed) return;
+      if (!editor.isEmpty) { sawContentRef.current = true; return; } // a peer's state arrived
+      const aw = collab.provider.awareness;
+      const others = [...aw.getStates().keys()].filter((id) => id !== aw.clientID);
+      if (others.some((id) => id < aw.clientID)) return; // that peer seeds; its update reaches us
+      editor.commands.setContent(content);
+      sawContentRef.current = true;
+    }, 900);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [editor, collab]);
+
+  // Flush, don't discard: if a save is still waiting out its debounce when
+  // this editor unmounts (page switch, board switch), fire it now. This
+  // cleanup runs before useEditor's own destroy (effects clean up in reverse
+  // mount order), so the editor is still readable.
+  useEffect(() => () => {
+    clearTimeout(saveTimerRef.current);
+    if (pendingSaveRef.current) {
+      const payload = pendingSaveRef.current;
+      pendingSaveRef.current = null;
+      try { onChangeRef.current(...payload()); } catch { /* editor already gone — nothing to flush */ }
+    }
+  }, []);
 
   // Slash menu: run/close on Enter/Escape (handleKeyDown above only stops the
   // default editor behavior; the actual action happens here where component
@@ -817,39 +873,65 @@ export default function RichNoteEditor(props) {
 }
 
 function CollaborativeNoteEditor(props) {
-  const { collabRoom, ydoc, collabUser, onCollabReady } = props;
+  const { collabRoom, ydoc, collabUser, onCollabReady, fetchLatestYdoc } = props;
   const [collab, setCollab] = useState(null);
 
-  // Held in a ref so a caller passing an inline callback can't retrigger the
+  // Held in refs so a caller passing inline callbacks can't retrigger the
   // effect below — which is keyed on the room alone, on purpose (see there).
   const onReadyRef = useRef(onCollabReady);
-  useEffect(() => { onReadyRef.current = onCollabReady; });
+  const fetchYdocRef = useRef(fetchLatestYdoc);
+  useEffect(() => { onReadyRef.current = onCollabReady; fetchYdocRef.current = fetchLatestYdoc; });
 
   useEffect(() => {
-    const doc = new Y.Doc();
-    // `seed` decides whether NoteEditor is allowed to hand TipTap the JSON:
-    // only a note with no persisted CRDT state needs converting from its old
-    // plain-JSON form. Once state exists, the JSON is a stale projection and
-    // applying it would duplicate the note's contents.
-    let seed = true;
-    if (ydoc) {
-      try {
-        Y.applyUpdate(doc, decodeYState(ydoc));
-        seed = false;
-      } catch {
-        seed = true; // unreadable state — fall back to the JSON projection
+    let cancelled = false;
+    let provider = null;
+    let doc = null;
+
+    (async () => {
+      // The prop's ydoc is a snapshot from whenever the page list was fetched
+      // — possibly hours ago. Trusting it manufactured phantom seeders: a tab
+      // whose list predated the note's first collaborative save still saw
+      // "no CRDT state", seeded its own copy on open, and the merge doubled
+      // the note. One cheap authoritative read at mount closes that entirely;
+      // the stale prop remains only as the fallback if the read fails.
+      let latestYdoc = ydoc;
+      if (fetchYdocRef.current) {
+        try {
+          latestYdoc = await fetchYdocRef.current();
+        } catch {
+          /* offline or DB down — the prop is the best we have */
+        }
       }
-    }
-    const provider = createSupabaseYProvider({ doc, room: collabRoom, user: collabUser });
-    setCollab({ doc, provider, seed });
-    // Hand the provider up so a caller can render presence off its awareness.
-    // Awareness has to be read from outside the editor: the "who's here" chip
-    // lives in the note's doc-head, which is this component's sibling.
-    onReadyRef.current?.(provider);
+      if (cancelled) return;
+
+      doc = new Y.Doc();
+      // `seed` marks a doc with no usable CRDT state, whose old plain-JSON
+      // form may need converting (deferred seeding effect in NoteEditor).
+      // Once state exists, the JSON is a stale projection and applying it
+      // would duplicate the note's contents.
+      let seed = true;
+      if (latestYdoc) {
+        try {
+          Y.applyUpdate(doc, decodeYState(latestYdoc));
+          seed = false;
+        } catch {
+          seed = true; // unreadable state — fall back to the JSON projection
+        }
+      }
+      provider = createSupabaseYProvider({ doc, room: collabRoom, user: collabUser });
+      setCollab({ doc, provider, seed });
+      // Hand the provider up so a caller can render presence off its
+      // awareness. Awareness has to be read from outside the editor: the
+      // "who's here" chip lives in the note's doc-head, this component's
+      // sibling.
+      onReadyRef.current?.(provider);
+    })();
+
     return () => {
+      cancelled = true;
       onReadyRef.current?.(null);
-      provider.destroy();
-      doc.destroy();
+      provider?.destroy();
+      doc?.destroy();
       setCollab(null);
     };
     // Deliberately keyed on the room alone. `ydoc` is the state we loaded

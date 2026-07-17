@@ -554,15 +554,24 @@ function PageList({ folder, pages, selectedPageId, onSelectPage, onDeletePage, o
 // straight back to the previous single-editor save path with no deploy needed
 // beyond this constant. localStorage lets it be disabled per-browser without
 // touching everyone (e.g. from the console: localStorage.setItem("xyi_notes_collab","off")).
+//
 // Was OFF after the first version seeded a note's Yjs document by handing
 // TipTap the `content` option, which Collaboration ignores — it builds the
 // editor from the Y.Doc instead. Opening a note that had never been
 // collaborated on produced an empty editor, and the autosave then wrote that
 // emptiness over the real content, destroying a note (Toolbox Board) on
-// 2026-07-16. Fixed in RichNoteEditor.jsx: seeding now happens in onCreate
-// against the actual editor (so it's only applied if Yjs really did come up
-// empty), and onUpdate refuses to persist an empty document over a note that
-// has content unless this editor has shown that content at least once.
+// 2026-07-16. Re-enabled after a full save-path audit closed every gap that
+// surfaced: seeding happens in a deferred, race-guarded effect in
+// RichNoteEditor.jsx rather than synchronously in onCreate (two clients
+// opening the same virgin note at once both seeding was reproduced on the
+// live UI, not hypothesised); onUpdate refuses to persist an empty document
+// over a note that has content unless this editor has shown that content at
+// least once; a non-collab save nulls the stored ydoc so stale CRDT state
+// can't later revert a newer plain edit; ydoc is mirrored into local page
+// state so remounting a note mid-session can't resurrect its pre-edit self;
+// and CollaborativeNoteEditor refetches the authoritative ydoc at mount
+// rather than trusting the page-list snapshot, closing the same
+// stale-belief-of-"virgin" gap from a different angle.
 const NOTES_COLLAB =
   typeof localStorage !== "undefined" && localStorage.getItem("xyi_notes_collab") === "off"
     ? false
@@ -753,10 +762,20 @@ export function NotesCanvasCard({ isOpen, onToggle, department, pinnedFolderIds 
   };
 
   const savePageContent = async (pageId, blocks, ydoc) => {
-    // Note the local copy deliberately keeps its original `ydoc`: the editor
-    // takes that as its mount-time seed, and rewriting it here would hand a
-    // changed prop back to a live collaborative session.
-    setPages((prev) => prev.map((p) => (p.id === pageId ? { ...p, content: blocks } : p)));
+    // ydoc is mirrored into local state too — an earlier version froze the
+    // local copy at fetch time out of fear that a changed prop would disrupt
+    // a live session. It can't (the editor reads ydoc once, at mount), and
+    // the frozen copy set a genuine trap: switch away from a note you'd been
+    // editing and back again, and the editor remounted from the stale
+    // pre-edit ydoc — showing (and on the next keystroke, persisting) content
+    // your own saves had already superseded.
+    setPages((prev) =>
+      prev.map((p) =>
+        p.id === pageId
+          ? { ...p, content: blocks, ...(ydoc !== undefined ? { ydoc } : {}) }
+          : p
+      )
+    );
     setPageSaveState("saving");
     const patch = { content: blocks, updated_at: new Date().toISOString() };
     if (ydoc !== undefined) patch.ydoc = ydoc;
@@ -1227,6 +1246,18 @@ export function NotesCanvasCard({ isOpen, onToggle, department, pinnedFolderIds 
                     ydoc={selectedPage.ydoc}
                     collabRoom={NOTES_COLLAB ? selectedPage.id : null}
                     collabUser={collabUser}
+                    fetchLatestYdoc={async () => {
+                      // Authoritative read at editor mount — the local ydoc
+                      // above is a snapshot from the page-list fetch, and
+                      // trusting a stale one made this client seed a note a
+                      // peer had already seeded (see CollaborativeNoteEditor).
+                      const { data } = await supabase
+                        .from("canvas_notes_pages")
+                        .select("ydoc")
+                        .eq("id", selectedPage.id)
+                        .maybeSingle();
+                      return data?.ydoc ?? null;
+                    }}
                     onCollabReady={setCollabProvider}
                     onChange={(json, ydoc) => savePageContent(selectedPage.id, json, ydoc)}
                     accent={boardAccent}

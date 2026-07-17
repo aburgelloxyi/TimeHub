@@ -552,21 +552,23 @@ function PageList({ folder, pages, selectedPageId, onSelectPage, onDeletePage, o
 // rides Supabase Realtime, and this account has no egress headroom to spare —
 // if it ever starts costing more than it's worth, flip this off and notes fall
 // straight back to the previous single-editor save path with no deploy needed
-// beyond this constant. localStorage lets it be disabled per-browser while
-// testing without touching everyone.
-// OFF pending a fix. The first version seeded a note's Yjs document by handing
+// beyond this constant. localStorage lets it be disabled per-browser without
+// touching everyone (e.g. from the console: localStorage.setItem("xyi_notes_collab","off")).
+// Was OFF after the first version seeded a note's Yjs document by handing
 // TipTap the `content` option, which Collaboration ignores — it builds the
-// editor from the Y.Doc instead. So opening a note that had never been
+// editor from the Y.Doc instead. Opening a note that had never been
 // collaborated on produced an empty editor, and the autosave then wrote that
-// emptiness over the real content. It destroyed a note (Toolbox Board) on
-// 2026-07-16 before it was caught. Nothing re-enables this until seeding is
-// correct AND a save can no longer replace a non-empty note with an empty one.
+// emptiness over the real content, destroying a note (Toolbox Board) on
+// 2026-07-16. Fixed in RichNoteEditor.jsx: seeding now happens in onCreate
+// against the actual editor (so it's only applied if Yjs really did come up
+// empty), and onUpdate refuses to persist an empty document over a note that
+// has content unless this editor has shown that content at least once.
 const NOTES_COLLAB =
-  typeof localStorage !== "undefined" && localStorage.getItem("xyi_notes_collab") === "on"
-    ? true
-    : false;
+  typeof localStorage !== "undefined" && localStorage.getItem("xyi_notes_collab") === "off"
+    ? false
+    : true;
 
-function NotesCanvasCard({ isOpen, onToggle, department, pinnedFolderIds = [], onTogglePin, focusFolder, editorExpanded = false, onToggleEditorExpanded }) {
+export function NotesCanvasCard({ isOpen, onToggle, department, pinnedFolderIds = [], onTogglePin, focusFolder, editorExpanded = false, onToggleEditorExpanded, bare = false }) {
   const [folders, setFolders] = useState([]);
   const [pages, setPages] = useState([]);
   const [profiles, setProfiles] = useState([]);
@@ -596,21 +598,74 @@ function NotesCanvasCard({ isOpen, onToggle, department, pinnedFolderIds = [], o
 
   useEffect(() => {
     if (!isOpen) return;
+    let cancelled = false;
     (async () => {
       const [{ data: f }, { data: pr }] = await Promise.all([
         supabase.from("canvas_notes_folders").select("*").eq("department", department).order("created_at", { ascending: true }),
         supabase.from("profiles").select("wrike_user_id, first_name, last_name, canvas_color"),
       ]);
+      if (cancelled) return;
       setFolders(f || []);
       setProfiles(pr || []);
       const folderIds = (f || []).map((x) => x.id);
       if (folderIds.length) {
         const { data: p } = await supabase.from("canvas_notes_pages").select("*").in("folder_id", folderIds).order("created_at", { ascending: true });
-        setPages(p || []);
+        if (!cancelled) setPages(p || []);
       } else {
         setPages([]);
       }
     })();
+    return () => { cancelled = true; };
+  }, [isOpen, department]);
+
+  // Keeps a live-updated set of this department's folder ids for the pages
+  // subscription below, which filters client-side (canvas_notes_pages has no
+  // department column of its own to filter on server-side, only folder_id).
+  const folderIdsRef = useRef(new Set());
+  useEffect(() => {
+    folderIdsRef.current = new Set(folders.map((f) => f.id));
+  }, [folders]);
+
+  // Without this, a folder or page someone else creates (or renames/edits with
+  // collab off) never appears here until the card is closed and reopened —
+  // the fetch above only runs once per (isOpen, department). This only ever
+  // adds/updates/removes list entries; it never touches the open editor's own
+  // content prop after mount, so it can't interrupt anyone's typing.
+  useEffect(() => {
+    if (!isOpen) return;
+    const channel = supabase
+      .channel(`notes-canvas:${department}`)
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "canvas_notes_folders", filter: `department=eq.${department}` },
+        (payload) => {
+          if (payload.eventType === "DELETE") {
+            setFolders((prev) => prev.filter((f) => f.id !== payload.old.id));
+            return;
+          }
+          const row = payload.new;
+          setFolders((prev) =>
+            prev.some((f) => f.id === row.id) ? prev.map((f) => (f.id === row.id ? { ...f, ...row } : f)) : [...prev, row]
+          );
+        }
+      )
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "canvas_notes_pages" },
+        (payload) => {
+          if (payload.eventType === "DELETE") {
+            setPages((prev) => prev.filter((p) => p.id !== payload.old.id));
+            return;
+          }
+          const row = payload.new;
+          if (!folderIdsRef.current.has(row.folder_id)) return; // belongs to another department
+          setPages((prev) =>
+            prev.some((p) => p.id === row.id) ? prev.map((p) => (p.id === row.id ? { ...p, ...row } : p)) : [...prev, row]
+          );
+        }
+      )
+      .subscribe();
+    return () => { supabase.removeChannel(channel); };
   }, [isOpen, department]);
 
   const profileFor = (id) => profiles.find((pr) => pr.wrike_user_id === id);
@@ -831,19 +886,16 @@ function NotesCanvasCard({ isOpen, onToggle, department, pinnedFolderIds = [], o
     }
   };
 
-  return (
-    <CollapsibleCard
-      icon={Folder}
-      title="Notes Canvas"
-      subtitle={`${department} team board · personal spaces`}
-      isOpen={isOpen}
-      onToggle={onToggle}
-    >
-      {/* Surface bleeds to the card edges (covers the CollapsibleCard's cool
-          slate-50 inner) and takes on the active board's accent, so the whole
-          Notes Canvas reads as "whose space am I in". */}
+  // Surface bleeds to the card edges (covers the CollapsibleCard's cool
+  // slate-50 inner) and takes on the active board's accent, so the whole
+  // Notes Canvas reads as "whose space am I in". In `bare` mode (the
+  // quick-access Notes modal) the surrounding CollapsibleCard is dropped —
+  // the modal supplies its own chrome — so the content-bleed negative margins
+  // that tuck under the card's own padding would instead pull content past the
+  // modal's edges; they're dropped too.
+  const body = (
       <div
-        className="flex flex-col gap-4 -m-6 sm:-m-8 p-5 sm:p-6 transition-colors duration-300"
+        className={`flex flex-col gap-4 ${bare ? "p-5 sm:p-6" : "-m-6 sm:-m-8 p-5 sm:p-6"} transition-colors duration-300`}
         style={{ background: `linear-gradient(180deg, ${boardAccent}14, ${boardAccent}08 40%, ${boardAccent}05)` }}
       >
         {/* --- Board switcher: which space am I in --- */}
@@ -1219,6 +1271,18 @@ function NotesCanvasCard({ isOpen, onToggle, department, pinnedFolderIds = [], o
           </div>
         </div>
       </div>
+  );
+
+  if (bare) return body;
+  return (
+    <CollapsibleCard
+      icon={Folder}
+      title="Notes Canvas"
+      subtitle={`${department} team board · personal spaces`}
+      isOpen={isOpen}
+      onToggle={onToggle}
+    >
+      {body}
     </CollapsibleCard>
   );
 }

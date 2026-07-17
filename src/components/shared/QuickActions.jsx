@@ -1,16 +1,20 @@
-import React, { useState } from "react";
+import React, { useRef, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { Zap, StickyNote, Activity, Briefcase, Settings } from "lucide-react";
+import { Zap, StickyNote, Activity, Briefcase, Settings, FileScan } from "lucide-react";
 import { PAGE_GRADIENTS } from "../../lib/pageGradients";
 import { pageIdsFor } from "../../lib/departments";
 
 // ── Quick actions bubble ─────────────────────────────────────────────────────
-// A floating hover-to-open shortcut stack, bottom-right. The Rail already
-// covers top-level pages in one click; what it can't do is land you *inside*
-// one — Active Jobs and Settings are sections of the Profile hub, so reaching
-// them otherwise costs a trip through the hub screen first. These entries
-// carry a `section`, which App hands to Profile as `activeSection`, so the
-// hub is skipped entirely.
+// A floating hover-to-open shortcut stack, bottom-right. Two kinds of entry:
+//
+//  • nav      — jumps to a page (and, for Profile sections like Active Jobs /
+//               Settings, lands you *inside* it, skipping the hub screen the
+//               Rail would otherwise dump you on).
+//  • in-place — runs something over the current page without navigating away:
+//               Notes opens the Notes Canvas in a modal, Scan PDF reads a
+//               delivery-spec PDF straight from the corner. These are the
+//               point of the bubble beyond what the Rail already does — a
+//               place to *do* a quick thing, not just go somewhere.
 //
 // Hidden on Home for the same reason the Rail is: Home is its own full-screen
 // menu, and a shortcut bubble floating over it would just be a second, worse
@@ -18,27 +22,20 @@ import { pageIdsFor } from "../../lib/departments";
 
 const ACTIONS = [
   {
-    id: "notes",
-    label: "Notes",
-    icon: StickyNote,
-    page: "canvas",
-    gradient: PAGE_GRADIENTS.canvas,
-    // Notes Canvas leads the Canvas page and is open by default, so the
-    // page route alone lands on it — no section deep-link needed.
-    requires: "canvas",
-  },
-  {
-    id: "tracker",
-    label: "Tracker",
-    icon: Activity,
-    page: "timesheet",
-    gradient: PAGE_GRADIENTS.timesheet,
-    requires: "timesheet",
+    id: "settings",
+    label: "Settings",
+    icon: Settings,
+    kind: "nav",
+    page: "profile",
+    section: "settings",
+    gradient: "from-slate-500 to-slate-700",
+    requires: "profile",
   },
   {
     id: "jobs",
     label: "Active Jobs",
     icon: Briefcase,
+    kind: "nav",
     page: "profile",
     section: "jobs",
     // Matches the Active Jobs hub row's own identity gradient in Profile.
@@ -46,17 +43,37 @@ const ACTIONS = [
     requires: "profile",
   },
   {
-    id: "settings",
-    label: "Settings",
-    icon: Settings,
-    page: "profile",
-    section: "settings",
-    gradient: "from-slate-500 to-slate-700",
-    requires: "profile",
+    id: "tracker",
+    label: "Tracker",
+    icon: Activity,
+    kind: "nav",
+    page: "timesheet",
+    gradient: PAGE_GRADIENTS.timesheet,
+    requires: "timesheet",
+  },
+  {
+    id: "scan",
+    label: "Scan PDF",
+    icon: FileScan,
+    kind: "scan",
+    gradient: "from-emerald-500 to-teal-600",
+    // No `requires`: reading a delivery-spec PDF is a generic tool, useful from
+    // any page and not tied to a department's page access.
+  },
+  {
+    id: "notes",
+    label: "Notes",
+    icon: StickyNote,
+    kind: "notes",
+    gradient: PAGE_GRADIENTS.canvas,
+    // Opens the Notes Canvas as a modal (in place) rather than navigating to
+    // the Canvas page — but still gated on canvas access so it's never offered
+    // to a member who couldn't reach notes at all.
+    requires: "canvas",
   },
 ];
 
-export default function QuickActions({ activePage, department, onNavigate }) {
+export default function QuickActions({ activePage, department, onNavigate, onOpenNotes, onScanPdf }) {
   // Two independent reasons to be open, OR'd together, rather than one flag
   // both handlers write to: with a single flag, mouseenter opens the stack
   // and the bubble's own click then toggles it straight back shut, so a
@@ -65,6 +82,7 @@ export default function QuickActions({ activePage, department, onNavigate }) {
   const [hovered, setHovered] = useState(false);
   const [pinned, setPinned] = useState(false);
   const open = hovered || pinned;
+  const fileInputRef = useRef(null);
 
   const close = () => {
     setHovered(false);
@@ -74,12 +92,25 @@ export default function QuickActions({ activePage, department, onNavigate }) {
   if (activePage === "home") return null;
 
   // Same department registry the Rail and command palette read, so the bubble
-  // can never offer a page this member has no access to.
+  // can never offer a page this member has no access to. Entries with no
+  // `requires` (Scan PDF) are always allowed.
   const allowed = pageIdsFor(department);
-  const actions = ACTIONS.filter((a) => allowed.includes(a.requires));
+  const actions = ACTIONS.filter((a) => !a.requires || allowed.includes(a.requires));
   if (!actions.length) return null;
 
-  const go = (action) => {
+  const runAction = (action) => {
+    if (action.kind === "notes") {
+      close();
+      onOpenNotes?.();
+      return;
+    }
+    if (action.kind === "scan") {
+      // Fire the picker from within this click so the browser accepts the
+      // gesture; closing the stack afterwards doesn't cancel the open dialog.
+      fileInputRef.current?.click();
+      close();
+      return;
+    }
     close();
     onNavigate(action.page, action.section);
   };
@@ -97,6 +128,19 @@ export default function QuickActions({ activePage, department, onNavigate }) {
         if (!e.currentTarget.contains(e.relatedTarget)) close();
       }}
     >
+      <input
+        ref={fileInputRef}
+        type="file"
+        accept="application/pdf"
+        className="hidden"
+        onChange={(e) => {
+          const f = e.target.files?.[0];
+          // Reset so picking the same file twice still re-fires onChange.
+          e.target.value = "";
+          if (f) onScanPdf?.(f);
+        }}
+      />
+
       <AnimatePresence>
         {open && (
           <motion.div
@@ -114,7 +158,7 @@ export default function QuickActions({ activePage, department, onNavigate }) {
               return (
                 <motion.button
                   key={action.id}
-                  onClick={() => go(action)}
+                  onClick={() => runAction(action)}
                   title={action.label}
                   variants={{
                     opened: { opacity: 1, y: 0, scale: 1 },

@@ -298,16 +298,19 @@ function NoteEditor({
       ? undefined
       : (content && (Array.isArray(content) ? content.length : Object.keys(content).length) ? content : ""),
     onCreate: ({ editor }) => {
-      if (!collab) return;
       // Only a doc with no persisted CRDT state needs its old JSON converting,
       // and only if Yjs really did come up empty — isEmpty is asked of the
       // editor after Collaboration has populated it, rather than assumed.
-      if (collab.seed && editor.isEmpty && hasContent(content)) {
+      if (collab && collab.seed && editor.isEmpty && hasContent(content)) {
         editor.commands.setContent(content);
       }
       // Whatever we ended up with is the baseline the save guard measures
       // against: an editor that has shown content may later legitimately be
       // emptied by its author, but one that never did must not be persisted.
+      // This runs for BOTH paths — a non-collab editor is populated from the
+      // `content` option at construction, and skipping it here meant the guard
+      // in onUpdate misread a legitimate select-all-delete (as the session's
+      // first edit) as a failed load and silently refused the save.
       if (!editor.isEmpty) sawContentRef.current = true;
     },
     editorProps: {

@@ -21,8 +21,9 @@ egress meter immediately.
 
 | File | Contents |
 |------|----------|
-| `schema.sql` | Full schema: 27 tables, 44 constraints, 7 indexes, 2 functions, 2 triggers, 27 RLS-enabled tables + 26 policies, 2 storage buckets, sequence positions. |
+| `schema.sql` | Full schema baseline: tables, constraints, indexes, functions, triggers, RLS-enabled tables + policies, 2 storage buckets, sequence positions. Includes the `board_now` working-now board and its `cleanup_board_now()` GC function/trigger. |
 | `seed_data.sql` | Non-sensitive data: `tasks` (274 rows) + `canvas_notes_pages` (13 rows). |
+| `migrations/` | Incremental change scripts (versioned to the Supabase migration ledger). Home for the two things `schema.sql` scopes out: realtime **publication** membership and **`pg_cron`** jobs (e.g. the hourly `board_now_cleanup`). See `migrations/README.md`. |
 
 **Deliberately NOT committed (never put in git):**
 

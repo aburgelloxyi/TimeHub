@@ -13,6 +13,7 @@ import gsap from "gsap";
 import { useGSAP } from "@gsap/react";
 import { TERRITORY_FLAGS, MOTION_TEAM_NAME_MAP, normalizeName } from "../constants";
 import { supabase } from "../lib/supabaseClient";
+import { useBoardNow, ActiveDot } from "./shared/BoardNow";
 import { fullName as cleanFullName } from "../lib/formatName";
 import { useMotionBoardTasks } from "../hooks/useMotionBoardTasks";
 import PageHeader from "./shared/PageHeader";
@@ -355,6 +356,13 @@ export default function TodaysList({ wrikeData, triggerToast: _triggerToast, isA
           slateName: "Riccardo's Slate",
         }
   ), [usesDeptRoster, department, deptTeam]);
+
+  // Live "working now" state for this board — shared by every task's dot.
+  const now = useBoardNow(department || "Motion");
+  // Which lane is the current user's own — the only lane whose tasks they can
+  // mark as what *they're* working on. Dept boards map id→label directly;
+  // Motion's lanes are keyed by first name, which matches the profile.
+  const myBoardName = board.wrikeIdToMember?.[now.myId] || now.me?.name;
 
   // Each non-Motion department scopes its board state cache under its own
   // key so saved assignments never collide across departments or with
@@ -994,7 +1002,7 @@ export default function TodaysList({ wrikeData, triggerToast: _triggerToast, isA
                           key={task.id}
                           data-card-rise
                           onClick={() => setSelectedTask(task)}
-                          className={`shrink-0 cursor-pointer rounded-lg border-l-[3px] ${getBorderColorClass(task.tag)} border-y border-r border-slate-200/70 ${
+                          className={`group/chip shrink-0 cursor-pointer rounded-lg border-l-[3px] ${getBorderColorClass(task.tag)} border-y border-r border-slate-200/70 ${
                             overdue ? "bg-rose-50/40" : "bg-white"
                           } hover:shadow-md hover:-translate-y-0.5 transition-all ${
                             isFocused ? "w-72 p-3.5" : "w-60 px-3 py-2.5"
@@ -1004,7 +1012,10 @@ export default function TodaysList({ wrikeData, triggerToast: _triggerToast, isA
                             <p className="text-[9px] font-bold uppercase text-[#768994] tracking-widest truncate">
                               {task.campaignName}
                             </p>
-                            <span className="text-xs leading-none shrink-0" title={terr.name}>{terr.flag}</span>
+                            <div className="flex items-center gap-1.5 shrink-0">
+                              <span className="text-xs leading-none" title={terr.name}>{terr.flag}</span>
+                              <ActiveDot task={task} now={now} canActivate={person === myBoardName} />
+                            </div>
                           </div>
                           <p className={`text-xs font-bold text-[#122027] leading-snug mt-1 ${isFocused ? "line-clamp-3" : "line-clamp-2"}`}>
                             {task.title}

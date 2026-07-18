@@ -48,6 +48,37 @@ BEGIN
 END;
 $function$;
 
+-- board_now: bump updated_at on every write so its 3-day TTL measures
+-- "last activity" (the client upserts don't set it themselves).
+create or replace function public.set_board_now_updated_at()
+ returns trigger
+ language plpgsql
+as $function$
+BEGIN
+  NEW.updated_at := now();
+  RETURN NEW;
+END;
+$function$;
+
+-- board_now garbage collector: drop a row once it's gone stale (>3 days
+-- untouched) or its task is no longer Active in the Wrike cache (Completed /
+-- Cancelled). A task missing from the cache falls through to the age rule
+-- only. Run hourly by pg_cron -- see supabase/migrations for the cron job.
+create or replace function public.cleanup_board_now()
+ returns void
+ language plpgsql
+as $function$
+BEGIN
+  delete from public.board_now b
+  where b.updated_at < now() - interval '3 days'
+     or exists (
+       select 1 from public.wrike_tasks_cache c
+       where c.id = b.task_id
+         and coalesce(c.task_data->>'status', '') <> 'Active'
+     );
+END;
+$function$;
+
 -- ---------------------------------------------------------------------------
 -- Tables
 -- ---------------------------------------------------------------------------
@@ -284,9 +315,27 @@ create table public.wrike_webhook_events (
   occurred_at timestamp with time zone not null default now()
 );
 
+-- "Working now" board indicators: one row per (person, task) they've touched.
+-- active flags the green dot; note is that person's per-task comment. Rows are
+-- garbage-collected by cleanup_board_now() (see Functions). replica identity
+-- full is required so realtime DELETEs carry the department for client filters.
+create table public.board_now (
+  wrike_user_id text not null,
+  department text not null,
+  task_id text not null,
+  task_title text,
+  note text,
+  user_name text not null,
+  user_color text,
+  updated_at timestamp with time zone not null default now(),
+  active boolean not null default false
+);
+
 -- ---------------------------------------------------------------------------
 -- Primary keys, unique + check constraints
 -- ---------------------------------------------------------------------------
+alter table public.board_now add constraint board_now_pkey primary key (wrike_user_id, task_id);
+alter table public.board_now replica identity full;  -- realtime DELETEs must carry department for the client's dept filter
 alter table public.campaign_eoc_notes add constraint campaign_eoc_notes_pkey primary key (campaign_id, department);
 alter table public.campaign_links add constraint campaign_links_pkey primary key (id);
 alter table public.campaign_meta add constraint campaign_meta_pkey primary key (campaign_id);
@@ -352,10 +401,12 @@ create index wrike_tasks_cache_updated_date_idx on public.wrike_tasks_cache usin
 -- ---------------------------------------------------------------------------
 create trigger trg_jobs_updated_at before update on public.jobs for each row execute function touch_updated_at();
 create trigger trg_set_job_number before insert on public.jobs for each row execute function set_job_number();
+create trigger board_now_touch before update on public.board_now for each row execute function set_board_now_updated_at();
 
 -- ---------------------------------------------------------------------------
 -- Row Level Security
 -- ---------------------------------------------------------------------------
+alter table public.board_now enable row level security;
 alter table public.campaign_eoc_notes enable row level security;
 alter table public.campaign_links enable row level security;
 alter table public.campaign_meta enable row level security;
@@ -387,6 +438,7 @@ alter table public.wrike_webhook_events enable row level security;
 -- Policies. NOTE: wrike_oauth_tokens and wrike_webhook_config have RLS enabled
 -- but NO policies on purpose -- only the service-role key (which bypasses RLS)
 -- may touch them. The browser's anon/authenticated keys must never read them.
+create policy "anon all" on public.board_now as permissive for all to authenticated using (true) with check (true);
 create policy "anon all" on public.campaign_eoc_notes as permissive for all to authenticated using (true) with check (true);
 create policy "anon all" on public.campaign_links as permissive for all to authenticated using (true) with check (true);
 create policy "anon all" on public.campaign_meta as permissive for all to authenticated using (true) with check (true);

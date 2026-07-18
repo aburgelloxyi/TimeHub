@@ -631,6 +631,14 @@ export function NotesCanvasCard({ isOpen, onToggle, department, pinnedFolderIds 
   // subscription below, which filters client-side (canvas_notes_pages has no
   // department column of its own to filter on server-side, only folder_id).
   const folderIdsRef = useRef(new Set());
+  // A per-instance suffix so this card's Realtime channel topic is unique.
+  // The topic used to be just `notes-canvas:${department}`, shared by every
+  // card on that board — so once a second NotesCanvasCard mounted (the global
+  // notes modal alongside the one already on the Canvas page), the second
+  // supabase.channel(topic) handed back the first card's already-subscribed
+  // channel, and calling .on() on a subscribed channel throws. Unique topics
+  // give each mount its own channel; Postgres changes fan out to all of them.
+  const channelIdRef = useRef(Math.random().toString(36).slice(2, 9));
   useEffect(() => {
     folderIdsRef.current = new Set(folders.map((f) => f.id));
   }, [folders]);
@@ -643,7 +651,7 @@ export function NotesCanvasCard({ isOpen, onToggle, department, pinnedFolderIds 
   useEffect(() => {
     if (!isOpen) return;
     const channel = supabase
-      .channel(`notes-canvas:${department}`)
+      .channel(`notes-canvas:${department}:${channelIdRef.current}`)
       .on(
         "postgres_changes",
         { event: "*", schema: "public", table: "canvas_notes_folders", filter: `department=eq.${department}` },

@@ -681,12 +681,13 @@ function NoteEditor({
         .rne-root ul[data-type="taskList"] input[type="checkbox"] { width: 15px; height: 15px; accent-color: var(--rne-accent); cursor: pointer; }
         .rne-root hr { border: none; border-top: 1px solid #ece4d8; margin: 18px 0; }
         .rne-root img.rne-img { max-width: 100%; height: auto; border-radius: 10px; margin: 4px 0 14px; display: block; cursor: pointer; }
-        /* Collaborator carets. The name tag only shows on hover — a label
-           parked permanently next to someone's cursor is a lot of visual noise
-           for a two-person note. */
+        /* Collaborator carets. The name hangs BELOW the cursor and stays put —
+           above-on-hover meant you had to go find a cursor and hover it to learn
+           who was typing. Below-and-always keeps the name attached to the
+           playhead where you're already looking, and the pill's pointed
+           top-left corner reads as dangling from the caret. */
         .rne-root .collaboration-carets__caret { position: relative; border-left: 1px solid; border-right: 1px solid; margin-left: -1px; margin-right: -1px; pointer-events: none; word-break: normal; }
-        .rne-root .collaboration-carets__label { position: absolute; top: -1.4em; left: -1px; font-size: 11px; font-weight: 700; line-height: 1; white-space: nowrap; border-radius: 4px 4px 4px 0; padding: 2px 5px; color: #fff; opacity: 0; transition: opacity 0.12s; pointer-events: none; user-select: none; }
-        .rne-root .collaboration-carets__caret:hover .collaboration-carets__label { opacity: 1; }
+        .rne-root .collaboration-carets__label { position: absolute; top: 100%; left: -1px; margin-top: 1px; font-size: 10.5px; font-weight: 700; line-height: 1; white-space: nowrap; border-radius: 0 4px 4px 4px; padding: 2px 5px; color: #fff; pointer-events: none; user-select: none; box-shadow: 0 1px 3px rgba(0,0,0,0.15); z-index: 20; }
         .rne-root a { color: var(--rne-accent); text-decoration: underline; text-underline-offset: 2px; cursor: pointer; }
         .rne-root .ProseMirror { caret-color: var(--rne-accent); }
         .rne-root .rne-drag-handle-icon {

@@ -15,7 +15,7 @@ import { confirmAction } from "../lib/confirm";
 import { notify } from "../lib/toast";
 import {
   discoverJobNumberField, planFilmSync, fetchAllFolders, findStudioFolder,
-  findMasterTemplateFolder, projectsInFolder,
+  findMasterTemplateFolder, fetchFolderProjects,
   planPropagate, applyPropagate, copyTemplateFolder, mapJobNumberFoldersUnder,
 } from "../lib/wrikeCampaign";
 import { isServiceAccount, DEPT_GROUPS } from "../lib/people";
@@ -1415,7 +1415,7 @@ function PushToWrikeModal({ studio, filmTitle, slotJobs, mode = "push", onClose 
         const [field, byId] = await Promise.all([discoverJobNumberField(), fetchAllFolders()]);
         const template = findMasterTemplateFolder(byId, studio);
         const studioFolder = findStudioFolder(byId, studio);
-        const projects = projectsInFolder(byId, studioFolder);
+        const projects = studioFolder ? await fetchFolderProjects(studioFolder.childIds) : [];
         const filmProject = projects.find((p) => p.title.trim().toLowerCase() === filmTitle.toLowerCase()) || null;
         if (alive) setPlan({ field, template, studioFolder, filmProject });
       } catch (e) {

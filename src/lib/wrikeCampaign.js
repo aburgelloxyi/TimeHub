@@ -69,7 +69,11 @@ export async function discoverJobNumberField() {
 // callers can walk the tree locally without N round-trips. `project` is present
 // on folders that are Wrike Projects (item type "Project").
 export async function fetchAllFolders() {
-  const FF = encodeURIComponent("[childIds,scope,project]");
+  // The flat /folders (FolderTree) list only accepts a small set of requestable
+  // fields — `childIds` is valid, but `scope`/`project` are NOT and 400 the whole
+  // call. Project-ness isn't available here; detect it with a targeted by-id
+  // call (fetchFolderProjects) only where we actually need it.
+  const FF = encodeURIComponent("[childIds]");
   const rows = await wrikeGetAll(`/folders?fields=${FF}`);
   const byId = {};
   rows.forEach((f) => {
@@ -77,11 +81,26 @@ export async function fetchAllFolders() {
       id: f.id,
       title: f.title || "",
       childIds: f.childIds || [],
-      scope: f.scope,
-      isProject: !!f.project,
     };
   });
   return byId;
+}
+
+// Which of the given folder ids are Wrike Projects (item type "Project"). The
+// by-id folder endpoint returns full Folder objects, which — unlike the flat
+// tree — do accept `project` in fields. Batched into chunks of 100 (Wrike's
+// per-request id cap). Returns [{ id, title }] for the project ones only.
+export async function fetchFolderProjects(folderIds) {
+  const ids = (folderIds || []).filter(Boolean);
+  if (!ids.length) return [];
+  const FF = encodeURIComponent("[project]");
+  const out = [];
+  for (let i = 0; i < ids.length; i += 100) {
+    const batch = ids.slice(i, i + 100);
+    const rows = await wrikeGet(`/folders/${batch.join(",")}?fields=${FF}`);
+    rows.forEach((f) => { if (f.project) out.push({ id: f.id, title: f.title || "" }); });
+  }
+  return out;
 }
 
 const norm = (s) => (s || "").toUpperCase().replace(/[_\s]+/g, " ").trim();
@@ -132,17 +151,6 @@ export function findMasterTemplateFolder(byId, studioName) {
   return best ? { id: best.folder.id, title: best.folder.title, jobCount: best.jobCount } : null;
 }
 
-// Every Project-type folder directly inside a studio folder — these are the
-// films. Returns [{ id, title }]. Direct children only (films live one level
-// under the studio folder), matching the "Project within Paramount folder" spec.
-export function projectsInFolder(byId, studioFolder) {
-  if (!studioFolder) return [];
-  return (studioFolder.childIds || [])
-    .map((id) => byId[id])
-    .filter((f) => f && f.isProject)
-    .map((f) => ({ id: f.id, title: f.title }));
-}
-
 // ── Req 6: Film DB sync ───────────────────────────────────────────────────────
 
 // Read-only plan: which Wrike film projects are missing from the films table.
@@ -156,7 +164,7 @@ export async function planFilmSync(studioName, existingTitles) {
     return { error: `No “${studioName}” folder found in Wrike.`, studioFolder: null, toAdd: [] };
   }
   const have = new Set([...existingTitles].map((t) => t.trim().toLowerCase()));
-  const projects = projectsInFolder(byId, studioFolder);
+  const projects = await fetchFolderProjects(studioFolder.childIds);
   const toAdd = projects
     .filter((p) => p.title.trim() && !have.has(p.title.trim().toLowerCase()))
     .map((p) => p.title.trim())
@@ -237,6 +245,8 @@ export async function applyPropagate(willSet, fieldId, jobNumber, onProgress) {
 // copyResponsibles is off so a duplicated template isn't auto-assigned to
 // whoever is on the template. Returns the new root folder's id.
 export async function copyTemplateFolder({ sourceFolderId, parentId, title }) {
+  // No rescheduleMode/rescheduleDate — they must be supplied together and we're
+  // not shifting dates, just duplicating structure + content.
   const params = new URLSearchParams({
     parent: parentId,
     title,
@@ -245,7 +255,6 @@ export async function copyTemplateFolder({ sourceFolderId, parentId, title }) {
     copyCustomStatuses: "true",
     copyResponsibles: "false",
     copyAttachments: "false",
-    rescheduleMode: "Start",
   });
   const res = await fetch(`${WRIKE}/copy_folder/${sourceFolderId}?${params}`, { method: "POST" });
   if (!res.ok) {

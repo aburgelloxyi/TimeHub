@@ -15,7 +15,7 @@ import { confirmAction } from "../lib/confirm";
 import { notify } from "../lib/toast";
 import {
   discoverJobNumberField, planFilmSync, fetchAllFolders, findStudioFolder,
-  findMasterTemplateFolder, fetchFolderProjects,
+  findMasterTemplateFolder, fetchFolderProjects, collectSubtreeIds,
   planPropagate, applyPropagate, copyTemplateFolder, mapJobNumberFoldersUnder,
 } from "../lib/wrikeCampaign";
 import { isServiceAccount, DEPT_GROUPS } from "../lib/people";
@@ -1457,8 +1457,11 @@ function PushToWrikeModal({ studio, filmTitle, slotJobs, mode = "push", onClose 
           const t = p.title.trim().toLowerCase();
           return wanted && (t.includes(wanted) || wanted.includes(t));
         });
+        // Guard set: every folder id inside the master template. We refuse to
+        // copy into it or write a field on anything within it.
+        const templateIds = template ? collectSubtreeIds(byId, template.id) : new Set();
         if (alive) {
-          setPlan({ field, template, studioFolder, projects });
+          setPlan({ field, template, studioFolder, projects, templateIds });
           setTargetId(close?.id || "");
         }
       } catch (e) {
@@ -1481,7 +1484,22 @@ function PushToWrikeModal({ studio, filmTitle, slotJobs, mode = "push", onClose 
     if (!canApply) return;
     setApplying(true);
     setError(null);
+
+    // ── Template-write guard ──────────────────────────────────────────────
+    // Hard stop: the master template must never be a write target. Any folder
+    // id inside its subtree is off-limits both as a copy destination and as a
+    // tagging target. This is defence-in-depth on top of the fact that copy is
+    // read-only on its source — it makes writing to the template physically
+    // impossible even if a lookup ever returned the wrong folder.
+    const templateIds = plan.templateIds || new Set();
+    const inTemplate = (id) => templateIds.has(id);
+    const TEMPLATE_GUARD = "Aborted to protect the master template — a target folder resolved inside it. Nothing was written.";
+
     try {
+      if (!isRetag && (inTemplate(filmProject.id) || filmProject.id === plan.template?.id)) {
+        throw new Error(TEMPLATE_GUARD);
+      }
+
       let folderMap;
       if (isRetag) {
         // No copy — re-map the film project's existing JOBNUMBER folders and
@@ -1496,15 +1514,21 @@ function PushToWrikeModal({ studio, filmTitle, slotJobs, mode = "push", onClose 
           title: filmTitle,
         });
         if (!newRootId) throw new Error("Wrike copy returned no new folder id.");
+        // The copy must have landed OUTSIDE the template — if not, refuse to tag.
+        if (inTemplate(newRootId)) throw new Error(TEMPLATE_GUARD);
         setProgress({ step: "Mapping duplicated job folders…", done: 0, total: 1 });
         folderMap = await mapJobNumberFoldersUnder(newRootId);
       }
+
+      // Final gate: none of the folders we're about to tag may be in the template.
+      if (Object.values(folderMap).some(inTemplate)) throw new Error(TEMPLATE_GUARD);
 
       let propagated = 0, failed = 0, skipped = 0;
       for (let i = 0; i < slots.length; i++) {
         const s = slots[i];
         const folderId = folderMap[s.label];
         if (!folderId) { skipped += 1; continue; }
+        if (inTemplate(folderId)) throw new Error(TEMPLATE_GUARD); // never write into the template
         setProgress({ step: `Setting Job Number on “${s.code}” tasks…`, done: i, total: slots.length });
         const p = await planPropagate(folderId, plan.field.id, s.code);
         const r = await applyPropagate(p.willSet, plan.field.id, s.code,
@@ -1563,6 +1587,17 @@ function PushToWrikeModal({ studio, filmTitle, slotJobs, mode = "push", onClose 
                     ? "Pick the matching project below"
                     : `No projects under ${studio} — sync films first`} />
             </div>
+
+            {/* Reassurance: the guard that makes writing to the template impossible. */}
+            {!isRetag && plan?.template && (
+              <div className="flex items-start gap-2 mb-4 px-3 py-2 bg-[#1cc1a5]/8 border border-[#1cc1a5]/25 rounded-xl">
+                <Shield className="w-3.5 h-3.5 text-[#1cc1a5] shrink-0 mt-0.5" />
+                <p className="text-[11px] text-[#33454f] leading-snug">
+                  The master template is <span className="font-bold">only ever read</span> — it's copied, never
+                  modified or deleted. A guard blocks any write that resolves inside it.
+                </p>
+              </div>
+            )}
 
             {/* Film picker — auto-selects the closest match, but you can override
                 it (handy when the Wrike project name differs slightly from the

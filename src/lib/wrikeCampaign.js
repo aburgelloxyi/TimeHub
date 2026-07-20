@@ -118,6 +118,16 @@ export function findStudioFolder(byId, studioName) {
   return matches[0];
 }
 
+// Every folder id in the subtree rooted at rootId (inclusive). Used by the
+// template-write guard: we never write into any of these ids.
+export function collectSubtreeIds(byId, rootId, seen = new Set()) {
+  if (!rootId || seen.has(rootId)) return seen;
+  seen.add(rootId);
+  const node = byId[rootId];
+  (node?.childIds || []).forEach((c) => collectSubtreeIds(byId, c, seen));
+  return seen;
+}
+
 // Count JOBNUMBER folders anywhere beneath a node — used to score master-template
 // candidates (the real, populated template has the most).
 function countJobNumberFolders(byId, rootId, seen = new Set()) {

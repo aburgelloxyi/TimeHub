@@ -2640,15 +2640,22 @@ export function JobsFeedSection() {
 
   const load = useCallback(async () => {
     setLoading(true);
+    // Read through the Worker's service-role endpoint, not supabase directly:
+    // the tasks table has a per-user RLS policy, so a browser query would only
+    // return the caller's own rows. This management feed must show everyone's.
+    //
     // "date" is a text column with mixed historical formats (dd/mm/yyyy and
-    // ISO), so filtering it with .gte()/.lt() at the DB level is unreliable —
-    // it's a lexicographic string compare, not a real date compare. Fetch
-    // everything and filter by month client-side after normalising to ISO.
-    const { data: allTasks } = await supabase
-      .from("tasks")
-      .select("*")
-      .order("id", { ascending: false })
-      .limit(2000);
+    // ISO), so filtering it at the DB level is unreliable (lexicographic string
+    // compare). Fetch everything and filter by month client-side after
+    // normalising to ISO.
+    let allTasks = [];
+    try {
+      const res = await fetch("/api/jobs-feed");
+      if (res.ok) allTasks = await res.json();
+      else console.error("[JobsFeed] /api/jobs-feed failed", res.status);
+    } catch (e) {
+      console.error("[JobsFeed] /api/jobs-feed error", e);
+    }
 
     const toIso = (d) => {
       if (!d) return null;

@@ -53,6 +53,9 @@ export default {
     if (url.pathname.startsWith("/api/wrike/")) {
       return handleProxy(request, url, env);
     }
+    if (url.pathname === "/api/jobs-feed") {
+      return handleJobsFeed(request, env);
+    }
 
     return env.ASSETS.fetch(request);
   },
@@ -89,6 +92,30 @@ function json(body, init = {}) {
     ...init,
     headers: { "Content-Type": "application/json", ...(init.headers || {}) },
   });
+}
+
+// ── Admin Jobs Feed (all users' time) ────────────────────────────────────────
+// The tasks table has a per-user RLS policy (wrike_user_isolation), so a browser
+// read only ever returns the caller's own rows. The Administration Jobs Feed is
+// a management view that must show everyone's time, so it reads through here:
+// service-role query bypasses RLS server-side. Gated on a valid Wrike session so
+// only a connected member can call it (jobs/profiles are already world-readable
+// to authenticated users, so only tasks needs this).
+async function handleJobsFeed(request, env) {
+  const cookies = parseCookies(request);
+  const session = cookies[SESSION_COOKIE];
+  if (!session) return json({ error: "not_connected" }, { status: 401 });
+  const row = await getTokenRowBySession(env, session);
+  if (!row) return json({ error: "not_connected" }, { status: 401 });
+
+  const res = await sbFetch(env, "/tasks?select=*&order=id.desc&limit=5000");
+  if (!res.ok) {
+    const detail = await res.text().catch(() => "");
+    console.error(`[jobs-feed] tasks query ${res.status}:`, detail);
+    return json({ error: "query_failed" }, { status: 502 });
+  }
+  const data = await res.json();
+  return json(data);
 }
 
 // ── Supabase (service role) helpers ──────────────────────────────────────────

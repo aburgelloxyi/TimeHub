@@ -8,6 +8,7 @@ import {
   ArrowUpAZ, ArrowDownAZ, CheckCircle2, UserCog,
   FolderPlus, Folder, FolderOpen, Sparkles, Loader2,
   FileBarChart, ClipboardList, Globe, Layers, Download, Network, TrendingUp,
+  Undo2, UploadCloud, Eye, ListChecks,
 } from "lucide-react";
 import { supabase } from "../lib/supabaseClient";
 import { confirmAction } from "../lib/confirm";
@@ -1294,9 +1295,17 @@ const FOLDER_TEMPLATES = {
 };
 
 const STUDIO_OPTIONS = ["Paramount", "Universal"];
-// Studios we can currently fetch/test live from Wrike (have a master-template folder).
+// Studios we can currently fetch live from Wrike (have a master-template folder).
 // Paramount also ships a hardcoded fallback tree above; Universal is fetch-only.
 const TESTABLE_STUDIOS = new Set(["Paramount", "Universal"]);
+
+// When a slot is activated inside a studio's folder, the ordering client is that
+// studio's international arm by default (req: "Client — if I'm in Paramount
+// folder assume Paramount International"). Editable afterwards in the detail modal.
+const STUDIO_CLIENT = {
+  Paramount: "Paramount International",
+  Universal: "Universal International",
+};
 
 const JOBS_SETUP_TABS = [
   { id: "campaign", label: "Bulk Campaign", desc: "Generate a whole campaign's job numbers at once from a studio's Wrike folder template.", icon: FolderPlus, color: "from-blue-500 to-[#12a0e1]" },
@@ -1319,6 +1328,11 @@ export function JobsSetupSection({ setActiveTab }) {
   const [customSaving, setCustomSaving] = useState(false);
   const [customCreated, setCustomCreated] = useState(null); // job_number of the row just created
 
+  // Per-studio in-memory cache of the fetched template, so re-selecting a studio
+  // you've already loaded is instant and doesn't re-hit Wrike. Cleared only on a
+  // manual refresh (the small re-sync affordance below the studio picker).
+  const templateCache = useRef({}); // { [studio]: { tree, info } }
+
   // Slots already activated for the selected film — { [templateSlotLabel]: jobRow }.
   // Nothing gets created until a slot is clicked, so a film never ends up with a
   // pile of job numbers nobody asked for — you activate exactly what's needed,
@@ -1327,6 +1341,14 @@ export function JobsSetupSection({ setActiveTab }) {
   const [loadingSlots, setLoadingSlots] = useState(false);
   const [activatingSlot, setActivatingSlot] = useState(null); // slot label currently being created
   const [activateError, setActivateError] = useState(null);
+
+  // Job numbers activated during THIS session (across films) — the reviewable
+  // list at the bottom. Most-recent first. Each can be opened in a detail modal
+  // to fill in costs/billing, or undone (which deletes the row again).
+  const [sessionJobs, setSessionJobs] = useState([]);
+  const [reviewJob, setReviewJob] = useState(null); // job row currently open in the detail modal
+  const [reviewSaving, setReviewSaving] = useState(false);
+  const [undoingId, setUndoingId] = useState(null); // job id currently being undone
 
   // Films are added in the Films tab first — this section only picks from that
   // list, it never creates new films, so the two stay in sync by construction.
@@ -1374,10 +1396,20 @@ export function JobsSetupSection({ setActiveTab }) {
   // proxy. Builds the same { label, children, jobNumber } shape as the
   // hardcoded FOLDER_TEMPLATES, tagging every "JOBNUMBER_..." folder so it
   // gets a generated code.
-  const fetchTemplateFromWrike = async () => {
+  const fetchTemplateFromWrike = useCallback(async (targetStudio, { force = false } = {}) => {
+    if (!TESTABLE_STUDIOS.has(targetStudio)) return;
+    // Serve from the per-studio cache unless the caller explicitly forces a refresh.
+    if (!force && templateCache.current[targetStudio]) {
+      const cached = templateCache.current[targetStudio];
+      setFetchedTemplate(cached.tree);
+      setFetchInfo(cached.info);
+      return;
+    }
     if (!localStorage.getItem("wrike_user_id")) { setFetchInfo({ error: "Wrike not connected — connect it in Profile → Settings first." }); return; }
     setFetchingTemplate(true);
     setFetchInfo(null);
+    setFetchedTemplate(null);
+    const studio = targetStudio; // shadow so the existing body below reads the requested studio
     try {
       const FF = encodeURIComponent("[childIds]");
       const fd = {};
@@ -1426,15 +1458,23 @@ export function JobsSetupSection({ setActiveTab }) {
         const score = jobCount - (isDupe ? 1e6 : 0) - (cand.title || "").length * 0.001;
         if (!best || score > best.score) best = { tree, jobCount, title: cand.title, score };
       }
+      const info = { rootLabel: best.title, jobCount: best.jobCount };
+      templateCache.current[targetStudio] = { tree: best.tree, info };
       setFetchedTemplate(best.tree);
-      setFetchInfo({ rootLabel: best.title, jobCount: best.jobCount });
+      setFetchInfo(info);
     } catch (e) {
       setFetchInfo({ error: e.message });
       setFetchedTemplate(null);
     } finally {
       setFetchingTemplate(false);
     }
-  };
+  }, []);
+
+  // Req 7 — auto-fetch the studio's master template the moment a studio is
+  // selected (no manual "Fetch" button). Re-selecting a studio you've already
+  // loaded is served instantly from templateCache. Req 4's reconcile: every
+  // switch re-reads the live tree, so renamed folders in Wrike show up here.
+  useEffect(() => { fetchTemplateFromWrike(studio); }, [studio, fetchTemplateFromWrike]);
 
   // Load which slots are already activated for the selected film — keyed by
   // template_slot, so we know per JOBNUMBER_ folder whether it already has a
@@ -1470,9 +1510,14 @@ export function JobsSetupSection({ setActiveTab }) {
         if (m) maxNum = Math.max(maxNum, parseInt(m[1], 10));
       });
       const code = `XY${String(maxNum + 1).padStart(6, "0")}`;
+      // Req 8 autofill: client defaults to the studio's international arm, project
+      // description is guessed from the slot name (leaf.description), item category
+      // is left empty. All editable afterwards in the review modal.
       const row = {
         job_number: `${filmTitle.trim()} : ${code}, ${leaf.description}`,
         film_title: filmTitle.trim(),
+        client: STUDIO_CLIENT[studio] || "",
+        project_description: leaf.description,
         template_slot: leaf.label,
         status: "Inactive",
         start_date: new Date().toISOString().slice(0, 10),
@@ -1480,11 +1525,81 @@ export function JobsSetupSection({ setActiveTab }) {
       const { data, error } = await supabase.from("jobs").insert(row).select().single();
       if (error) throw error;
       setSlotJobs(prev => ({ ...prev, [leaf.label]: data }));
+      // Prepend to the session review list (dedupe by id, just in case).
+      setSessionJobs(prev => [data, ...prev.filter(j => j.id !== data.id)]);
     } catch (e) {
       setActivateError(e.code === "23505" ? "That job number was just taken by another activation — try again." : e.message);
     } finally {
       setActivatingSlot(null);
     }
+  };
+
+  // Req 3 — undo an activation: delete the jobs row again and drop it from both
+  // the per-film slot map and the session review list, returning the slot to a
+  // clickable placeholder. (Once live Wrike writes land, this will also clear the
+  // pushed folder / custom field — that's wired in the Wrike-write phase.)
+  const undoActivation = async (job, { skipConfirm = false } = {}) => {
+    if (!job?.id || undoingId) return;
+    if (!skipConfirm) {
+      const ok = await confirmAction({
+        title: "Undo this job number?",
+        message: `“${job.job_number}” will be removed from Job Book and its slot freed up again.`,
+        confirmLabel: "Undo activation",
+        danger: true,
+      });
+      if (!ok) return;
+    }
+    setUndoingId(job.id);
+    const { error } = await supabase.from("jobs").delete().eq("id", job.id);
+    setUndoingId(null);
+    if (error) { notify("Couldn't undo: " + error.message, "error"); return; }
+    setSlotJobs(prev => {
+      const next = { ...prev };
+      if (job.template_slot) delete next[job.template_slot];
+      return next;
+    });
+    setSessionJobs(prev => prev.filter(j => j.id !== job.id));
+  };
+
+  // Bulk undo — every job activated this session. Confirmed once.
+  const undoAllSession = async () => {
+    if (!sessionJobs.length) return;
+    const ok = await confirmAction({
+      title: `Undo all ${sessionJobs.length} job number${sessionJobs.length === 1 ? "" : "s"}?`,
+      message: "Every job number activated in this session will be removed from Job Book and its slot freed up again.",
+      confirmLabel: "Undo all",
+      danger: true,
+    });
+    if (!ok) return;
+    const ids = sessionJobs.map(j => j.id);
+    setUndoingId("__bulk__");
+    const { error } = await supabase.from("jobs").delete().in("id", ids);
+    setUndoingId(null);
+    if (error) { notify("Couldn't undo all: " + error.message, "error"); return; }
+    const slots = new Set(sessionJobs.map(j => j.template_slot).filter(Boolean));
+    setSlotJobs(prev => Object.fromEntries(Object.entries(prev).filter(([k]) => !slots.has(k))));
+    setSessionJobs([]);
+  };
+
+  // Save edits from the review detail modal back to the jobs row, then refresh
+  // it in both the session list and the slot map so the UI reflects the change.
+  const handleReviewSave = async (form) => {
+    if (!reviewJob?.id) return;
+    setReviewSaving(true);
+    const payload = {
+      ...form,
+      start_date: form.start_date || null,
+      completed_date: form.completed_date || null,
+      fixed_cost: form.fixed_cost === "" ? null : parseFloat(form.fixed_cost),
+      third_party_cost: form.third_party_cost === "" ? null : parseFloat(form.third_party_cost),
+      estimated_cost: form.estimated_cost === "" ? null : parseFloat(form.estimated_cost),
+    };
+    const { data, error } = await supabase.from("jobs").update(payload).eq("id", reviewJob.id).select().single();
+    setReviewSaving(false);
+    if (error) { notify("Couldn't save: " + error.message, "error"); return; }
+    setSessionJobs(prev => prev.map(j => j.id === data.id ? data : j));
+    setSlotJobs(prev => data.template_slot && prev[data.template_slot] ? { ...prev, [data.template_slot]: data } : prev);
+    setReviewJob(null);
   };
 
   // Recursive tree renderer — activated JOBNUMBER_ leaves show their real code;
@@ -1564,21 +1679,22 @@ export function JobsSetupSection({ setActiveTab }) {
     <div className="flex flex-col gap-5">
       <div className="bg-[#f8fafc] border border-[#dce4ec] rounded-2xl p-4">
         <p className="text-xs text-[#768994] leading-relaxed">
-          Pick a film and fetch its studio template to see every possible job slot. Nothing is created just
-          from looking — <span className="font-bold text-[#122027]">click a slot</span> to allocate a real job
-          number for it right then and add it to Job Book. Come back to this same page any time to activate
-          more slots as work actually comes in, so you never end up with numbers nobody used.
+          Pick a studio and its template loads automatically. Choose a film, then
+          <span className="font-bold text-[#122027]"> click a slot</span> to allocate a real job number for
+          it right then and add it to Job Book — nothing is created just from looking. Everything you activate
+          this session collects in <span className="font-bold text-[#122027]">Review</span> below, where you can
+          fill in costs and billing or undo it.
         </p>
       </div>
 
       <div>
         <label className="block text-[10px] font-black uppercase tracking-widest text-[#768994] mb-1.5">Studio Template</label>
-        <div className="flex gap-2">
+        <div className="flex items-center gap-2 flex-wrap">
           {STUDIO_OPTIONS.map(s => {
             const available = TESTABLE_STUDIOS.has(s);
             return (
               <button key={s} disabled={!available}
-                onClick={() => { setStudio(s); setFetchedTemplate(null); setFetchInfo(null); }}
+                onClick={() => setStudio(s)}
                 className={`px-3 py-2 rounded-xl text-xs font-bold border transition-all ${
                   studio === s
                     ? "bg-[#122027] text-white border-[#122027]"
@@ -1590,24 +1706,28 @@ export function JobsSetupSection({ setActiveTab }) {
               </button>
             );
           })}
+          {/* Auto-fetch status + a small manual re-sync (force-refresh past the cache). */}
+          {fetchingTemplate ? (
+            <span className="flex items-center gap-1.5 text-xs font-bold text-[#768994] ml-1">
+              <Loader2 className="w-3.5 h-3.5 animate-spin" /> Loading {studio} template…
+            </span>
+          ) : fetchInfo?.error ? (
+            <span className="flex items-center gap-2 ml-1">
+              <span className="text-xs font-bold text-red-500">{fetchInfo.error}</span>
+              <button onClick={() => fetchTemplateFromWrike(studio, { force: true })}
+                className="text-[#12a0e1] hover:underline text-xs font-bold">Retry</button>
+            </span>
+          ) : fetchInfo ? (
+            <span className="flex items-center gap-2 ml-1">
+              <span className="text-[10px] font-black uppercase tracking-wider text-[#12a0e1] bg-[#12a0e1]/10 px-2 py-1 rounded-lg">Live Wrike Data</span>
+              <button onClick={() => fetchTemplateFromWrike(studio, { force: true })}
+                title={`Loaded “${fetchInfo.rootLabel}” — re-sync from Wrike`}
+                className="flex items-center gap-1 text-[#768994] hover:text-[#12a0e1] text-xs font-bold transition-colors">
+                <RefreshCw className="w-3 h-3" /> Re-sync
+              </button>
+            </span>
+          ) : null}
         </div>
-      </div>
-
-      <div className="flex items-center gap-3 flex-wrap">
-        <button onClick={fetchTemplateFromWrike} disabled={fetchingTemplate || !TESTABLE_STUDIOS.has(studio)}
-          className="flex items-center gap-2 px-4 py-2 bg-white border border-[#12a0e1] text-[#12a0e1] hover:bg-[#12a0e1] hover:text-white text-xs font-bold rounded-xl transition-all disabled:opacity-40">
-          {fetchingTemplate ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5" />}
-          {fetchingTemplate ? "Fetching from Wrike…" : `Fetch ${studio} template from Wrike`}
-        </button>
-        {fetchInfo?.error && <span className="text-xs font-bold text-red-500">{fetchInfo.error}</span>}
-        {fetchInfo && !fetchInfo.error && (
-          <span className="text-xs font-bold text-[#1cc1a5]">
-            Loaded “{fetchInfo.rootLabel}” — {fetchInfo.jobCount} job folder{fetchInfo.jobCount === 1 ? "" : "s"}
-          </span>
-        )}
-        {fetchedTemplate && (
-          <span className="text-[10px] font-black uppercase tracking-wider text-[#12a0e1] bg-[#12a0e1]/10 px-2 py-1 rounded-lg">Live Wrike Data</span>
-        )}
       </div>
 
       <div>
@@ -1649,17 +1769,33 @@ export function JobsSetupSection({ setActiveTab }) {
                   const isActivating = activatingSlot === l.label;
                   const code = activated?.job_number.match(/XY\d+/)?.[0];
                   const canActivate = filmTitle.trim() && !activated && !isActivating;
+                  // Activated rows carry their own undo button, so they can't be a
+                  // single clickable <button> (no nested buttons) — render a div.
+                  if (activated) {
+                    return (
+                      <div key={l.label}
+                        className="flex items-center justify-between text-[11px] border-b border-[#f0f4f8] pb-1.5 pt-0.5 group">
+                        <span className="text-[#768994] truncate mr-2">{l.description}</span>
+                        <span className="flex items-center gap-1.5 shrink-0">
+                          <span className="font-mono font-bold text-[#12a0e1]">{code}</span>
+                          <button onClick={() => undoActivation(activated)} disabled={undoingId === activated.id}
+                            title="Undo this activation"
+                            className="p-0.5 rounded-md text-slate-300 hover:text-rose-500 hover:bg-rose-50 transition-colors disabled:opacity-40">
+                            {undoingId === activated.id ? <Loader2 className="w-3 h-3 animate-spin" /> : <Undo2 className="w-3 h-3" />}
+                          </button>
+                        </span>
+                      </div>
+                    );
+                  }
                   return (
                     <button key={l.label} disabled={!canActivate}
                       onClick={() => activateSlot(l)}
-                      title={!filmTitle.trim() && !activated ? "Select a film above first" : ""}
+                      title={!filmTitle.trim() ? "Select a film above first" : ""}
                       className={`flex items-center justify-between text-[11px] border-b border-[#f0f4f8] pb-1.5 pt-0.5 text-left transition-colors ${
                         canActivate ? "hover:bg-[#12a0e1]/5 rounded-lg -mx-1 px-1" : "cursor-default"
                       }`}>
-                      <span className={activated ? "text-[#768994]" : "text-[#122027] font-bold"}>{l.description}</span>
-                      {activated ? (
-                        <span className="font-mono font-bold text-[#12a0e1]">{code}</span>
-                      ) : isActivating ? (
+                      <span className="text-[#122027] font-bold">{l.description}</span>
+                      {isActivating ? (
                         <Loader2 className="w-3.5 h-3.5 animate-spin text-[#12a0e1]" />
                       ) : (
                         <span className={`text-[9px] font-black uppercase tracking-wider px-2 py-0.5 rounded-full ${
@@ -1679,14 +1815,69 @@ export function JobsSetupSection({ setActiveTab }) {
               View in Job Book
             </button>
             <button disabled
-              title="Coming soon — will use the Wrike API to create the folder automatically when a slot is activated"
+              title="Coming in the Wrike-write phase — will duplicate the whole studio template (folders + tasks + subtasks) into Wrike and set the Job Number custom field."
               className="flex items-center gap-2 px-5 py-2.5 bg-slate-100 text-slate-400 text-sm font-bold rounded-2xl cursor-not-allowed">
-              <FolderPlus className="w-3.5 h-3.5" /> Push Folders to Wrike (Soon)
+              <UploadCloud className="w-3.5 h-3.5" /> Push to Wrike (Soon)
             </button>
           </div>
         </>
       )}
+
+      {/* Req 8 — Review: everything activated this session, each openable to fill
+          in costs/billing (autofilled where we can) or undo. Shows across films. */}
+      {sessionJobs.length > 0 && (
+        <div className="border border-[#dce4ec] rounded-2xl overflow-hidden">
+          <div className="flex items-center justify-between gap-3 px-4 py-3 bg-[#f8fafc] border-b border-[#dce4ec]">
+            <p className="flex items-center gap-2 text-xs font-black uppercase tracking-widest text-[#122027]">
+              <ListChecks className="w-4 h-4 text-[#12a0e1]" />
+              Review · {sessionJobs.length} activated this session
+            </p>
+            <button onClick={undoAllSession} disabled={undoingId === "__bulk__"}
+              className="flex items-center gap-1.5 text-[11px] font-bold text-rose-500 hover:text-rose-600 disabled:opacity-40 transition-colors">
+              {undoingId === "__bulk__" ? <Loader2 className="w-3 h-3 animate-spin" /> : <Undo2 className="w-3 h-3" />}
+              Undo all
+            </button>
+          </div>
+          <div className="divide-y divide-[#f0f4f8] max-h-[300px] overflow-y-auto">
+            {sessionJobs.map(j => {
+              const code = j.job_number?.match(/XY\d+/)?.[0];
+              const hasBilling = j.fixed_cost != null || j.estimated_cost != null || j.third_party_cost != null || j.billed_to;
+              return (
+                <div key={j.id} className="flex items-center gap-3 px-4 py-2.5 hover:bg-slate-50/60 transition-colors">
+                  <span className="font-mono font-bold text-[#12a0e1] text-xs shrink-0">{code}</span>
+                  <span className="text-xs text-[#122027] truncate flex-1 min-w-0">
+                    <span className="italic text-[#768994]">{j.film_title}</span>
+                    {j.project_description ? ` · ${j.project_description}` : ""}
+                  </span>
+                  {hasBilling ? (
+                    <span className="text-[9px] font-black uppercase tracking-wider text-[#1cc1a5] bg-[#1cc1a5]/10 px-2 py-0.5 rounded-full shrink-0">Details added</span>
+                  ) : (
+                    <span className="text-[9px] font-black uppercase tracking-wider text-[#f4b740] bg-[#f4b740]/10 px-2 py-0.5 rounded-full shrink-0">Needs details</span>
+                  )}
+                  <button onClick={() => setReviewJob(j)}
+                    className="flex items-center gap-1 text-[11px] font-bold text-[#12a0e1] hover:text-[#0d8bc4] shrink-0 transition-colors">
+                    <Eye className="w-3.5 h-3.5" /> Details
+                  </button>
+                  <button onClick={() => undoActivation(j)} disabled={undoingId === j.id}
+                    title="Undo this activation"
+                    className="p-1 rounded-lg text-slate-300 hover:text-rose-500 hover:bg-rose-50 shrink-0 transition-colors disabled:opacity-40">
+                    {undoingId === j.id ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Undo2 className="w-3.5 h-3.5" />}
+                  </button>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
     </div>
+      )}
+
+      {reviewJob && (
+        <JobModal
+          job={reviewJob}
+          clients={clients} films={films} categories={categories} descs={descs}
+          onSave={handleReviewSave} onClose={() => setReviewJob(null)} saving={reviewSaving}
+        />
       )}
 
       {innerTab === "custom" && (

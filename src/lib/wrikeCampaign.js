@@ -245,16 +245,17 @@ export async function applyPropagate(willSet, fieldId, jobNumber, onProgress) {
 // copyResponsibles is off so a duplicated template isn't auto-assigned to
 // whoever is on the template. Returns the new root folder's id.
 export async function copyTemplateFolder({ sourceFolderId, parentId, title }) {
-  // No rescheduleMode/rescheduleDate — they must be supplied together and we're
-  // not shifting dates, just duplicating structure + content.
+  // Only the documented, accepted copy_folder params — Wrike 400s on anything
+  // else (copyAttachments / copyCustomStatuses are NOT valid params). We keep
+  // descriptions and custom-field VALUES, and deliberately don't copy
+  // responsibles so a duplicated template isn't auto-assigned to the template's
+  // people. No rescheduleMode/Date (must be paired; we're not shifting dates).
   const params = new URLSearchParams({
     parent: parentId,
     title,
     copyDescriptions: "true",
     copyCustomFields: "true",
-    copyCustomStatuses: "true",
     copyResponsibles: "false",
-    copyAttachments: "false",
   });
   const res = await fetch(`${WRIKE}/copy_folder/${sourceFolderId}?${params}`, { method: "POST" });
   if (!res.ok) {

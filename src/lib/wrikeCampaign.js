@@ -87,17 +87,17 @@ export async function fetchAllFolders() {
 }
 
 // Which of the given folder ids are Wrike Projects (item type "Project"). The
-// by-id folder endpoint returns full Folder objects, which — unlike the flat
-// tree — do accept `project` in fields. Batched into chunks of 100 (Wrike's
-// per-request id cap). Returns [{ id, title }] for the project ones only.
+// by-id folder endpoint returns full Folder objects, which carry `project` by
+// DEFAULT — like `scope`, it's not requestable via fields= (that 400s
+// "'project' not allowed"), it just comes back on its own. Batched into chunks
+// of 100 (Wrike's per-request id cap). Returns [{ id, title }] for projects only.
 export async function fetchFolderProjects(folderIds) {
   const ids = (folderIds || []).filter(Boolean);
   if (!ids.length) return [];
-  const FF = encodeURIComponent("[project]");
   const out = [];
   for (let i = 0; i < ids.length; i += 100) {
     const batch = ids.slice(i, i + 100);
-    const rows = await wrikeGet(`/folders/${batch.join(",")}?fields=${FF}`);
+    const rows = await wrikeGet(`/folders/${batch.join(",")}`);
     rows.forEach((f) => { if (f.project) out.push({ id: f.id, title: f.title || "" }); });
   }
   return out;

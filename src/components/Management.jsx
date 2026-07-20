@@ -197,8 +197,9 @@ const letterPalette = (l) => {
 };
 
 // ── Generic reference-list section ───────────────────────────────────────────
-function SimpleListSection({ table, labelField = "name", label, placeholder, isLong = false, quickFilters = [], quickFilterLabel = "Quick filters", groups = [] }) {
+function SimpleListSection({ table, labelField = "name", label, placeholder, isLong = false, quickFilters = [], quickFilterLabel = "Quick filters", groups = [], wrikeFilmSync = false }) {
   const [items, setItems]               = useState([]);
+  const [showFilmSync, setShowFilmSync] = useState(false);
   const [loading, setLoading]           = useState(true);
   const [search, setSearch]             = useState("");
   const [sort, setSort]                 = useState("asc");
@@ -374,6 +375,15 @@ function SimpleListSection({ table, labelField = "name", label, placeholder, isL
           </button>
         )}
 
+        {/* Sync from Wrike (films only) — pull Project items from a studio folder */}
+        {wrikeFilmSync && (
+          <button onClick={() => setShowFilmSync(true)}
+            title="Pull film projects from a studio folder in Wrike into this list"
+            className="flex items-center gap-1.5 px-3 py-2 bg-[#1cc1a5] hover:bg-[#17a892] text-white text-xs font-bold rounded-xl transition-all shrink-0">
+            <Download className="w-3.5 h-3.5" /> Sync from Wrike
+          </button>
+        )}
+
         {/* Add */}
         <button onClick={() => setAdding(a => !a)}
           className={`flex items-center gap-1.5 px-3 py-2 text-xs font-bold rounded-xl transition-all shrink-0 ${
@@ -382,6 +392,11 @@ function SimpleListSection({ table, labelField = "name", label, placeholder, isL
           <Plus className="w-3.5 h-3.5" /> Add
         </button>
       </div>
+
+      {wrikeFilmSync && showFilmSync && (
+        <FilmSyncModal existingFilms={items.map(i => i[labelField]).filter(Boolean)}
+          onClose={() => setShowFilmSync(false)} onApplied={load} />
+      )}
 
       {/* ── Add form ── */}
       {adding && (
@@ -1289,13 +1304,16 @@ function WrikeApplyShell({ title, subtitle, accent = "#12a0e1", onClose, childre
 
 // Req 6 — preview + apply the Film DB sync from Wrike's studio-folder projects.
 // Read-only until "Add N films": additive only (never deletes local films).
-function FilmSyncModal({ studio, existingFilms, onClose, onApplied }) {
+function FilmSyncModal({ studio: initialStudio = "Paramount", existingFilms, onClose, onApplied }) {
+  const [studio, setStudio] = useState(initialStudio);
   const [plan, setPlan] = useState(null); // { error, studioFolder, projectCount, toAdd }
   const [loading, setLoading] = useState(true);
   const [applying, setApplying] = useState(false);
 
   useEffect(() => {
     let alive = true;
+    setLoading(true);
+    setPlan(null);
     planFilmSync(studio, existingFilms)
       .then((p) => alive && setPlan(p))
       .catch((e) => alive && setPlan({ error: e.message, toAdd: [] }))
@@ -1319,6 +1337,20 @@ function FilmSyncModal({ studio, existingFilms, onClose, onApplied }) {
     <WrikeApplyShell title="Sync films from Wrike" accent="#1cc1a5"
       subtitle={`Projects inside the ${studio} folder → Films`} onClose={onClose}>
       <div className="px-6 py-5 overflow-y-auto flex-1">
+        {/* Which studio folder to pull film projects from. */}
+        <div className="flex items-center gap-2 mb-4">
+          <span className="text-[10px] font-black uppercase tracking-widest text-[#768994] mr-1">Studio</span>
+          {STUDIO_OPTIONS.map((s) => (
+            <button key={s} onClick={() => setStudio(s)}
+              className={`px-3 py-1.5 rounded-xl text-xs font-bold border transition-all ${
+                studio === s
+                  ? "bg-[#122027] text-white border-[#122027]"
+                  : "bg-white text-[#122027] border-[#dce4ec] hover:border-[#1cc1a5]"
+              }`}>
+              {s}
+            </button>
+          ))}
+        </div>
         {loading ? (
           <div className="flex items-center gap-2 text-[#768994] py-8 justify-center">
             <Loader2 className="w-4 h-4 animate-spin" /> Reading {studio} projects from Wrike…
@@ -1400,6 +1432,7 @@ function PushToWrikeModal({ studio, filmTitle, slotJobs, mode = "push", onClose 
   const [applying, setApplying] = useState(false);
   const [progress, setProgress] = useState(null); // { step, done, total }
   const [result, setResult] = useState(null);      // { propagated, failed, skipped }
+  const [targetId, setTargetId] = useState("");    // chosen Wrike project id (film picker)
 
   // Activated slots, with the code we'll write as the field value.
   const slots = useMemo(() => Object.values(slotJobs).map((j) => ({
@@ -1416,8 +1449,18 @@ function PushToWrikeModal({ studio, filmTitle, slotJobs, mode = "push", onClose 
         const template = findMasterTemplateFolder(byId, studio);
         const studioFolder = findStudioFolder(byId, studio);
         const projects = studioFolder ? await fetchFolderProjects(studioFolder.childIds) : [];
-        const filmProject = projects.find((p) => p.title.trim().toLowerCase() === filmTitle.toLowerCase()) || null;
-        if (alive) setPlan({ field, template, studioFolder, filmProject });
+        // Auto-pick the best match so the common case is one glance: an exact
+        // title match wins, else a close match (one title contains the other).
+        const wanted = filmTitle.trim().toLowerCase();
+        const exact = projects.find((p) => p.title.trim().toLowerCase() === wanted);
+        const close = exact || projects.find((p) => {
+          const t = p.title.trim().toLowerCase();
+          return wanted && (t.includes(wanted) || wanted.includes(t));
+        });
+        if (alive) {
+          setPlan({ field, template, studioFolder, projects });
+          setTargetId(close?.id || "");
+        }
       } catch (e) {
         if (alive) setError(e.message);
       } finally {
@@ -1427,7 +1470,12 @@ function PushToWrikeModal({ studio, filmTitle, slotJobs, mode = "push", onClose 
     return () => { alive = false; };
   }, [studio, filmTitle]);
 
-  const canApply = plan && plan.field && plan.filmProject && (isRetag || plan.template) && !applying;
+  // The chosen target project (picker selection resolved against the plan).
+  const filmProject = useMemo(
+    () => plan?.projects?.find((p) => p.id === targetId) || null,
+    [plan, targetId]
+  );
+  const canApply = plan && plan.field && filmProject && (isRetag || plan.template) && !applying;
 
   const apply = async () => {
     if (!canApply) return;
@@ -1439,12 +1487,12 @@ function PushToWrikeModal({ studio, filmTitle, slotJobs, mode = "push", onClose 
         // No copy — re-map the film project's existing JOBNUMBER folders and
         // top up any tasks missing the field (new/renamed items).
         setProgress({ step: "Finding job folders in Wrike…", done: 0, total: 1 });
-        folderMap = await mapJobNumberFoldersUnder(plan.filmProject.id);
+        folderMap = await mapJobNumberFoldersUnder(filmProject.id);
       } else {
         setProgress({ step: "Duplicating template into Wrike…", done: 0, total: 1 });
         const newRootId = await copyTemplateFolder({
           sourceFolderId: plan.template.id,
-          parentId: plan.filmProject.id,
+          parentId: filmProject.id,
           title: filmTitle,
         });
         if (!newRootId) throw new Error("Wrike copy returned no new folder id.");
@@ -1507,9 +1555,36 @@ function PushToWrikeModal({ studio, filmTitle, slotJobs, mode = "push", onClose 
                 <CheckRow ok={!!plan?.template} label="Studio master template"
                   value={plan?.template ? `${plan.template.title} · ${plan.template.jobCount} job folders` : `No “${studio}” master template found`} />
               )}
-              <CheckRow ok={!!plan?.filmProject} label="Film project in Wrike"
-                value={plan?.filmProject ? `${plan.filmProject.title} (in ${plan.studioFolder?.title || studio})` : `No “${filmTitle}” project under ${studio} — sync films / create it in Wrike first`} />
+              <CheckRow ok={!!filmProject} label="Target film project in Wrike"
+                warn={!filmProject && (plan?.projects?.length > 0)}
+                value={filmProject
+                  ? `${filmProject.title} (in ${plan.studioFolder?.title || studio})`
+                  : plan?.projects?.length
+                    ? "Pick the matching project below"
+                    : `No projects under ${studio} — sync films first`} />
             </div>
+
+            {/* Film picker — auto-selects the closest match, but you can override
+                it (handy when the Wrike project name differs slightly from the
+                local film title). This is the folder the template copies into. */}
+            {!!plan?.projects?.length && (
+              <div className="mb-4">
+                <label className="block text-[10px] font-black uppercase tracking-widest text-[#768994] mb-1.5">
+                  Target project · {studio}
+                </label>
+                <StrictSelect
+                  value={filmProject?.title || ""}
+                  onChange={(title) => {
+                    const p = plan.projects.find((x) => x.title === title);
+                    setTargetId(p?.id || "");
+                  }}
+                  options={plan.projects.map((p) => p.title)}
+                  placeholder={`Search ${studio} projects…`} />
+                <p className="text-[10px] text-[#768994] mt-1">
+                  Closest match to “{filmTitle}” is pre-selected — change it if the Wrike name differs.
+                </p>
+              </div>
+            )}
 
             <p className="text-[10px] font-black uppercase tracking-widest text-[#768994] mb-2">
               {slots.length} activated slot{slots.length === 1 ? "" : "s"} to tag
@@ -3307,7 +3382,7 @@ export default function Management({ wrikeUserId, department, wrikeData = [] }) 
                     />
                   )}
                   {activeTab === "people"     && <PeopleSection />}
-                  {activeTab === "films"      && <SimpleListSection table="films" labelField="title" label="Films" placeholder="Film title…" />}
+                  {activeTab === "films"      && <SimpleListSection table="films" labelField="title" label="Films" placeholder="Film title…" wrikeFilmSync />}
                   {activeTab === "clients"    && <SimpleListSection table="clients" labelField="name" label="Clients" quickFilters={STUDIO_GROUPS} quickFilterLabel="Filter by studio" />}
                   {activeTab === "categories" && <SimpleListSection table="job_categories" labelField="name" label="Item Categories" groups={CATEGORY_GROUPS} />}
                   {activeTab === "descs"      && <SimpleListSection table="project_descriptions" labelField="description" label="Project Type Descriptions" isLong quickFilters={DESC_QUICK_FILTERS} quickFilterLabel="Filter by territory" groups={DESCRIPTION_GROUPS} />}

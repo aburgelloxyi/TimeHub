@@ -16,7 +16,8 @@ import { notify } from "../lib/toast";
 import {
   discoverJobNumberField, planFilmSync, fetchAllFolders, findStudioFolder,
   findMasterTemplateFolder, fetchFolderProjects, collectSubtreeIds,
-  planPropagate, applyPropagate, copyTemplateDeep, mapJobNumberFoldersUnder,
+  planPropagate, applyPropagate, copyTemplateDeep,
+  mapSlotFoldersUnder, slotSuffix, renameFolder,
 } from "../lib/wrikeCampaign";
 import { isServiceAccount, DEPT_GROUPS } from "../lib/people";
 import { SEED_CLIENTS, SEED_PROJECT_DESCRIPTIONS } from "../data/seedData";
@@ -1496,20 +1497,21 @@ function PushToWrikeModal({ studio, filmTitle, slotJobs, mode = "push", onClose 
     const TEMPLATE_GUARD = "Aborted to protect the master template — a target folder resolved inside it. Nothing was written.";
 
     try {
-      if (!isRetag && (inTemplate(filmProject.id) || filmProject.id === plan.template?.id)) {
+      if (inTemplate(filmProject.id) || filmProject.id === plan.template?.id) {
         throw new Error(TEMPLATE_GUARD);
       }
 
-      let folderMap;
       let droppedTaskFolders = [];
-      if (isRetag) {
-        // No copy — re-map the film project's existing JOBNUMBER folders and
-        // top up any tasks missing the field (new/renamed items).
-        setProgress({ step: "Finding job folders in Wrike…", done: 0, total: 1 });
-        folderMap = await mapJobNumberFoldersUnder(filmProject.id);
-      } else {
-        // Deep copy that splits around Wrike's 250-entry cap, so a template of
-        // any size comes across whole.
+      // Rename-resilient map of the project's slot folders (JOBNUMBER_… or
+      // already XY#####_…), keyed by stable suffix.
+      setProgress({ step: "Checking the film's folders in Wrike…", done: 0, total: 1 });
+      let slotFolders = await mapSlotFoldersUnder(filmProject.id);
+
+      // Only duplicate the template when the project is genuinely empty of slot
+      // folders. If it already has the structure, we rename/tag in place.
+      if (Object.keys(slotFolders).length === 0) {
+        if (isRetag) throw new Error("This project has no template folders yet — run Push first.");
+        if (!plan.template) throw new Error(`No ${studio} master template found to copy.`);
         const rep = await copyTemplateDeep({
           byId: plan.byId,
           sourceId: plan.template.id,
@@ -1517,33 +1519,36 @@ function PushToWrikeModal({ studio, filmTitle, slotJobs, mode = "push", onClose 
           title: filmTitle,
           onProgress: (step) => setProgress({ step, done: 0, total: 1 }),
         });
-        const newRootId = rep.rootId;
-        if (!newRootId) throw new Error("Wrike copy returned no new folder id.");
-        // The copy must have landed OUTSIDE the template — if not, refuse to tag.
-        if (inTemplate(newRootId)) throw new Error(TEMPLATE_GUARD);
+        if (!rep.rootId) throw new Error("Wrike copy returned no new folder id.");
+        if (inTemplate(rep.rootId)) throw new Error(TEMPLATE_GUARD);
         droppedTaskFolders = rep.droppedTaskFolders || [];
-        setProgress({ step: "Mapping duplicated job folders…", done: 0, total: 1 });
-        folderMap = await mapJobNumberFoldersUnder(newRootId);
+        setProgress({ step: "Re-reading the copied folders…", done: 0, total: 1 });
+        slotFolders = await mapSlotFoldersUnder(filmProject.id);
       }
 
-      // Final gate: none of the folders we're about to tag may be in the template.
-      if (Object.values(folderMap).some(inTemplate)) throw new Error(TEMPLATE_GUARD);
-
-      let propagated = 0, failed = 0, skipped = 0;
+      // Rename each activated slot's folder to its code and tag any tasks beneath.
+      let renamed = 0, propagated = 0, failed = 0, skipped = 0;
       for (let i = 0; i < slots.length; i++) {
         const s = slots[i];
-        const folderId = folderMap[s.label];
-        if (!folderId) { skipped += 1; continue; }
-        if (inTemplate(folderId)) throw new Error(TEMPLATE_GUARD); // never write into the template
-        setProgress({ step: `Setting Job Number on “${s.code}” tasks…`, done: i, total: slots.length });
-        const p = await planPropagate(folderId, plan.field.id, s.code);
+        const suffix = slotSuffix(s.label);
+        const folder = slotFolders[suffix];
+        if (!folder) { skipped += 1; continue; }
+        if (inTemplate(folder.id)) throw new Error(TEMPLATE_GUARD); // never write into the template
+
+        const newTitle = `${s.code}_${suffix}`;
+        setProgress({ step: `Assigning ${s.code}…`, done: i, total: slots.length });
+        if (folder.title !== newTitle) { await renameFolder(folder.id, newTitle); renamed += 1; }
+
+        // Tag tasks/subtasks beneath (0 while the folder is still empty — Re-tag
+        // or a later run tops them up once work is added).
+        const p = await planPropagate(folder.id, plan.field.id, s.code);
         const r = await applyPropagate(p.willSet, plan.field.id, s.code,
-          (d, t) => setProgress({ step: `Setting Job Number on “${s.code}” tasks…`, done: d, total: t }));
+          (d, t) => setProgress({ step: `Tagging ${s.code} tasks…`, done: d, total: t }));
         propagated += r.ok.length;
         failed += r.failed.length;
       }
-      setResult({ propagated, failed, skipped, droppedTaskFolders });
-      notify(`${isRetag ? "Re-tagged" : "Pushed to"} Wrike — ${propagated} task${propagated === 1 ? "" : "s"} tagged${failed ? `, ${failed} failed` : ""}.`,
+      setResult({ renamed, propagated, failed, skipped, droppedTaskFolders });
+      notify(`Wrike updated — ${renamed} folder${renamed === 1 ? "" : "s"} named${propagated ? `, ${propagated} task${propagated === 1 ? "" : "s"} tagged` : ""}${failed ? `, ${failed} failed` : ""}.`,
         failed ? "error" : "success");
     } catch (e) {
       setError(e.message);
@@ -1557,7 +1562,7 @@ function PushToWrikeModal({ studio, filmTitle, slotJobs, mode = "push", onClose 
     <WrikeApplyShell title={isRetag ? "Re-tag new items in Wrike" : "Push to Wrike"}
       subtitle={isRetag
         ? `Top up the Job Number field on new items in “${filmTitle}”`
-        : `Duplicate the ${studio} template into “${filmTitle}” and tag its tasks`} onClose={onClose}>
+        : `Name the activated job folders in “${filmTitle}” and tag their tasks`} onClose={onClose}>
       <div className="px-6 py-5 overflow-y-auto flex-1">
         {loading ? (
           <div className="flex items-center gap-2 text-[#768994] py-8 justify-center">
@@ -1567,10 +1572,11 @@ function PushToWrikeModal({ studio, filmTitle, slotJobs, mode = "push", onClose 
           <div className="py-4 space-y-3 text-center">
             <CheckCircle2 className="w-10 h-10 text-[#1cc1a5] mx-auto" />
             <p className="text-sm font-bold text-[#122027]">
-              {isRetag ? `“${filmTitle}” re-tagged in Wrike.` : `Template duplicated into “${filmTitle}”.`}
+              {isRetag ? `“${filmTitle}” re-tagged in Wrike.` : `“${filmTitle}” updated in Wrike.`}
             </p>
             <p className="text-xs text-[#768994]">
-              {result.propagated} task{result.propagated === 1 ? "" : "s"} tagged with a Job Number
+              {result.renamed ? `${result.renamed} folder${result.renamed === 1 ? "" : "s"} named · ` : ""}
+              {result.propagated} task{result.propagated === 1 ? "" : "s"} tagged
               {result.failed ? ` · ${result.failed} failed` : ""}
               {result.skipped ? ` · ${result.skipped} slot${result.skipped === 1 ? "" : "s"} had no matching folder` : ""}.
             </p>

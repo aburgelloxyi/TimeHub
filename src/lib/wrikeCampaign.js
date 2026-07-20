@@ -334,6 +334,39 @@ export async function copyTemplateDeep({ byId, sourceId, parentId, title, onProg
   return report;
 }
 
+// Strip a JOBNUMBER_ or XY#####_ prefix off a folder title, leaving the slot's
+// stable suffix (e.g. "French_Canada_Assets") that identifies it across renames.
+export function slotSuffix(title) {
+  return (title || "").replace(/^(JOBNUMBER|XY\d+)_?/i, "");
+}
+
+// Map every job-slot folder under a root by its suffix. Rename-resilient: it
+// matches a folder whether it's still "JOBNUMBER_…" or already renamed to
+// "XY#####_…", so re-pushing/reconciling finds the same folder every time.
+export async function mapSlotFoldersUnder(rootId) {
+  const byId = await fetchAllFolders();
+  const out = {};
+  const walk = (id) => {
+    const node = byId[id];
+    if (!node) return;
+    if (/^(JOBNUMBER|XY\d+)_/i.test(node.title)) {
+      out[slotSuffix(node.title)] = { id: node.id, title: node.title };
+    }
+    (node.childIds || []).forEach(walk);
+  };
+  walk(rootId);
+  return out;
+}
+
+// Rename a folder (used to stamp the job code onto a JOBNUMBER_ slot folder).
+export async function renameFolder(folderId, title) {
+  const res = await fetch(`${WRIKE}/folders/${folderId}?title=${encodeURIComponent(title)}`, { method: "PUT" });
+  if (!res.ok) {
+    const body = await res.text().catch(() => "");
+    throw new Error(`rename folder (${res.status})${body ? `: ${body}` : ""}`);
+  }
+}
+
 // After a copy, re-read the new tree and map each JOBNUMBER_ folder title to its
 // new folder id, so propagation (req 1) can target the right subtree per slot.
 export async function mapJobNumberFoldersUnder(rootFolderId) {

@@ -8,10 +8,16 @@ import {
   ArrowUpAZ, ArrowDownAZ, CheckCircle2, UserCog,
   FolderPlus, Folder, FolderOpen, Sparkles, Loader2,
   FileBarChart, ClipboardList, Globe, Layers, Download, Network, TrendingUp,
+  Undo2, UploadCloud, Eye, ListChecks,
 } from "lucide-react";
 import { supabase } from "../lib/supabaseClient";
 import { confirmAction } from "../lib/confirm";
 import { notify } from "../lib/toast";
+import {
+  discoverJobNumberField, planFilmSync, fetchAllFolders, findStudioFolder,
+  findMasterTemplateFolder, projectsInFolder,
+  planPropagate, applyPropagate, copyTemplateFolder, mapJobNumberFoldersUnder,
+} from "../lib/wrikeCampaign";
 import { isServiceAccount, DEPT_GROUPS } from "../lib/people";
 import { SEED_CLIENTS, SEED_PROJECT_DESCRIPTIONS } from "../data/seedData";
 import { DEFAULT_JOBS, CATEGORIES } from "../constants";
@@ -1254,6 +1260,307 @@ function JobModal({ job, clients, films, categories, descs, onSave, onClose, sav
   );
 }
 
+// ── Shared shell for the Wrike dry-run / apply modals ─────────────────────────
+// Both Wrike-writing flows (film sync, push+propagate) follow the same shape:
+// run a read-only plan on open, show what WOULD change, then write only on an
+// explicit "Apply" click. This shell provides the frame; each flow supplies the
+// preview body and the apply handler.
+function WrikeApplyShell({ title, subtitle, accent = "#12a0e1", onClose, children }) {
+  return (
+    <div className="fixed inset-0 z-[9999] bg-[#122027]/60 backdrop-blur-sm flex items-center justify-center p-4"
+      onMouseDown={onClose}>
+      <div className="bg-white rounded-3xl shadow-2xl w-full max-w-lg max-h-[92vh] flex flex-col overflow-hidden border border-[#dce4ec]"
+        onMouseDown={(e) => e.stopPropagation()}>
+        <div className="px-6 pt-5 pb-4 border-b border-[#dce4ec] flex items-center justify-between shrink-0">
+          <div>
+            <p className="text-[9px] font-black uppercase tracking-widest mb-0.5" style={{ color: accent }}>Wrike · dry run</p>
+            <h2 className="text-xl font-black text-[#122027]">{title}</h2>
+            {subtitle && <p className="text-xs text-[#768994] mt-0.5">{subtitle}</p>}
+          </div>
+          <button onClick={onClose} className="p-2 hover:bg-slate-100 rounded-xl text-slate-400 hover:text-slate-600 transition-colors">
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+        {children}
+      </div>
+    </div>
+  );
+}
+
+// Req 6 — preview + apply the Film DB sync from Wrike's studio-folder projects.
+// Read-only until "Add N films": additive only (never deletes local films).
+function FilmSyncModal({ studio, existingFilms, onClose, onApplied }) {
+  const [plan, setPlan] = useState(null); // { error, studioFolder, projectCount, toAdd }
+  const [loading, setLoading] = useState(true);
+  const [applying, setApplying] = useState(false);
+
+  useEffect(() => {
+    let alive = true;
+    planFilmSync(studio, existingFilms)
+      .then((p) => alive && setPlan(p))
+      .catch((e) => alive && setPlan({ error: e.message, toAdd: [] }))
+      .finally(() => alive && setLoading(false));
+    return () => { alive = false; };
+  }, [studio, existingFilms]);
+
+  const apply = async () => {
+    if (!plan?.toAdd?.length) return;
+    setApplying(true);
+    const rows = plan.toAdd.map((title) => ({ title }));
+    const { error } = await supabase.from("films").insert(rows);
+    setApplying(false);
+    if (error) { notify("Film sync failed: " + error.message, "error"); return; }
+    notify(`Added ${rows.length} film${rows.length === 1 ? "" : "s"} from Wrike.`, "success");
+    onApplied?.();
+    onClose();
+  };
+
+  return (
+    <WrikeApplyShell title="Sync films from Wrike" accent="#1cc1a5"
+      subtitle={`Projects inside the ${studio} folder → Films`} onClose={onClose}>
+      <div className="px-6 py-5 overflow-y-auto flex-1">
+        {loading ? (
+          <div className="flex items-center gap-2 text-[#768994] py-8 justify-center">
+            <Loader2 className="w-4 h-4 animate-spin" /> Reading {studio} projects from Wrike…
+          </div>
+        ) : plan?.error ? (
+          <div className="text-sm font-bold text-rose-500 py-6 text-center">{plan.error}</div>
+        ) : (
+          <>
+            <div className="flex items-center gap-2 text-xs text-[#768994] mb-4">
+              <FolderOpen className="w-4 h-4 text-[#f4b740]" />
+              Found <span className="font-bold text-[#122027]">{plan.studioFolder?.title}</span> ·
+              {" "}{plan.projectCount} project{plan.projectCount === 1 ? "" : "s"} in Wrike
+            </div>
+            {plan.toAdd.length === 0 ? (
+              <div className="flex items-center gap-2 text-sm font-bold text-[#1cc1a5] py-6 justify-center">
+                <CheckCircle2 className="w-4 h-4" /> Films are already in sync — nothing to add.
+              </div>
+            ) : (
+              <>
+                <p className="text-[10px] font-black uppercase tracking-widest text-[#768994] mb-2">
+                  {plan.toAdd.length} new film{plan.toAdd.length === 1 ? "" : "s"} to add
+                </p>
+                <div className="border border-[#dce4ec] rounded-2xl divide-y divide-[#f0f4f8] max-h-[320px] overflow-y-auto">
+                  {plan.toAdd.map((t) => (
+                    <div key={t} className="flex items-center gap-2 px-4 py-2 text-sm text-[#122027]">
+                      <Film className="w-3.5 h-3.5 text-[#12a0e1] shrink-0" /> {t}
+                    </div>
+                  ))}
+                </div>
+              </>
+            )}
+          </>
+        )}
+      </div>
+      <div className="px-6 py-4 border-t border-[#dce4ec] flex items-center justify-end gap-2 shrink-0">
+        <button onClick={onClose}
+          className="px-5 py-2.5 text-sm font-bold text-[#768994] hover:text-[#122027] bg-white border border-[#dce4ec] rounded-2xl transition-all">
+          Cancel
+        </button>
+        <button onClick={apply} disabled={applying || loading || !plan?.toAdd?.length}
+          className="flex items-center gap-2 px-6 py-2.5 bg-[#1cc1a5] hover:bg-[#17a892] text-white text-sm font-bold rounded-2xl transition-all disabled:opacity-40">
+          {applying ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Download className="w-3.5 h-3.5" />}
+          {plan?.toAdd?.length ? `Add ${plan.toAdd.length} film${plan.toAdd.length === 1 ? "" : "s"}` : "Nothing to add"}
+        </button>
+      </div>
+    </WrikeApplyShell>
+  );
+}
+
+// Small ✓/✗ precondition row for the push preview.
+function CheckRow({ ok, label, value, warn }) {
+  const Icon = ok ? CheckCircle2 : warn ? AlertTriangle : X;
+  const color = ok ? "#1cc1a5" : warn ? "#f4b740" : "#f43f5e";
+  return (
+    <div className="flex items-start gap-2 py-1.5">
+      <Icon className="w-4 h-4 shrink-0 mt-0.5" style={{ color }} />
+      <div className="min-w-0">
+        <p className="text-xs font-bold text-[#122027]">{label}</p>
+        {value && <p className="text-[11px] text-[#768994] truncate">{value}</p>}
+      </div>
+    </div>
+  );
+}
+
+// Reqs 5 + 1 — duplicate the studio template into the film's Wrike project, then
+// set the Job Number custom field on every task/subtask beneath each activated
+// slot's folder. The preview validates every precondition against LIVE Wrike
+// data on open (template found? film project found? field found?) and refuses to
+// write unless they all hold — the safety net for shipping without local Wrike
+// auth to test against.
+// mode "push"  — duplicate template into the film project, then tag (reqs 5+1).
+// mode "retag" — skip the copy; re-tag the film project's existing job folders,
+//                topping up items added/renamed since (reqs 2 + 4).
+function PushToWrikeModal({ studio, filmTitle, slotJobs, mode = "push", onClose }) {
+  const isRetag = mode === "retag";
+  const [plan, setPlan] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+  const [applying, setApplying] = useState(false);
+  const [progress, setProgress] = useState(null); // { step, done, total }
+  const [result, setResult] = useState(null);      // { propagated, failed, skipped }
+
+  // Activated slots, with the code we'll write as the field value.
+  const slots = useMemo(() => Object.values(slotJobs).map((j) => ({
+    label: j.template_slot,
+    jobNumber: j.job_number,
+    code: (j.job_number?.match(/XY\d+/) || [])[0] || j.job_number,
+  })), [slotJobs]);
+
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      try {
+        const [field, byId] = await Promise.all([discoverJobNumberField(), fetchAllFolders()]);
+        const template = findMasterTemplateFolder(byId, studio);
+        const studioFolder = findStudioFolder(byId, studio);
+        const projects = projectsInFolder(byId, studioFolder);
+        const filmProject = projects.find((p) => p.title.trim().toLowerCase() === filmTitle.toLowerCase()) || null;
+        if (alive) setPlan({ field, template, studioFolder, filmProject });
+      } catch (e) {
+        if (alive) setError(e.message);
+      } finally {
+        if (alive) setLoading(false);
+      }
+    })();
+    return () => { alive = false; };
+  }, [studio, filmTitle]);
+
+  const canApply = plan && plan.field && plan.filmProject && (isRetag || plan.template) && !applying;
+
+  const apply = async () => {
+    if (!canApply) return;
+    setApplying(true);
+    setError(null);
+    try {
+      let folderMap;
+      if (isRetag) {
+        // No copy — re-map the film project's existing JOBNUMBER folders and
+        // top up any tasks missing the field (new/renamed items).
+        setProgress({ step: "Finding job folders in Wrike…", done: 0, total: 1 });
+        folderMap = await mapJobNumberFoldersUnder(plan.filmProject.id);
+      } else {
+        setProgress({ step: "Duplicating template into Wrike…", done: 0, total: 1 });
+        const newRootId = await copyTemplateFolder({
+          sourceFolderId: plan.template.id,
+          parentId: plan.filmProject.id,
+          title: filmTitle,
+        });
+        if (!newRootId) throw new Error("Wrike copy returned no new folder id.");
+        setProgress({ step: "Mapping duplicated job folders…", done: 0, total: 1 });
+        folderMap = await mapJobNumberFoldersUnder(newRootId);
+      }
+
+      let propagated = 0, failed = 0, skipped = 0;
+      for (let i = 0; i < slots.length; i++) {
+        const s = slots[i];
+        const folderId = folderMap[s.label];
+        if (!folderId) { skipped += 1; continue; }
+        setProgress({ step: `Setting Job Number on “${s.code}” tasks…`, done: i, total: slots.length });
+        const p = await planPropagate(folderId, plan.field.id, s.code);
+        const r = await applyPropagate(p.willSet, plan.field.id, s.code,
+          (d, t) => setProgress({ step: `Setting Job Number on “${s.code}” tasks…`, done: d, total: t }));
+        propagated += r.ok.length;
+        failed += r.failed.length;
+      }
+      setResult({ propagated, failed, skipped });
+      notify(`${isRetag ? "Re-tagged" : "Pushed to"} Wrike — ${propagated} task${propagated === 1 ? "" : "s"} tagged${failed ? `, ${failed} failed` : ""}.`,
+        failed ? "error" : "success");
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setApplying(false);
+      setProgress(null);
+    }
+  };
+
+  return (
+    <WrikeApplyShell title={isRetag ? "Re-tag new items in Wrike" : "Push to Wrike"}
+      subtitle={isRetag
+        ? `Top up the Job Number field on new items in “${filmTitle}”`
+        : `Duplicate the ${studio} template into “${filmTitle}” and tag its tasks`} onClose={onClose}>
+      <div className="px-6 py-5 overflow-y-auto flex-1">
+        {loading ? (
+          <div className="flex items-center gap-2 text-[#768994] py-8 justify-center">
+            <Loader2 className="w-4 h-4 animate-spin" /> Checking Wrike…
+          </div>
+        ) : result ? (
+          <div className="py-4 space-y-3 text-center">
+            <CheckCircle2 className="w-10 h-10 text-[#1cc1a5] mx-auto" />
+            <p className="text-sm font-bold text-[#122027]">
+              {isRetag ? `“${filmTitle}” re-tagged in Wrike.` : `Template duplicated into “${filmTitle}”.`}
+            </p>
+            <p className="text-xs text-[#768994]">
+              {result.propagated} task{result.propagated === 1 ? "" : "s"} tagged with a Job Number
+              {result.failed ? ` · ${result.failed} failed` : ""}
+              {result.skipped ? ` · ${result.skipped} slot${result.skipped === 1 ? "" : "s"} had no matching folder` : ""}.
+            </p>
+          </div>
+        ) : (
+          <>
+            <p className="text-[10px] font-black uppercase tracking-widest text-[#768994] mb-1">Preconditions</p>
+            <div className="border border-[#dce4ec] rounded-2xl px-4 py-2 mb-4">
+              <CheckRow ok={!!plan?.field} label="Job Number custom field"
+                value={plan?.field ? `“${plan.field.title}”` : "Not found in Wrike — can't tag tasks"} />
+              {!isRetag && (
+                <CheckRow ok={!!plan?.template} label="Studio master template"
+                  value={plan?.template ? `${plan.template.title} · ${plan.template.jobCount} job folders` : `No “${studio}” master template found`} />
+              )}
+              <CheckRow ok={!!plan?.filmProject} label="Film project in Wrike"
+                value={plan?.filmProject ? `${plan.filmProject.title} (in ${plan.studioFolder?.title || studio})` : `No “${filmTitle}” project under ${studio} — sync films / create it in Wrike first`} />
+            </div>
+
+            <p className="text-[10px] font-black uppercase tracking-widest text-[#768994] mb-2">
+              {slots.length} activated slot{slots.length === 1 ? "" : "s"} to tag
+            </p>
+            {slots.length === 0 ? (
+              <p className="text-xs text-[#768994] italic mb-2">
+                No slots activated yet — the template will still be duplicated, but no tasks will be tagged.
+                Activate slots first to tag their tasks with a Job Number.
+              </p>
+            ) : (
+              <div className="border border-[#dce4ec] rounded-2xl divide-y divide-[#f0f4f8] max-h-[200px] overflow-y-auto mb-2">
+                {slots.map((s) => (
+                  <div key={s.label} className="flex items-center justify-between gap-2 px-4 py-2 text-[11px]">
+                    <span className="text-[#122027] truncate">{s.label.replace(/^JOBNUMBER_?/i, "").replace(/_/g, " ")}</span>
+                    <span className="font-mono font-bold text-[#12a0e1] shrink-0">{s.code}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {progress && (
+              <div className="mt-3">
+                <p className="text-xs font-bold text-[#12a0e1] mb-1.5">{progress.step}</p>
+                <div className="h-1.5 bg-slate-100 rounded-full overflow-hidden">
+                  <div className="h-full bg-[#12a0e1] transition-all"
+                    style={{ width: `${progress.total ? (progress.done / progress.total) * 100 : 100}%` }} />
+                </div>
+              </div>
+            )}
+            {error && <p className="text-xs font-bold text-rose-500 mt-3">{error}</p>}
+          </>
+        )}
+      </div>
+      <div className="px-6 py-4 border-t border-[#dce4ec] flex items-center justify-end gap-2 shrink-0">
+        <button onClick={onClose}
+          className="px-5 py-2.5 text-sm font-bold text-[#768994] hover:text-[#122027] bg-white border border-[#dce4ec] rounded-2xl transition-all">
+          {result ? "Close" : "Cancel"}
+        </button>
+        {!result && (
+          <button onClick={apply} disabled={!canApply}
+            title={!canApply && !applying ? "All preconditions above must pass first" : ""}
+            className="flex items-center gap-2 px-6 py-2.5 bg-[#12a0e1] hover:bg-[#0d8bc4] text-white text-sm font-bold rounded-2xl transition-all disabled:opacity-40">
+            {applying ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <UploadCloud className="w-3.5 h-3.5" />}
+            Apply to Wrike
+          </button>
+        )}
+      </div>
+    </WrikeApplyShell>
+  );
+}
+
 // ── Film Setup: Wrike master-template folder trees ────────────────────────────
 // Mirrors each studio's "_STUDIO_MASTER_TEMPLATES" folder in Wrike. Every node
 // tagged jobNumber:true gets its own auto-generated job number when a film is
@@ -1294,9 +1601,17 @@ const FOLDER_TEMPLATES = {
 };
 
 const STUDIO_OPTIONS = ["Paramount", "Universal"];
-// Studios we can currently fetch/test live from Wrike (have a master-template folder).
+// Studios we can currently fetch live from Wrike (have a master-template folder).
 // Paramount also ships a hardcoded fallback tree above; Universal is fetch-only.
 const TESTABLE_STUDIOS = new Set(["Paramount", "Universal"]);
+
+// When a slot is activated inside a studio's folder, the ordering client is that
+// studio's international arm by default (req: "Client — if I'm in Paramount
+// folder assume Paramount International"). Editable afterwards in the detail modal.
+const STUDIO_CLIENT = {
+  Paramount: "Paramount International",
+  Universal: "Universal International",
+};
 
 const JOBS_SETUP_TABS = [
   { id: "campaign", label: "Bulk Campaign", desc: "Generate a whole campaign's job numbers at once from a studio's Wrike folder template.", icon: FolderPlus, color: "from-blue-500 to-[#12a0e1]" },
@@ -1319,6 +1634,11 @@ export function JobsSetupSection({ setActiveTab }) {
   const [customSaving, setCustomSaving] = useState(false);
   const [customCreated, setCustomCreated] = useState(null); // job_number of the row just created
 
+  // Per-studio in-memory cache of the fetched template, so re-selecting a studio
+  // you've already loaded is instant and doesn't re-hit Wrike. Cleared only on a
+  // manual refresh (the small re-sync affordance below the studio picker).
+  const templateCache = useRef({}); // { [studio]: { tree, info } }
+
   // Slots already activated for the selected film — { [templateSlotLabel]: jobRow }.
   // Nothing gets created until a slot is clicked, so a film never ends up with a
   // pile of job numbers nobody asked for — you activate exactly what's needed,
@@ -1328,13 +1648,28 @@ export function JobsSetupSection({ setActiveTab }) {
   const [activatingSlot, setActivatingSlot] = useState(null); // slot label currently being created
   const [activateError, setActivateError] = useState(null);
 
-  // Films are added in the Films tab first — this section only picks from that
-  // list, it never creates new films, so the two stay in sync by construction.
-  useEffect(() => {
+  // Job numbers activated during THIS session (across films) — the reviewable
+  // list at the bottom. Most-recent first. Each can be opened in a detail modal
+  // to fill in costs/billing, or undone (which deletes the row again).
+  const [sessionJobs, setSessionJobs] = useState([]);
+  const [reviewJob, setReviewJob] = useState(null); // job row currently open in the detail modal
+  const [reviewSaving, setReviewSaving] = useState(false);
+  const [undoingId, setUndoingId] = useState(null); // job id currently being undone
+  const [showFilmSync, setShowFilmSync] = useState(false); // req 6 dry-run modal
+  const [pushMode, setPushMode] = useState(null);          // null | "push" (req 5+1) | "retag" (req 2+4)
+
+  // Reloadable so the Film-sync modal can refresh the picker after adding films.
+  const loadFilms = useCallback(() => {
     supabase.from("films").select("title").order("title").then(({ data }) => {
       setFilms((data || []).map(f => f.title));
       setFilmsLoading(false);
     });
+  }, []);
+
+  // Films are added in the Films tab first — this section only picks from that
+  // list, it never creates new films, so the two stay in sync by construction.
+  useEffect(() => {
+    loadFilms();
     supabase.from("clients").select("name").order("name").then(({ data }) => setClients((data || []).map(c => c.name)));
     supabase.from("job_categories").select("name").order("name").then(({ data }) => setCategories((data || []).map(c => c.name)));
     supabase.from("project_descriptions").select("description").order("description").then(({ data }) => setDescs((data || []).map(d => d.description)));
@@ -1374,10 +1709,20 @@ export function JobsSetupSection({ setActiveTab }) {
   // proxy. Builds the same { label, children, jobNumber } shape as the
   // hardcoded FOLDER_TEMPLATES, tagging every "JOBNUMBER_..." folder so it
   // gets a generated code.
-  const fetchTemplateFromWrike = async () => {
+  const fetchTemplateFromWrike = useCallback(async (targetStudio, { force = false } = {}) => {
+    if (!TESTABLE_STUDIOS.has(targetStudio)) return;
+    // Serve from the per-studio cache unless the caller explicitly forces a refresh.
+    if (!force && templateCache.current[targetStudio]) {
+      const cached = templateCache.current[targetStudio];
+      setFetchedTemplate(cached.tree);
+      setFetchInfo(cached.info);
+      return;
+    }
     if (!localStorage.getItem("wrike_user_id")) { setFetchInfo({ error: "Wrike not connected — connect it in Profile → Settings first." }); return; }
     setFetchingTemplate(true);
     setFetchInfo(null);
+    setFetchedTemplate(null);
+    const studio = targetStudio; // shadow so the existing body below reads the requested studio
     try {
       const FF = encodeURIComponent("[childIds]");
       const fd = {};
@@ -1426,15 +1771,23 @@ export function JobsSetupSection({ setActiveTab }) {
         const score = jobCount - (isDupe ? 1e6 : 0) - (cand.title || "").length * 0.001;
         if (!best || score > best.score) best = { tree, jobCount, title: cand.title, score };
       }
+      const info = { rootLabel: best.title, jobCount: best.jobCount };
+      templateCache.current[targetStudio] = { tree: best.tree, info };
       setFetchedTemplate(best.tree);
-      setFetchInfo({ rootLabel: best.title, jobCount: best.jobCount });
+      setFetchInfo(info);
     } catch (e) {
       setFetchInfo({ error: e.message });
       setFetchedTemplate(null);
     } finally {
       setFetchingTemplate(false);
     }
-  };
+  }, []);
+
+  // Req 7 — auto-fetch the studio's master template the moment a studio is
+  // selected (no manual "Fetch" button). Re-selecting a studio you've already
+  // loaded is served instantly from templateCache. Req 4's reconcile: every
+  // switch re-reads the live tree, so renamed folders in Wrike show up here.
+  useEffect(() => { fetchTemplateFromWrike(studio); }, [studio, fetchTemplateFromWrike]);
 
   // Load which slots are already activated for the selected film — keyed by
   // template_slot, so we know per JOBNUMBER_ folder whether it already has a
@@ -1470,9 +1823,14 @@ export function JobsSetupSection({ setActiveTab }) {
         if (m) maxNum = Math.max(maxNum, parseInt(m[1], 10));
       });
       const code = `XY${String(maxNum + 1).padStart(6, "0")}`;
+      // Req 8 autofill: client defaults to the studio's international arm, project
+      // description is guessed from the slot name (leaf.description), item category
+      // is left empty. All editable afterwards in the review modal.
       const row = {
         job_number: `${filmTitle.trim()} : ${code}, ${leaf.description}`,
         film_title: filmTitle.trim(),
+        client: STUDIO_CLIENT[studio] || "",
+        project_description: leaf.description,
         template_slot: leaf.label,
         status: "Inactive",
         start_date: new Date().toISOString().slice(0, 10),
@@ -1480,11 +1838,81 @@ export function JobsSetupSection({ setActiveTab }) {
       const { data, error } = await supabase.from("jobs").insert(row).select().single();
       if (error) throw error;
       setSlotJobs(prev => ({ ...prev, [leaf.label]: data }));
+      // Prepend to the session review list (dedupe by id, just in case).
+      setSessionJobs(prev => [data, ...prev.filter(j => j.id !== data.id)]);
     } catch (e) {
       setActivateError(e.code === "23505" ? "That job number was just taken by another activation — try again." : e.message);
     } finally {
       setActivatingSlot(null);
     }
+  };
+
+  // Req 3 — undo an activation: delete the jobs row again and drop it from both
+  // the per-film slot map and the session review list, returning the slot to a
+  // clickable placeholder. (Once live Wrike writes land, this will also clear the
+  // pushed folder / custom field — that's wired in the Wrike-write phase.)
+  const undoActivation = async (job, { skipConfirm = false } = {}) => {
+    if (!job?.id || undoingId) return;
+    if (!skipConfirm) {
+      const ok = await confirmAction({
+        title: "Undo this job number?",
+        message: `“${job.job_number}” will be removed from Job Book and its slot freed up again.`,
+        confirmLabel: "Undo activation",
+        danger: true,
+      });
+      if (!ok) return;
+    }
+    setUndoingId(job.id);
+    const { error } = await supabase.from("jobs").delete().eq("id", job.id);
+    setUndoingId(null);
+    if (error) { notify("Couldn't undo: " + error.message, "error"); return; }
+    setSlotJobs(prev => {
+      const next = { ...prev };
+      if (job.template_slot) delete next[job.template_slot];
+      return next;
+    });
+    setSessionJobs(prev => prev.filter(j => j.id !== job.id));
+  };
+
+  // Bulk undo — every job activated this session. Confirmed once.
+  const undoAllSession = async () => {
+    if (!sessionJobs.length) return;
+    const ok = await confirmAction({
+      title: `Undo all ${sessionJobs.length} job number${sessionJobs.length === 1 ? "" : "s"}?`,
+      message: "Every job number activated in this session will be removed from Job Book and its slot freed up again.",
+      confirmLabel: "Undo all",
+      danger: true,
+    });
+    if (!ok) return;
+    const ids = sessionJobs.map(j => j.id);
+    setUndoingId("__bulk__");
+    const { error } = await supabase.from("jobs").delete().in("id", ids);
+    setUndoingId(null);
+    if (error) { notify("Couldn't undo all: " + error.message, "error"); return; }
+    const slots = new Set(sessionJobs.map(j => j.template_slot).filter(Boolean));
+    setSlotJobs(prev => Object.fromEntries(Object.entries(prev).filter(([k]) => !slots.has(k))));
+    setSessionJobs([]);
+  };
+
+  // Save edits from the review detail modal back to the jobs row, then refresh
+  // it in both the session list and the slot map so the UI reflects the change.
+  const handleReviewSave = async (form) => {
+    if (!reviewJob?.id) return;
+    setReviewSaving(true);
+    const payload = {
+      ...form,
+      start_date: form.start_date || null,
+      completed_date: form.completed_date || null,
+      fixed_cost: form.fixed_cost === "" ? null : parseFloat(form.fixed_cost),
+      third_party_cost: form.third_party_cost === "" ? null : parseFloat(form.third_party_cost),
+      estimated_cost: form.estimated_cost === "" ? null : parseFloat(form.estimated_cost),
+    };
+    const { data, error } = await supabase.from("jobs").update(payload).eq("id", reviewJob.id).select().single();
+    setReviewSaving(false);
+    if (error) { notify("Couldn't save: " + error.message, "error"); return; }
+    setSessionJobs(prev => prev.map(j => j.id === data.id ? data : j));
+    setSlotJobs(prev => data.template_slot && prev[data.template_slot] ? { ...prev, [data.template_slot]: data } : prev);
+    setReviewJob(null);
   };
 
   // Recursive tree renderer — activated JOBNUMBER_ leaves show their real code;
@@ -1564,21 +1992,22 @@ export function JobsSetupSection({ setActiveTab }) {
     <div className="flex flex-col gap-5">
       <div className="bg-[#f8fafc] border border-[#dce4ec] rounded-2xl p-4">
         <p className="text-xs text-[#768994] leading-relaxed">
-          Pick a film and fetch its studio template to see every possible job slot. Nothing is created just
-          from looking — <span className="font-bold text-[#122027]">click a slot</span> to allocate a real job
-          number for it right then and add it to Job Book. Come back to this same page any time to activate
-          more slots as work actually comes in, so you never end up with numbers nobody used.
+          Pick a studio and its template loads automatically. Choose a film, then
+          <span className="font-bold text-[#122027]"> click a slot</span> to allocate a real job number for
+          it right then and add it to Job Book — nothing is created just from looking. Everything you activate
+          this session collects in <span className="font-bold text-[#122027]">Review</span> below, where you can
+          fill in costs and billing or undo it.
         </p>
       </div>
 
       <div>
         <label className="block text-[10px] font-black uppercase tracking-widest text-[#768994] mb-1.5">Studio Template</label>
-        <div className="flex gap-2">
+        <div className="flex items-center gap-2 flex-wrap">
           {STUDIO_OPTIONS.map(s => {
             const available = TESTABLE_STUDIOS.has(s);
             return (
               <button key={s} disabled={!available}
-                onClick={() => { setStudio(s); setFetchedTemplate(null); setFetchInfo(null); }}
+                onClick={() => setStudio(s)}
                 className={`px-3 py-2 rounded-xl text-xs font-bold border transition-all ${
                   studio === s
                     ? "bg-[#122027] text-white border-[#122027]"
@@ -1590,34 +2019,46 @@ export function JobsSetupSection({ setActiveTab }) {
               </button>
             );
           })}
+          {/* Auto-fetch status + a small manual re-sync (force-refresh past the cache). */}
+          {fetchingTemplate ? (
+            <span className="flex items-center gap-1.5 text-xs font-bold text-[#768994] ml-1">
+              <Loader2 className="w-3.5 h-3.5 animate-spin" /> Loading {studio} template…
+            </span>
+          ) : fetchInfo?.error ? (
+            <span className="flex items-center gap-2 ml-1">
+              <span className="text-xs font-bold text-red-500">{fetchInfo.error}</span>
+              <button onClick={() => fetchTemplateFromWrike(studio, { force: true })}
+                className="text-[#12a0e1] hover:underline text-xs font-bold">Retry</button>
+            </span>
+          ) : fetchInfo ? (
+            <span className="flex items-center gap-2 ml-1">
+              <span className="text-[10px] font-black uppercase tracking-wider text-[#12a0e1] bg-[#12a0e1]/10 px-2 py-1 rounded-lg">Live Wrike Data</span>
+              <button onClick={() => fetchTemplateFromWrike(studio, { force: true })}
+                title={`Loaded “${fetchInfo.rootLabel}” — re-sync from Wrike`}
+                className="flex items-center gap-1 text-[#768994] hover:text-[#12a0e1] text-xs font-bold transition-colors">
+                <RefreshCw className="w-3 h-3" /> Re-sync
+              </button>
+            </span>
+          ) : null}
         </div>
       </div>
 
-      <div className="flex items-center gap-3 flex-wrap">
-        <button onClick={fetchTemplateFromWrike} disabled={fetchingTemplate || !TESTABLE_STUDIOS.has(studio)}
-          className="flex items-center gap-2 px-4 py-2 bg-white border border-[#12a0e1] text-[#12a0e1] hover:bg-[#12a0e1] hover:text-white text-xs font-bold rounded-xl transition-all disabled:opacity-40">
-          {fetchingTemplate ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5" />}
-          {fetchingTemplate ? "Fetching from Wrike…" : `Fetch ${studio} template from Wrike`}
-        </button>
-        {fetchInfo?.error && <span className="text-xs font-bold text-red-500">{fetchInfo.error}</span>}
-        {fetchInfo && !fetchInfo.error && (
-          <span className="text-xs font-bold text-[#1cc1a5]">
-            Loaded “{fetchInfo.rootLabel}” — {fetchInfo.jobCount} job folder{fetchInfo.jobCount === 1 ? "" : "s"}
-          </span>
-        )}
-        {fetchedTemplate && (
-          <span className="text-[10px] font-black uppercase tracking-wider text-[#12a0e1] bg-[#12a0e1]/10 px-2 py-1 rounded-lg">Live Wrike Data</span>
-        )}
-      </div>
-
       <div>
-        <label className="block text-[10px] font-black uppercase tracking-widest text-[#768994] mb-1.5">Film</label>
+        <div className="flex items-center justify-between mb-1.5">
+          <label className="block text-[10px] font-black uppercase tracking-widest text-[#768994]">Film</label>
+          <button onClick={() => setShowFilmSync(true)}
+            title={`Pull film projects from the ${studio} folder in Wrike into the Films list`}
+            className="flex items-center gap-1.5 text-[11px] font-bold text-[#1cc1a5] hover:text-[#17a892] transition-colors">
+            <Download className="w-3 h-3" /> Sync films from Wrike
+          </button>
+        </div>
         <StrictSelect value={filmTitle} onChange={v => setFilmTitle(v)}
           options={films} placeholder="Select a film…" loading={filmsLoading} />
         {!filmsLoading && films.length === 0 && (
           <p className="text-xs text-[#768994] mt-1.5">
-            No films yet — add one in the{" "}
-            <button onClick={() => setActiveTab?.("films")} className="text-[#12a0e1] font-bold hover:underline">Films</button> tab first.
+            No films yet — <button onClick={() => setShowFilmSync(true)} className="text-[#1cc1a5] font-bold hover:underline">sync them from Wrike</button>{" "}
+            or add one in the{" "}
+            <button onClick={() => setActiveTab?.("films")} className="text-[#12a0e1] font-bold hover:underline">Films</button> tab.
           </p>
         )}
       </div>
@@ -1649,17 +2090,33 @@ export function JobsSetupSection({ setActiveTab }) {
                   const isActivating = activatingSlot === l.label;
                   const code = activated?.job_number.match(/XY\d+/)?.[0];
                   const canActivate = filmTitle.trim() && !activated && !isActivating;
+                  // Activated rows carry their own undo button, so they can't be a
+                  // single clickable <button> (no nested buttons) — render a div.
+                  if (activated) {
+                    return (
+                      <div key={l.label}
+                        className="flex items-center justify-between text-[11px] border-b border-[#f0f4f8] pb-1.5 pt-0.5 group">
+                        <span className="text-[#768994] truncate mr-2">{l.description}</span>
+                        <span className="flex items-center gap-1.5 shrink-0">
+                          <span className="font-mono font-bold text-[#12a0e1]">{code}</span>
+                          <button onClick={() => undoActivation(activated)} disabled={undoingId === activated.id}
+                            title="Undo this activation"
+                            className="p-0.5 rounded-md text-slate-300 hover:text-rose-500 hover:bg-rose-50 transition-colors disabled:opacity-40">
+                            {undoingId === activated.id ? <Loader2 className="w-3 h-3 animate-spin" /> : <Undo2 className="w-3 h-3" />}
+                          </button>
+                        </span>
+                      </div>
+                    );
+                  }
                   return (
                     <button key={l.label} disabled={!canActivate}
                       onClick={() => activateSlot(l)}
-                      title={!filmTitle.trim() && !activated ? "Select a film above first" : ""}
+                      title={!filmTitle.trim() ? "Select a film above first" : ""}
                       className={`flex items-center justify-between text-[11px] border-b border-[#f0f4f8] pb-1.5 pt-0.5 text-left transition-colors ${
                         canActivate ? "hover:bg-[#12a0e1]/5 rounded-lg -mx-1 px-1" : "cursor-default"
                       }`}>
-                      <span className={activated ? "text-[#768994]" : "text-[#122027] font-bold"}>{l.description}</span>
-                      {activated ? (
-                        <span className="font-mono font-bold text-[#12a0e1]">{code}</span>
-                      ) : isActivating ? (
+                      <span className="text-[#122027] font-bold">{l.description}</span>
+                      {isActivating ? (
                         <Loader2 className="w-3.5 h-3.5 animate-spin text-[#12a0e1]" />
                       ) : (
                         <span className={`text-[9px] font-black uppercase tracking-wider px-2 py-0.5 rounded-full ${
@@ -1678,15 +2135,91 @@ export function JobsSetupSection({ setActiveTab }) {
               className="px-4 py-2.5 bg-[#122027] hover:bg-[#1a2e38] text-white text-sm font-bold rounded-2xl transition-all">
               View in Job Book
             </button>
-            <button disabled
-              title="Coming soon — will use the Wrike API to create the folder automatically when a slot is activated"
-              className="flex items-center gap-2 px-5 py-2.5 bg-slate-100 text-slate-400 text-sm font-bold rounded-2xl cursor-not-allowed">
-              <FolderPlus className="w-3.5 h-3.5" /> Push Folders to Wrike (Soon)
+            <button onClick={() => setPushMode("push")} disabled={!filmTitle.trim()}
+              title={filmTitle.trim()
+                ? "Duplicate the whole studio template into this film's Wrike project and tag its tasks with the Job Number custom field"
+                : "Select a film first"}
+              className="flex items-center gap-2 px-5 py-2.5 bg-white border border-[#12a0e1] text-[#12a0e1] hover:bg-[#12a0e1] hover:text-white text-sm font-bold rounded-2xl transition-all disabled:opacity-40 disabled:hover:bg-white disabled:hover:text-[#12a0e1]">
+              <UploadCloud className="w-3.5 h-3.5" /> Push to Wrike
+            </button>
+            <button onClick={() => setPushMode("retag")} disabled={!filmTitle.trim()}
+              title={filmTitle.trim()
+                ? "Re-tag new or renamed items in this film's existing Wrike folders with the Job Number field"
+                : "Select a film first"}
+              className="flex items-center gap-2 px-4 py-2.5 bg-white border border-[#dce4ec] text-[#768994] hover:border-[#12a0e1] hover:text-[#12a0e1] text-sm font-bold rounded-2xl transition-all disabled:opacity-40">
+              <RefreshCw className="w-3.5 h-3.5" /> Re-tag new items
             </button>
           </div>
         </>
       )}
+
+      {/* Req 8 — Review: everything activated this session, each openable to fill
+          in costs/billing (autofilled where we can) or undo. Shows across films. */}
+      {sessionJobs.length > 0 && (
+        <div className="border border-[#dce4ec] rounded-2xl overflow-hidden">
+          <div className="flex items-center justify-between gap-3 px-4 py-3 bg-[#f8fafc] border-b border-[#dce4ec]">
+            <p className="flex items-center gap-2 text-xs font-black uppercase tracking-widest text-[#122027]">
+              <ListChecks className="w-4 h-4 text-[#12a0e1]" />
+              Review · {sessionJobs.length} activated this session
+            </p>
+            <button onClick={undoAllSession} disabled={undoingId === "__bulk__"}
+              className="flex items-center gap-1.5 text-[11px] font-bold text-rose-500 hover:text-rose-600 disabled:opacity-40 transition-colors">
+              {undoingId === "__bulk__" ? <Loader2 className="w-3 h-3 animate-spin" /> : <Undo2 className="w-3 h-3" />}
+              Undo all
+            </button>
+          </div>
+          <div className="divide-y divide-[#f0f4f8] max-h-[300px] overflow-y-auto">
+            {sessionJobs.map(j => {
+              const code = j.job_number?.match(/XY\d+/)?.[0];
+              const hasBilling = j.fixed_cost != null || j.estimated_cost != null || j.third_party_cost != null || j.billed_to;
+              return (
+                <div key={j.id} className="flex items-center gap-3 px-4 py-2.5 hover:bg-slate-50/60 transition-colors">
+                  <span className="font-mono font-bold text-[#12a0e1] text-xs shrink-0">{code}</span>
+                  <span className="text-xs text-[#122027] truncate flex-1 min-w-0">
+                    <span className="italic text-[#768994]">{j.film_title}</span>
+                    {j.project_description ? ` · ${j.project_description}` : ""}
+                  </span>
+                  {hasBilling ? (
+                    <span className="text-[9px] font-black uppercase tracking-wider text-[#1cc1a5] bg-[#1cc1a5]/10 px-2 py-0.5 rounded-full shrink-0">Details added</span>
+                  ) : (
+                    <span className="text-[9px] font-black uppercase tracking-wider text-[#f4b740] bg-[#f4b740]/10 px-2 py-0.5 rounded-full shrink-0">Needs details</span>
+                  )}
+                  <button onClick={() => setReviewJob(j)}
+                    className="flex items-center gap-1 text-[11px] font-bold text-[#12a0e1] hover:text-[#0d8bc4] shrink-0 transition-colors">
+                    <Eye className="w-3.5 h-3.5" /> Details
+                  </button>
+                  <button onClick={() => undoActivation(j)} disabled={undoingId === j.id}
+                    title="Undo this activation"
+                    className="p-1 rounded-lg text-slate-300 hover:text-rose-500 hover:bg-rose-50 shrink-0 transition-colors disabled:opacity-40">
+                    {undoingId === j.id ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Undo2 className="w-3.5 h-3.5" />}
+                  </button>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
     </div>
+      )}
+
+      {reviewJob && (
+        <JobModal
+          job={reviewJob}
+          clients={clients} films={films} categories={categories} descs={descs}
+          onSave={handleReviewSave} onClose={() => setReviewJob(null)} saving={reviewSaving}
+        />
+      )}
+
+      {showFilmSync && (
+        <FilmSyncModal studio={studio} existingFilms={films}
+          onClose={() => setShowFilmSync(false)} onApplied={loadFilms} />
+      )}
+
+      {pushMode && (
+        <PushToWrikeModal
+          studio={studio} filmTitle={filmTitle.trim()}
+          slotJobs={slotJobs} mode={pushMode}
+          onClose={() => setPushMode(null)} />
       )}
 
       {innerTab === "custom" && (

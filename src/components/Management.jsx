@@ -16,7 +16,7 @@ import { notify } from "../lib/toast";
 import {
   discoverJobNumberField, planFilmSync, fetchAllFolders, findStudioFolder,
   findMasterTemplateFolder, fetchFolderProjects, collectSubtreeIds,
-  planPropagate, applyPropagate, copyTemplateFolder, mapJobNumberFoldersUnder,
+  planPropagate, applyPropagate, copyTemplateDeep, mapJobNumberFoldersUnder,
 } from "../lib/wrikeCampaign";
 import { isServiceAccount, DEPT_GROUPS } from "../lib/people";
 import { SEED_CLIENTS, SEED_PROJECT_DESCRIPTIONS } from "../data/seedData";
@@ -1461,7 +1461,7 @@ function PushToWrikeModal({ studio, filmTitle, slotJobs, mode = "push", onClose 
         // copy into it or write a field on anything within it.
         const templateIds = template ? collectSubtreeIds(byId, template.id) : new Set();
         if (alive) {
-          setPlan({ field, template, studioFolder, projects, templateIds });
+          setPlan({ field, template, studioFolder, projects, templateIds, byId });
           setTargetId(close?.id || "");
         }
       } catch (e) {
@@ -1501,21 +1501,27 @@ function PushToWrikeModal({ studio, filmTitle, slotJobs, mode = "push", onClose 
       }
 
       let folderMap;
+      let droppedTaskFolders = [];
       if (isRetag) {
         // No copy — re-map the film project's existing JOBNUMBER folders and
         // top up any tasks missing the field (new/renamed items).
         setProgress({ step: "Finding job folders in Wrike…", done: 0, total: 1 });
         folderMap = await mapJobNumberFoldersUnder(filmProject.id);
       } else {
-        setProgress({ step: "Duplicating template into Wrike…", done: 0, total: 1 });
-        const newRootId = await copyTemplateFolder({
-          sourceFolderId: plan.template.id,
+        // Deep copy that splits around Wrike's 250-entry cap, so a template of
+        // any size comes across whole.
+        const rep = await copyTemplateDeep({
+          byId: plan.byId,
+          sourceId: plan.template.id,
           parentId: filmProject.id,
           title: filmTitle,
+          onProgress: (step) => setProgress({ step, done: 0, total: 1 }),
         });
+        const newRootId = rep.rootId;
         if (!newRootId) throw new Error("Wrike copy returned no new folder id.");
         // The copy must have landed OUTSIDE the template — if not, refuse to tag.
         if (inTemplate(newRootId)) throw new Error(TEMPLATE_GUARD);
+        droppedTaskFolders = rep.droppedTaskFolders || [];
         setProgress({ step: "Mapping duplicated job folders…", done: 0, total: 1 });
         folderMap = await mapJobNumberFoldersUnder(newRootId);
       }
@@ -1536,7 +1542,7 @@ function PushToWrikeModal({ studio, filmTitle, slotJobs, mode = "push", onClose 
         propagated += r.ok.length;
         failed += r.failed.length;
       }
-      setResult({ propagated, failed, skipped });
+      setResult({ propagated, failed, skipped, droppedTaskFolders });
       notify(`${isRetag ? "Re-tagged" : "Pushed to"} Wrike — ${propagated} task${propagated === 1 ? "" : "s"} tagged${failed ? `, ${failed} failed` : ""}.`,
         failed ? "error" : "success");
     } catch (e) {
@@ -1568,6 +1574,22 @@ function PushToWrikeModal({ studio, filmTitle, slotJobs, mode = "push", onClose 
               {result.failed ? ` · ${result.failed} failed` : ""}
               {result.skipped ? ` · ${result.skipped} slot${result.skipped === 1 ? "" : "s"} had no matching folder` : ""}.
             </p>
+            {result.droppedTaskFolders?.length > 0 && (
+              <div className="text-left mt-2 px-3 py-2 bg-[#f4b740]/10 border border-[#f4b740]/30 rounded-xl">
+                <p className="flex items-center gap-1.5 text-[11px] font-bold text-[#8a6d1a] mb-1">
+                  <AlertTriangle className="w-3.5 h-3.5" /> Some container folders were too big to copy whole
+                </p>
+                <p className="text-[11px] text-[#8a6d1a] leading-snug">
+                  Their subfolders (and all tasks inside those) came across fine, but tasks pinned directly to
+                  these folders were not copied — add them by hand if needed:
+                </p>
+                <ul className="mt-1 text-[11px] text-[#8a6d1a] list-disc pl-4">
+                  {result.droppedTaskFolders.map((d) => (
+                    <li key={d.title}>{d.title} — {d.count} direct task{d.count === 1 ? "" : "s"}</li>
+                  ))}
+                </ul>
+              </div>
+            )}
           </div>
         ) : (
           <>

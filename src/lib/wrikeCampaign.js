@@ -266,10 +266,10 @@ export async function copyTemplateFolder({ sourceFolderId, parentId, title }) {
     copyDescriptions: "true",
     copyCustomFields: "true",
     copyResponsibles: "false",
-    // entryLimit defaults to 250 folders+tasks+subtasks and 403s ("affected
-    // entry limit exceeded") on a bigger tree. The full studio template exceeds
-    // that, so raise the ceiling well above any realistic template size.
-    entryLimit: "5000",
+    // entryLimit is hard-capped at 250 by Wrike (values >250 are rejected). A
+    // tree bigger than this 403s "affected entry limit exceeded" — copyTemplateDeep
+    // catches that and splits the copy so the whole template still comes across.
+    entryLimit: "250",
   });
   const res = await fetch(`${WRIKE}/copy_folder/${sourceFolderId}?${params}`, { method: "POST" });
   if (!res.ok) {
@@ -278,6 +278,60 @@ export async function copyTemplateFolder({ sourceFolderId, parentId, title }) {
   }
   const json = await res.json();
   return json.data?.[0]?.id || null;
+}
+
+// Create an empty folder under a parent. Used by the split copier to rebuild a
+// too-big folder's shell before copying its children in separately.
+async function createFolder(parentId, title) {
+  const res = await fetch(`${WRIKE}/folders/${parentId}/folders?title=${encodeURIComponent(title)}`, { method: "POST" });
+  if (!res.ok) {
+    const body = await res.text().catch(() => "");
+    throw new Error(`create folder (${res.status})${body ? `: ${body}` : ""}`);
+  }
+  const json = await res.json();
+  return json.data?.[0]?.id || null;
+}
+
+// Count tasks sitting DIRECTLY in a folder (not in its subfolders). When we have
+// to split a too-big folder we rebuild it empty and copy its child folders in —
+// which carries every subfolder's tasks, but not tasks pinned to the container
+// folder itself. We surface those so nothing is ever lost silently.
+async function fetchDirectTaskCount(folderId) {
+  const rows = await wrikeGet(`/folders/${folderId}/tasks?descendants=false`);
+  return rows.length;
+}
+
+// Copy a folder subtree of ANY size into `parentId`, working around Wrike's
+// 250-entry copy cap. Tries a whole-subtree copy first (fast, fully faithful);
+// only when that hits the entry limit does it rebuild the folder shell and
+// recurse into each child. `report` accumulates the new root id, how many copy
+// calls ran, and any container folders whose direct tasks couldn't be carried.
+export async function copyTemplateDeep({ byId, sourceId, parentId, title, onProgress, report }) {
+  report = report || { rootId: null, copies: 0, droppedTaskFolders: [] };
+  onProgress?.(`Copying “${title}”…`);
+  try {
+    const id = await copyTemplateFolder({ sourceFolderId: sourceId, parentId, title });
+    report.copies += 1;
+    if (!report.rootId) report.rootId = id;
+    return report;
+  } catch (e) {
+    // Only the size limit is recoverable by splitting — anything else is a real
+    // failure and must propagate.
+    if (!/entry limit/i.test(e.message)) throw e;
+  }
+  // Too big for one copy — rebuild this folder empty, then copy its children.
+  const newId = await createFolder(parentId, title);
+  if (!newId) throw new Error(`Could not create folder “${title}”.`);
+  if (!report.rootId) report.rootId = newId;
+  const directCount = await fetchDirectTaskCount(sourceId);
+  if (directCount > 0) report.droppedTaskFolders.push({ title, count: directCount });
+  const node = byId[sourceId];
+  for (const childId of node?.childIds || []) {
+    const child = byId[childId];
+    if (!child) continue;
+    await copyTemplateDeep({ byId, sourceId: childId, parentId: newId, title: child.title, onProgress, report });
+  }
+  return report;
 }
 
 // After a copy, re-read the new tree and map each JOBNUMBER_ folder title to its

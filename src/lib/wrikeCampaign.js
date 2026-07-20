@@ -173,11 +173,14 @@ export async function planFilmSync(studioName, existingTitles) {
   if (!studioFolder) {
     return { error: `No “${studioName}” folder found in Wrike.`, studioFolder: null, toAdd: [] };
   }
-  const have = new Set([...existingTitles].map((t) => t.trim().toLowerCase()));
+  // Wrike project folders are named with underscores (Angry_Birds_3_Movie) —
+  // present them as clean, spaced film titles.
+  const clean = (t) => (t || "").replace(/_/g, " ").replace(/\s+/g, " ").trim();
+  const have = new Set([...existingTitles].map((t) => clean(t).toLowerCase()));
   const projects = await fetchFolderProjects(studioFolder.childIds);
   const toAdd = projects
-    .filter((p) => p.title.trim() && !have.has(p.title.trim().toLowerCase()))
-    .map((p) => p.title.trim())
+    .map((p) => clean(p.title))
+    .filter((t) => t && !have.has(t.toLowerCase()))
     // de-dupe titles that differ only by case/spacing within Wrike itself
     .filter((t, i, arr) => arr.findIndex((x) => x.toLowerCase() === t.toLowerCase()) === i)
     .sort((a, b) => a.localeCompare(b));

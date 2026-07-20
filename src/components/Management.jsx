@@ -1450,12 +1450,14 @@ function PushToWrikeModal({ studio, filmTitle, slotJobs, mode = "push", onClose 
         const template = findMasterTemplateFolder(byId, studio);
         const studioFolder = findStudioFolder(byId, studio);
         const projects = studioFolder ? await fetchFolderProjects(studioFolder.childIds) : [];
-        // Auto-pick the best match so the common case is one glance: an exact
-        // title match wins, else a close match (one title contains the other).
-        const wanted = filmTitle.trim().toLowerCase();
-        const exact = projects.find((p) => p.title.trim().toLowerCase() === wanted);
+        // Auto-pick the best match so the common case is one glance. Compare
+        // underscore/space-insensitively, since the DB film title is spaced but
+        // the Wrike project name is underscored (Angry_Birds_3_Movie).
+        const norm = (s) => (s || "").toLowerCase().replace(/[_\s]+/g, " ").trim();
+        const wanted = norm(filmTitle);
+        const exact = projects.find((p) => norm(p.title) === wanted);
         const close = exact || projects.find((p) => {
-          const t = p.title.trim().toLowerCase();
+          const t = norm(p.title);
           return wanted && (t.includes(wanted) || wanted.includes(t));
         });
         // Guard set: every folder id inside the master template. We refuse to

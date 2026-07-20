@@ -266,6 +266,10 @@ export async function copyTemplateFolder({ sourceFolderId, parentId, title }) {
     copyDescriptions: "true",
     copyCustomFields: "true",
     copyResponsibles: "false",
+    // entryLimit defaults to 250 folders+tasks+subtasks and 403s ("affected
+    // entry limit exceeded") on a bigger tree. The full studio template exceeds
+    // that, so raise the ceiling well above any realistic template size.
+    entryLimit: "5000",
   });
   const res = await fetch(`${WRIKE}/copy_folder/${sourceFolderId}?${params}`, { method: "POST" });
   if (!res.ok) {

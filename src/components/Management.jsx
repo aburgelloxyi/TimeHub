@@ -1462,6 +1462,16 @@ function PushToWrikeModal({ studio, filmTitle, slotJobs, mode = "push", onClose 
     code: (j.job_number?.match(/XY\d+/) || [])[0] || j.job_number,
   })), [slotJobs]);
 
+  // Which activated slots to actually tag — all by default; unchecking one in the
+  // preview drops it from this push (its Job Book row is untouched).
+  const [excluded, setExcluded] = useState(() => new Set());
+  const selectedSlots = useMemo(() => slots.filter((s) => !excluded.has(s.label)), [slots, excluded]);
+  const toggleSlot = (label) => setExcluded((prev) => {
+    const next = new Set(prev);
+    next.has(label) ? next.delete(label) : next.add(label);
+    return next;
+  });
+
   useEffect(() => {
     let alive = true;
     (async () => {
@@ -1503,6 +1513,36 @@ function PushToWrikeModal({ studio, filmTitle, slotJobs, mode = "push", onClose 
   );
   const canApply = plan && plan.field && filmProject && (isRetag || plan.template) && !applying;
 
+  // Slots already done — their live Wrike folder is already named with the job's
+  // code (read straight from plan.byId, so it's accurate even for old pushes).
+  // These are pre-unchecked so re-pushing only touches genuinely new slots.
+  const doneSlots = useMemo(() => {
+    const done = new Set();
+    if (!plan?.byId || !filmProject) return done;
+    const bySuffix = {};
+    const walk = (id) => {
+      const n = plan.byId[id];
+      if (!n) return;
+      if (/^(JOBNUMBER|XY\d+)_/i.test(n.title || "")) bySuffix[slotSuffix(n.title)] = n.title;
+      (n.childIds || []).forEach(walk);
+    };
+    walk(filmProject.id);
+    slots.forEach((s) => {
+      const live = bySuffix[slotSuffix(s.label)];
+      if (live && new RegExp(`^${s.code}_`, "i").test(live)) done.add(s.label);
+    });
+    return done;
+  }, [plan, filmProject, slots]);
+
+  // Once the plan resolves, default the already-done slots to unchecked so the
+  // common re-push does nothing redundant. Runs once; the user can re-check any.
+  const inited = useRef(false);
+  useEffect(() => {
+    if (inited.current || !plan || !filmProject) return;
+    inited.current = true;
+    if (doneSlots.size) setExcluded(new Set(doneSlots));
+  }, [plan, filmProject, doneSlots]);
+
   const apply = async () => {
     if (!canApply) return;
     setApplying(true);
@@ -1534,16 +1574,26 @@ function PushToWrikeModal({ studio, filmTitle, slotJobs, mode = "push", onClose 
       if (Object.keys(slotFolders).length === 0) {
         if (isRetag) throw new Error("This project has no template folders yet — run Push first.");
         if (!plan.template) throw new Error(`No ${studio} master template found to copy.`);
-        const rep = await copyTemplateDeep({
-          byId: plan.byId,
-          sourceId: plan.template.id,
-          parentId: filmProject.id,
-          title: filmTitle,
-          onProgress: (step) => setProgress({ step, done: 0, total: 1 }),
-        });
-        if (!rep.rootId) throw new Error("Wrike copy returned no new folder id.");
-        if (inTemplate(rep.rootId)) throw new Error(TEMPLATE_GUARD);
-        droppedTaskFolders = rep.droppedTaskFolders || [];
+        // Copy the template's CHILDREN straight into the film project — never the
+        // template root as one film-named folder — so the film project doesn't end
+        // up with a redundant wrapper folder named after itself. The template's top
+        // level already IS the campaign structure (Launch/Print/…).
+        const tpl = plan.byId[plan.template.id];
+        const children = (tpl?.childIds || []).map((id) => plan.byId[id]).filter(Boolean);
+        if (!children.length) throw new Error(`The ${studio} master template has no folders to copy.`);
+        const report = { rootId: null, copies: 0, droppedTaskFolders: [] };
+        for (const child of children) {
+          await copyTemplateDeep({
+            byId: plan.byId,
+            sourceId: child.id,
+            parentId: filmProject.id,
+            title: child.title,
+            onProgress: (step) => setProgress({ step, done: 0, total: 1 }),
+            report,
+          });
+        }
+        if (!report.copies) throw new Error("Wrike copy created nothing.");
+        droppedTaskFolders = report.droppedTaskFolders || [];
         setProgress({ step: "Re-reading the copied folders…", done: 0, total: 1 });
         slotFolders = await mapSlotFoldersUnder(filmProject.id);
       }
@@ -1551,8 +1601,8 @@ function PushToWrikeModal({ studio, filmTitle, slotJobs, mode = "push", onClose 
       // Rename each activated slot's folder to its code, set the Job Number field
       // on the folder, then let Wrike cascade that value down to every subitem.
       let renamed = 0, cascaded = 0, propagated = 0, failed = 0, skipped = 0;
-      for (let i = 0; i < slots.length; i++) {
-        const s = slots[i];
+      for (let i = 0; i < selectedSlots.length; i++) {
+        const s = selectedSlots[i];
         const suffix = slotSuffix(s.label);
         const folder = slotFolders[suffix];
         if (!folder) { skipped += 1; continue; }
@@ -1661,17 +1711,6 @@ function PushToWrikeModal({ studio, filmTitle, slotJobs, mode = "push", onClose 
                     : `No projects under ${studio} — sync films first`} />
             </div>
 
-            {/* Reassurance: the guard that makes writing to the template impossible. */}
-            {!isRetag && plan?.template && (
-              <div className="flex items-start gap-2 mb-4 px-3 py-2 bg-[#1cc1a5]/8 border border-[#1cc1a5]/25 rounded-xl">
-                <Shield className="w-3.5 h-3.5 text-[#1cc1a5] shrink-0 mt-0.5" />
-                <p className="text-[11px] text-[#33454f] leading-snug">
-                  The master template is <span className="font-bold">only ever read</span> — it's copied, never
-                  modified or deleted. A guard blocks any write that resolves inside it.
-                </p>
-              </div>
-            )}
-
             {/* Film picker — auto-selects the closest match, but you can override
                 it (handy when the Wrike project name differs slightly from the
                 local film title). This is the folder the template copies into. */}
@@ -1695,7 +1734,8 @@ function PushToWrikeModal({ studio, filmTitle, slotJobs, mode = "push", onClose 
             )}
 
             <p className="text-[10px] font-black uppercase tracking-widest text-[#768994] mb-2">
-              {slots.length} activated slot{slots.length === 1 ? "" : "s"} to tag
+              {selectedSlots.length} of {slots.length} activated slot{slots.length === 1 ? "" : "s"} to tag
+              {doneSlots.size > 0 && <span className="text-[#1cc1a5] normal-case font-bold"> · {doneSlots.size} already tagged</span>}
             </p>
             {slots.length === 0 ? (
               <p className="text-xs text-[#768994] italic mb-2">
@@ -1704,12 +1744,22 @@ function PushToWrikeModal({ studio, filmTitle, slotJobs, mode = "push", onClose 
               </p>
             ) : (
               <div className="border border-[#dce4ec] rounded-2xl divide-y divide-[#f0f4f8] max-h-[200px] overflow-y-auto mb-2">
-                {slots.map((s) => (
-                  <div key={s.label} className="flex items-center justify-between gap-2 px-4 py-2 text-[11px]">
-                    <span className="text-[#122027] truncate">{s.label.replace(/^JOBNUMBER_?/i, "").replace(/_/g, " ")}</span>
-                    <span className="font-mono font-bold text-[#12a0e1] shrink-0">{s.code}</span>
-                  </div>
-                ))}
+                {slots.map((s) => {
+                  const on = !excluded.has(s.label);
+                  const done = doneSlots.has(s.label);
+                  return (
+                    <label key={s.label}
+                      className={`flex items-center justify-between gap-2 px-4 py-2 text-[11px] cursor-pointer transition-opacity ${on ? "" : "opacity-45"}`}>
+                      <span className="flex items-center gap-2 min-w-0">
+                        <input type="checkbox" checked={on} onChange={() => toggleSlot(s.label)}
+                          className="accent-[#12a0e1] w-3.5 h-3.5 shrink-0" />
+                        <span className="text-[#122027] truncate">{s.label.replace(/^JOBNUMBER_?/i, "").replace(/_/g, " ")}</span>
+                        {done && <span className="text-[9px] font-black uppercase tracking-wider text-[#1cc1a5] bg-[#1cc1a5]/10 px-1.5 py-0.5 rounded-full shrink-0">Tagged</span>}
+                      </span>
+                      <span className={`font-mono font-bold shrink-0 ${on ? "text-[#12a0e1]" : "text-[#b0bec5] line-through"}`}>{s.code}</span>
+                    </label>
+                  );
+                })}
               </div>
             )}
 
@@ -1819,6 +1869,9 @@ export function JobsSetupSection({ setActiveTab, initialStudio, initialFilm, loc
   // { filmProject, tree, hasSlots } | null. hasSlots:false ⇒ fall back to template.
   const [filmView, setFilmView] = useState(null);
   const [filmViewLoading, setFilmViewLoading] = useState(false);
+  // A film shared into several studio folders ("territories") — which one we show.
+  // null = the base studio findFilmLocation picks. Reset when the film changes.
+  const [territoryId, setTerritoryId] = useState(null);
   // One shared, cached fetch of the whole (recycle-bin-filtered) folder tree, so
   // the film-view lookup doesn't re-hit Wrike on every film change.
   const foldersRef = useRef(null);
@@ -2011,16 +2064,19 @@ export function JobsSetupSection({ setActiveTab, initialStudio, initialFilm, loc
   // "activate everything" — the film's real XY##### folders are the truth. Films
   // with no slot folders yet leave filmView.hasSlots false, and the render falls
   // back to the studio template to show what could be created.
+  // A new film has its own set of territories — drop any previous selection.
+  useEffect(() => { setTerritoryId(null); }, [filmTitle]);
+
   useEffect(() => {
     let cancelled = false;
     if (!filmTitle.trim() || !localStorage.getItem("wrike_user_id")) { setFilmView(null); return; }
     setFilmViewLoading(true);
     ensureFolders()
-      .then((byId) => { if (!cancelled) setFilmView(buildFilmView(byId, filmTitle)); })
+      .then((byId) => { if (!cancelled) setFilmView(buildFilmView(byId, filmTitle, territoryId)); })
       .catch(() => { if (!cancelled) setFilmView(null); })
       .finally(() => { if (!cancelled) setFilmViewLoading(false); });
     return () => { cancelled = true; };
-  }, [filmTitle, ensureFolders]);
+  }, [filmTitle, territoryId, ensureFolders]);
 
   // Load which slots are already activated for the selected film — keyed by
   // template_slot, so we know per JOBNUMBER_ folder whether it already has a
@@ -2047,10 +2103,10 @@ export function JobsSetupSection({ setActiveTab, initialStudio, initialFilm, loc
     foldersRef.current = null;
     setFilmViewLoading(true);
     ensureFolders({ force: true })
-      .then((byId) => setFilmView(buildFilmView(byId, filmTitle)))
+      .then((byId) => setFilmView(buildFilmView(byId, filmTitle, territoryId)))
       .catch(() => setFilmView(null))
       .finally(() => setFilmViewLoading(false));
-  }, [filmTitle, ensureFolders, loadSlotJobs]);
+  }, [filmTitle, territoryId, ensureFolders, loadSlotJobs]);
 
   // Force-refresh both the studio template AND the film's own subtree from Wrike
   // (busts the folder cache), so a just-pushed / just-renamed film reflects here.
@@ -2060,11 +2116,11 @@ export function JobsSetupSection({ setActiveTab, initialStudio, initialFilm, loc
     if (filmTitle.trim() && localStorage.getItem("wrike_user_id")) {
       setFilmViewLoading(true);
       ensureFolders({ force: true })
-        .then((byId) => setFilmView(buildFilmView(byId, filmTitle)))
+        .then((byId) => setFilmView(buildFilmView(byId, filmTitle, territoryId)))
         .catch(() => setFilmView(null))
         .finally(() => setFilmViewLoading(false));
     }
-  }, [studio, filmTitle, fetchTemplateFromWrike, ensureFolders]);
+  }, [studio, filmTitle, territoryId, fetchTemplateFromWrike, ensureFolders]);
 
   // Activate exactly one slot: allocate the next sequential XY code fresh
   // (reflects anything created anywhere since we last looked), create one job
@@ -2177,12 +2233,29 @@ export function JobsSetupSection({ setActiveTab, initialStudio, initialFilm, loc
     setReviewJob(null);
   };
 
+  // Collapsed folder paths in the preview tree (empty = all expanded).
+  const [collapsed, setCollapsed] = useState(() => new Set());
+  const toggleCollapse = (path) => setCollapsed((prev) => {
+    const next = new Set(prev);
+    next.has(path) ? next.delete(path) : next.add(path);
+    return next;
+  });
+  // Every container-folder path EXCEPT the root — collapsing these leaves the top
+  // level (the folders right under the film) visible with their sections folded.
+  const allContainerPaths = (node, path = "0", depth = 0, acc = []) => {
+    if (node?.children?.length) {
+      if (depth > 0) acc.push(path);
+      node.children.forEach((c, i) => allContainerPaths(c, `${path}-${i}`, depth + 1, acc));
+    }
+    return acc;
+  };
+
   // Recursive tree renderer — activated JOBNUMBER_ leaves show their real code;
   // pending ones stay clickable placeholders you can activate right in the tree.
   // Uses a path-based key since live Wrike data can have repeated folder names
   // across branches. The root folder in Wrike is always renamed to the film
   // itself (e.g. "Passenger") rather than keeping the "_STUDIO_MASTER_TEMPLATES"
-  // name — mirror that here once a film is picked.
+  // name — mirror that here once a film is picked. Container folders collapse.
   const renderTree = (node, depth = 0, path = "0") => {
     const isSlot = !!node.jobNumber;
     const preAllocated = isSlot && node.allocated;                       // already numbered in Wrike (read-only)
@@ -2199,18 +2272,31 @@ export function JobsSetupSection({ setActiveTab, initialStudio, initialFilm, loc
     if (depth === 0 && !filmDriven && filmTitle.trim()) displayLabel = filmTitle.trim().replace(/\s+/g, "_");
     else if (sessionJob) displayLabel = node.label.replace(/^JOBNUMBER/i, sessionJob.job_number.match(/XY\d+/)?.[0] || "XY??????");
 
+    const hasChildren = node.children?.length > 0;
+    // A search override keeps folders on a match path open regardless of collapse.
+    const isCollapsed = collapsed.has(path) && !searchExpand.has(path);
+    const isMatch = nodeMatches(node);
+
     return (
       <div key={path}>
         <div
-          onClick={clickable ? () => activateSlot({ label: node.label, description: leafDesc }) : undefined}
-          className={`flex items-center gap-1.5 py-1 ${clickable ? "cursor-pointer hover:bg-[#12a0e1]/5 rounded-lg -mx-1 px-1" : ""}`}
+          onClick={clickable
+            ? () => activateSlot({ label: node.label, description: leafDesc })
+            : hasChildren ? () => toggleCollapse(path) : undefined}
+          className={`flex items-center gap-1.5 py-1 ${(clickable || hasChildren) ? "cursor-pointer hover:bg-[#12a0e1]/5 rounded-lg -mx-1 px-1" : ""}`}
           style={{ paddingLeft: depth * 18 }}>
-          {node.children?.length
-            ? <FolderOpen className="w-3.5 h-3.5 text-[#f4b740] shrink-0" />
+          {hasChildren
+            ? <ChevronRight className={`w-3 h-3 text-[#768994] shrink-0 transition-transform ${isCollapsed ? "" : "rotate-90"}`} />
+            : <span className="w-3 shrink-0" />}
+          {hasChildren
+            ? (isCollapsed
+                ? <Folder className="w-3.5 h-3.5 text-[#f4b740] shrink-0" />
+                : <FolderOpen className="w-3.5 h-3.5 text-[#f4b740] shrink-0" />)
             : <Folder className={`w-3.5 h-3.5 shrink-0 ${isSlot && !done ? "text-[#12a0e1]" : "text-[#b0bec5]"}`} />}
-          <span className={`text-[12px] ${done ? "font-mono font-bold text-[#12a0e1]" : isSlot ? "text-[#122027] font-bold" : "text-[#122027]"}`}>
+          <span className={`text-[12px] ${isMatch ? "bg-[#f4b740]/40 rounded px-1" : ""} ${done ? "font-mono font-bold text-[#12a0e1]" : isSlot ? "text-[#122027] font-bold" : "text-[#122027]"}`}>
             {displayLabel}
           </span>
+          {hasChildren && <span className="text-[10px] text-[#b0bec5] font-bold shrink-0">{node.children.length}</span>}
           {clickable && (
             <span className="text-[9px] font-black uppercase tracking-wider text-[#12a0e1] bg-[#12a0e1]/10 px-1.5 py-0.5 rounded ml-1">Click to activate</span>
           )}
@@ -2219,7 +2305,7 @@ export function JobsSetupSection({ setActiveTab, initialStudio, initialFilm, loc
           )}
           {isActivating && <Loader2 className="w-3 h-3 animate-spin text-[#12a0e1] ml-1" />}
         </div>
-        {node.children?.map((c, i) => renderTree(c, depth + 1, `${path}-${i}`))}
+        {hasChildren && !isCollapsed && node.children.map((c, i) => renderTree(c, depth + 1, `${path}-${i}`))}
       </div>
     );
   };
@@ -2235,6 +2321,48 @@ export function JobsSetupSection({ setActiveTab, initialStudio, initialFilm, loc
   const allLeaves = viewTree ? collectJobLeaves(viewTree) : [];
   // "Done" = already numbered in Wrike (allocated) OR activated by us this session.
   const activatedCount = allLeaves.filter(l => l.allocated || slotJobs[l.label]).length;
+
+  // Job Slots search + sort (list on the right).
+  const [slotQuery, setSlotQuery] = useState("");
+  const [slotSort, setSlotSort] = useState("default"); // default | az | za | status
+  const displayLeaves = useMemo(() => {
+    let arr = allLeaves;
+    const q = slotQuery.trim().toLowerCase();
+    if (q) arr = arr.filter(l => (l.description || "").toLowerCase().includes(q) || (l.label || "").toLowerCase().includes(q));
+    // 0 = pending (activatable first), 1 = activated this session, 2 = already allocated
+    const rank = (l) => (l.allocated ? 2 : slotJobs[l.label] ? 1 : 0);
+    const byDesc = (a, b) => (a.description || "").localeCompare(b.description || "");
+    if (slotSort === "az") arr = [...arr].sort(byDesc);
+    else if (slotSort === "za") arr = [...arr].sort((a, b) => byDesc(b, a));
+    else if (slotSort === "status") arr = [...arr].sort((a, b) => rank(a) - rank(b) || byDesc(a, b));
+    return arr;
+  }, [allLeaves, slotQuery, slotSort, slotJobs]);
+
+  // Same search drives the left tree: highlight matching nodes, and auto-expand
+  // the folders on the path to any match so they're actually visible.
+  const nodeMatches = (n) => {
+    const q = slotQuery.trim().toLowerCase();
+    if (!q) return false;
+    const desc = n.description || (n.label || "").replace(/^JOBNUMBER_?/i, "").replace(/_/g, " ");
+    return (n.label || "").toLowerCase().includes(q) || desc.toLowerCase().includes(q);
+  };
+  const searchExpand = useMemo(() => {
+    const set = new Set();
+    const q = slotQuery.trim().toLowerCase();
+    if (!q || !viewTree) return set;
+    const matches = (n) => {
+      const desc = n.description || (n.label || "").replace(/^JOBNUMBER_?/i, "").replace(/_/g, " ");
+      return (n.label || "").toLowerCase().includes(q) || desc.toLowerCase().includes(q);
+    };
+    const walk = (n, path) => {
+      let has = matches(n);
+      (n.children || []).forEach((c, i) => { if (walk(c, `${path}-${i}`)) has = true; });
+      if (has && n.children?.length) set.add(path);
+      return has;
+    };
+    walk(viewTree, "0");
+    return set;
+  }, [viewTree, slotQuery]);
 
   // ── Job Book ↔ Wrike reconciliation ──────────────────────────────────────
   // Every folder in the film's live subtree, by id, so we can look up the exact
@@ -2275,23 +2403,20 @@ export function JobsSetupSection({ setActiveTab, initialStudio, initialFilm, loc
           const active = innerTab === t.id;
           return (
             <button key={t.id} onClick={() => setInnerTab(t.id)}
-              className={`text-left rounded-2xl p-5 border-2 transition-all ${
+              className={`flex items-center gap-3 text-left rounded-2xl p-3.5 border-2 transition-all ${
                 active
                   ? "border-[#12a0e1] bg-[#12a0e1]/5 shadow-md"
                   : "border-[#dce4ec] bg-white hover:border-slate-300 hover:shadow-sm"
               }`}>
-              <div className="flex items-start justify-between mb-3">
-                <div className={`w-10 h-10 rounded-xl bg-gradient-to-br ${t.color} flex items-center justify-center shadow-sm`}>
-                  <Icon className="w-5 h-5 text-white" />
-                </div>
-                {active && (
-                  <div className="w-5 h-5 rounded-full bg-[#12a0e1] flex items-center justify-center shrink-0">
-                    <Check className="w-3 h-3 text-white" />
-                  </div>
-                )}
+              <div className={`w-9 h-9 rounded-xl bg-gradient-to-br ${t.color} flex items-center justify-center shadow-sm shrink-0`}>
+                <Icon className="w-4 h-4 text-white" />
               </div>
-              <p className="text-sm font-black text-[#122027] mb-1">{t.label}</p>
-              <p className="text-xs text-[#768994] leading-relaxed">{t.desc}</p>
+              <p className="text-sm font-black text-[#122027] flex-1 min-w-0">{t.label}</p>
+              {active && (
+                <div className="w-5 h-5 rounded-full bg-[#12a0e1] flex items-center justify-center shrink-0">
+                  <Check className="w-3 h-3 text-white" />
+                </div>
+              )}
             </button>
           );
         })}
@@ -2299,6 +2424,7 @@ export function JobsSetupSection({ setActiveTab, initialStudio, initialFilm, loc
 
       {innerTab === "campaign" && (
     <div className="flex flex-col gap-5">
+      {!lockPickers && (
       <div className="bg-[#f8fafc] border border-[#dce4ec] rounded-2xl p-4">
         <p className="text-xs text-[#768994] leading-relaxed">
           Pick a studio and its template loads automatically. Choose a film, then
@@ -2308,6 +2434,7 @@ export function JobsSetupSection({ setActiveTab, initialStudio, initialFilm, loc
           fill in costs and billing or undo it.
         </p>
       </div>
+      )}
 
       {!lockPickers && (
       <div>
@@ -2358,10 +2485,13 @@ export function JobsSetupSection({ setActiveTab, initialStudio, initialFilm, loc
       <div>
         <div className="flex items-center justify-between mb-1.5">
           <label className="block text-[10px] font-black uppercase tracking-widest text-[#768994]">Film</label>
-          <button onClick={() => setShowFilmSync(true)}
-            title={`Pull film projects from the ${studio} folder in Wrike into the Films list`}
-            className="flex items-center gap-1.5 text-[11px] font-bold text-[#1cc1a5] hover:text-[#17a892] transition-colors">
-            <Download className="w-3 h-3" /> Sync films from Wrike
+          <button onClick={() => {
+              try { sessionStorage.setItem("openAdminSection", "films"); } catch { /* ignore */ }
+              window.location.hash = "management";
+            }}
+            title="Open the Films page (in Administration) to add or sync films"
+            className="flex items-center gap-1.5 text-[11px] font-bold text-[#12a0e1] hover:text-[#0d8bc4] transition-colors">
+            <Film className="w-3 h-3" /> Manage films
           </button>
         </div>
         <StrictSelect value={filmTitle} onChange={v => setFilmTitle(v)}
@@ -2369,8 +2499,9 @@ export function JobsSetupSection({ setActiveTab, initialStudio, initialFilm, loc
         {!filmsLoading && films.length === 0 && (
           <p className="text-xs text-[#768994] mt-1.5">
             No films yet — <button onClick={() => setShowFilmSync(true)} className="text-[#1cc1a5] font-bold hover:underline">sync them from Wrike</button>{" "}
-            or add one in the{" "}
-            <button onClick={() => setActiveTab?.("films")} className="text-[#12a0e1] font-bold hover:underline">Films</button> tab.
+            or add one on the{" "}
+            <button onClick={() => { try { sessionStorage.setItem("openAdminSection", "films"); } catch { /* ignore */ } window.location.hash = "management"; }}
+              className="text-[#12a0e1] font-bold hover:underline">Films</button> page.
           </p>
         )}
       </div>
@@ -2385,6 +2516,25 @@ export function JobsSetupSection({ setActiveTab, initialStudio, initialFilm, loc
                 : `${allLeaves.length} job slot${allLeaves.length === 1 ? "" : "s"} in this template — select a film above to activate any of them`}
             </span>
             {(loadingSlots || filmViewLoading) && <Loader2 className="w-3.5 h-3.5 animate-spin text-[#768994]" />}
+            {/* Territory swap — this film is shared into more than one studio folder. */}
+            {filmView?.territories?.length > 1 && (
+              <label className="flex items-center gap-1.5 text-[11px] font-bold text-[#768994]">
+                <Globe className="w-3 h-3 text-[#12a0e1]" />
+                <select
+                  value={filmView.studioFolder?.id || ""}
+                  onChange={(e) => {
+                    const t = filmView.territories.find((x) => x.studioFolder.id === e.target.value);
+                    if (!t) return;
+                    setTerritoryId(t.studioFolder.id);
+                    setStudio(t.studio);
+                  }}
+                  className="text-[11px] font-bold text-[#33454f] bg-white border border-[#dce4ec] rounded-lg px-2 py-1 outline-none focus:border-[#12a0e1] cursor-pointer">
+                  {filmView.territories.map((t) => (
+                    <option key={t.studioFolder.id} value={t.studioFolder.id}>{t.studio}</option>
+                  ))}
+                </select>
+              </label>
+            )}
             {filmTitle.trim() && !filmViewLoading && (
               <button onClick={refreshFilmView}
                 title="Re-read this film's folders from Wrike (reflects renames done in Wrike)"
@@ -2433,16 +2583,45 @@ export function JobsSetupSection({ setActiveTab, initialStudio, initialFilm, loc
           )}
 
           <div className="grid grid-cols-2 gap-4">
-            <div className="border border-[#dce4ec] rounded-2xl p-4 max-h-[420px] overflow-y-auto">
-              <p className="text-[10px] font-black uppercase tracking-widest text-[#768994] mb-2">
-                {filmDriven ? "Film Folders" : "Folder Preview"}{viewIsLive ? " · live from Wrike" : ""}
-              </p>
-              {renderTree(viewTree)}
+            <div className={`border border-[#dce4ec] rounded-2xl flex flex-col ${lockPickers ? "max-h-[46vh] min-h-[280px]" : "max-h-[72vh] min-h-[420px]"}`}>
+              <div className="flex items-center justify-between gap-2 px-4 pt-4 pb-2 border-b border-[#f0f4f8] shrink-0">
+                <p className="text-[10px] font-black uppercase tracking-widest text-[#768994]">
+                  {filmDriven ? "Film Folders" : "Folder Preview"}{viewIsLive ? " · live from Wrike" : ""}
+                </p>
+                <button type="button"
+                  onClick={() => setCollapsed(collapsed.size ? new Set() : new Set(allContainerPaths(viewTree)))}
+                  className="text-[10px] font-bold text-[#768994] hover:text-[#12a0e1] transition-colors shrink-0">
+                  {collapsed.size ? "Expand all" : "Collapse all"}
+                </button>
+              </div>
+              <div className="px-4 py-2 overflow-y-auto">
+                {renderTree(viewTree)}
+              </div>
             </div>
-            <div className="border border-[#dce4ec] rounded-2xl p-4 max-h-[420px] overflow-y-auto">
-              <p className="text-[10px] font-black uppercase tracking-widest text-[#768994] mb-2">Job Slots</p>
-              <div className="flex flex-col gap-1.5">
-                {allLeaves.map(l => {
+            <div className={`border border-[#dce4ec] rounded-2xl flex flex-col ${lockPickers ? "max-h-[46vh] min-h-[280px]" : "max-h-[72vh] min-h-[420px]"}`}>
+              <div className="px-4 pt-4 pb-2 border-b border-[#f0f4f8] shrink-0 space-y-2">
+                <div className="flex items-center justify-between gap-2">
+                  <p className="text-[10px] font-black uppercase tracking-widest text-[#768994]">Job Slots</p>
+                  <select value={slotSort} onChange={(e) => setSlotSort(e.target.value)}
+                    className="text-[11px] font-bold text-[#33454f] bg-white border border-[#dce4ec] rounded-lg px-2 py-1 outline-none focus:border-[#12a0e1] cursor-pointer">
+                    <option value="default">Template order</option>
+                    <option value="az">A–Z</option>
+                    <option value="za">Z–A</option>
+                    <option value="status">By status</option>
+                  </select>
+                </div>
+                <div className="relative">
+                  <Search className="w-3.5 h-3.5 text-[#b0bec5] absolute left-2.5 top-1/2 -translate-y-1/2" />
+                  <input value={slotQuery} onChange={(e) => setSlotQuery(e.target.value)}
+                    placeholder="Search slots…"
+                    className="w-full pl-8 pr-2 py-1.5 text-[11px] bg-white border border-[#dce4ec] rounded-lg outline-none focus:border-[#12a0e1] transition-colors" />
+                </div>
+              </div>
+              <div className="px-4 py-2 overflow-y-auto flex flex-col gap-1.5">
+                {displayLeaves.length === 0 && (
+                  <p className="text-[11px] text-[#768994] italic py-2">No slots match “{slotQuery}”.</p>
+                )}
+                {displayLeaves.map(l => {
                   // Already numbered in Wrike (film-driven view) — read-only, no undo:
                   // the number lives on the live folder, not something we created here.
                   if (l.allocated) {
@@ -2512,13 +2691,6 @@ export function JobsSetupSection({ setActiveTab, initialStudio, initialFilm, loc
                 : "Select a film first"}
               className="flex items-center gap-2 px-5 py-2.5 bg-white border border-[#12a0e1] text-[#12a0e1] hover:bg-[#12a0e1] hover:text-white text-sm font-bold rounded-2xl transition-all disabled:opacity-40 disabled:hover:bg-white disabled:hover:text-[#12a0e1]">
               <UploadCloud className="w-3.5 h-3.5" /> Push to Wrike
-            </button>
-            <button onClick={() => setPushMode("retag")} disabled={!filmTitle.trim()}
-              title={filmTitle.trim()
-                ? "Re-tag new or renamed items in this film's existing Wrike folders with the Job Number field"
-                : "Select a film first"}
-              className="flex items-center gap-2 px-4 py-2.5 bg-white border border-[#dce4ec] text-[#768994] hover:border-[#12a0e1] hover:text-[#12a0e1] text-sm font-bold rounded-2xl transition-all disabled:opacity-40">
-              <RefreshCw className="w-3.5 h-3.5" /> Re-tag new items
             </button>
           </div>
         </>
@@ -2596,7 +2768,8 @@ export function JobsSetupSection({ setActiveTab, initialStudio, initialFilm, loc
       {innerTab === "custom" && (
         <div>
           {customCreated == null ? (
-            <JobForm clients={clients} films={films} categories={categories} descs={descs}
+            <JobForm job={filmTitle.trim() ? { film_title: filmTitle.trim() } : undefined}
+              clients={clients} films={films} categories={categories} descs={descs}
               onSave={handleCreateCustomJob} saving={customSaving} submitLabel="Create Job" layout="inline" />
           ) : (
             <div className="flex items-center gap-3 py-4">
@@ -3694,6 +3867,14 @@ export default function Management({ wrikeUserId, department, wrikeData = [] }) 
   // The accordion stays exactly as it was — going back doesn't collapse
   // the group you were just looking at.
   const backToHub = () => { setNavDirection(-1); setActiveTab(null); };
+
+  // One-shot deep link: another page (e.g. Jobs Setup's "Manage films") can stash
+  // a section id before switching to #management, and we open it straight away.
+  useEffect(() => {
+    let target = null;
+    try { target = sessionStorage.getItem("openAdminSection"); sessionStorage.removeItem("openAdminSection"); } catch { /* ignore */ }
+    if (target) openItem(target);
+  }, []);
 
   // Administration is a first-class page for PMs; the hardcoded allowlist
   // remains as an admin override for everyone else.

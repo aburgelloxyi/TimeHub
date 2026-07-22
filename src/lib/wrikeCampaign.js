@@ -185,32 +185,66 @@ export function findMasterTemplateFolder(byId, studioName) {
 // we'd go hunting for a "Fake_Film_Tryout" master template. So prefer the match
 // whose parent is NOT itself the same film: the outermost one, sitting in its
 // real studio folder.
+// Region qualifiers that mark a regional studio folder (e.g. "UNIVERSAL AUSTRALIA")
+// as a variant of a base studio ("UNIVERSAL") — used to pick a sensible default.
+const REGION_QUALIFIER = /\b(AUSTRALIA|UK|US|USA|NEW MEDIA|INTERNATIONAL|INTL|EU|EMEA|APAC|CANADA|GERMANY|FRANCE|SPAIN|ITALY|JAPAN|KOREA|LATAM|NORDIC|BENELUX)\b/i;
+
 export function findFilmLocation(byId, filmTitle) {
   if (!(filmTitle || "").trim()) return null;
 
-  // childIds is the only link Wrike gives us, so invert it to walk upwards.
-  const parentOf = {};
+  // childIds is the only link Wrike gives us, so invert it to walk upwards. A
+  // Wrike project can be shared into SEVERAL folders, so keep ALL parents, not
+  // just the first — that's what lets one film show up under multiple studio
+  // "territories" (UNIVERSAL, UNIVERSAL AUSTRALIA, …).
+  const parentsOf = {};
   Object.values(byId).forEach((f) =>
-    (f.childIds || []).forEach((c) => { if (!parentOf[c]) parentOf[c] = f.id; })
+    (f.childIds || []).forEach((c) => { (parentsOf[c] || (parentsOf[c] = [])).push(f.id); })
   );
 
   const isSameFilm = (t) => norm(t) === norm(filmTitle);
   const matches = Object.values(byId).filter((f) => isSameFilm(f.title));
-  const film =
-    matches.find((f) => {
-      const p = byId[parentOf[f.id]];
-      return p && !isSameFilm(p.title);
-    }) ||
-    matches.find((f) => parentOf[f.id]) ||
-    matches[0];
-  if (!film) return null;
 
-  const studioFolder = byId[parentOf[film.id]] || null;
-  return {
-    filmProject: { id: film.id, title: film.title },
-    studioFolder: studioFolder ? { id: studioFolder.id, title: studioFolder.title } : null,
-    studio: studioFolder ? studioFolder.title : null,
+  // Every (film project × studio parent) pair, skipping same-film wrappers. One
+  // shared project yields several territories; separate per-region projects also
+  // collapse in here. De-duped by studio folder id.
+  const territories = [];
+  const seen = new Set();
+  for (const f of matches) {
+    for (const pid of parentsOf[f.id] || []) {
+      const p = byId[pid];
+      if (!p || isSameFilm(p.title) || seen.has(p.id)) continue;
+      seen.add(p.id);
+      territories.push({
+        studio: p.title,
+        studioFolder: { id: p.id, title: p.title },
+        filmProject: { id: f.id, title: f.title },
+      });
+    }
+  }
+  if (!territories.length) return null;
+
+  // Default to the base studio: prefer a parent WITHOUT a region qualifier, then
+  // the one whose project carries the most slot folders ("where the real stuff
+  // is"), then the shorter name. This is why "The Odyssey" defaults to UNIVERSAL,
+  // not UNIVERSAL AUSTRALIA.
+  const slotCount = (id) => {
+    let n = 0;
+    const seenN = new Set();
+    const walk = (x) => {
+      if (seenN.has(x)) return; seenN.add(x);
+      const node = byId[x]; if (!node) return;
+      if (/^(JOBNUMBER|XY\d+)_/i.test(node.title || "")) n += 1;
+      (node.childIds || []).forEach(walk);
+    };
+    walk(id);
+    return n;
   };
+  const score = (t) =>
+    (REGION_QUALIFIER.test(t.studio) ? 0 : 1e6) + slotCount(t.filmProject.id) * 1000 - t.studio.length;
+  territories.sort((a, b) => score(b) - score(a));
+  const primary = territories[0];
+
+  return { ...primary, territories };
 }
 
 // Build a display tree of a film's OWN Wrike subtree — NOT the studio template.
@@ -225,13 +259,16 @@ export function findFilmLocation(byId, filmTitle) {
 // what stops an already-numbered film from reading as "0 activated" and inviting
 // a duplicate re-number.
 //
-// Returns { filmProject, tree, hasSlots } — hasSlots:false means the film has no
-// job-slot folders yet (never pushed), so the caller should fall back to the
-// studio template to show what COULD be created. null means the film project
-// wasn't found in Wrike at all.
-export function buildFilmView(byId, filmTitle) {
+// Returns { filmProject, studio, studioFolder, territories, tree, hasSlots } —
+// hasSlots:false means the film has no job-slot folders yet (never pushed), so
+// the caller should fall back to the studio template. null means the film project
+// wasn't found in Wrike at all. `territories` lists every studio this film lives
+// under (for the territory swap); pass a studioFolderId to build a specific one
+// (otherwise the base studio picked by findFilmLocation wins).
+export function buildFilmView(byId, filmTitle, studioFolderId) {
   const loc = findFilmLocation(byId, filmTitle);
   if (!loc?.filmProject) return null;
+  const chosen = (studioFolderId && loc.territories.find((t) => t.studioFolder.id === studioFolderId)) || loc;
 
   let slotCount = 0;
   const codeOf = (t) => (String(t).match(/^XY\d+/i) || [null])[0];
@@ -254,7 +291,14 @@ export function buildFilmView(byId, filmTitle) {
     return out;
   };
 
-  return { filmProject: loc.filmProject, tree: build(loc.filmProject.id), hasSlots: slotCount > 0 };
+  return {
+    filmProject: chosen.filmProject,
+    studio: chosen.studio,
+    studioFolder: chosen.studioFolder,
+    territories: loc.territories,
+    tree: build(chosen.filmProject.id),
+    hasSlots: slotCount > 0,
+  };
 }
 
 // ── Req 6: Film DB sync ───────────────────────────────────────────────────────

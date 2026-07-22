@@ -17,7 +17,7 @@ import {
   discoverJobNumberField, planFilmSync, fetchAllFolders, findStudioFolder,
   findMasterTemplateFolder, fetchFolderProjects, collectSubtreeIds, findFilmLocation,
   planPropagate, applyPropagate, copyTemplateDeep,
-  mapSlotFoldersUnder, slotSuffix, renameFolder,
+  mapSlotFoldersUnder, slotSuffix, renameFolder, buildFilmView,
 } from "../lib/wrikeCampaign";
 import { isServiceAccount, DEPT_GROUPS } from "../lib/people";
 import { layoutRect } from "../utils/zoom";
@@ -1788,6 +1788,14 @@ export function JobsSetupSection({ setActiveTab, initialStudio, initialFilm, loc
   const [fetchedTemplate, setFetchedTemplate] = useState(null); // real subtree pulled live from Wrike
   const [fetchingTemplate, setFetchingTemplate] = useState(false);
   const [fetchInfo, setFetchInfo] = useState(null); // { rootLabel, jobCount } | { error }
+  // The selected film's OWN live subtree (source of truth for what actually
+  // exists / is already numbered), independent of the studio template.
+  // { filmProject, tree, hasSlots } | null. hasSlots:false ⇒ fall back to template.
+  const [filmView, setFilmView] = useState(null);
+  const [filmViewLoading, setFilmViewLoading] = useState(false);
+  // One shared, cached fetch of the whole (recycle-bin-filtered) folder tree, so
+  // the film-view lookup doesn't re-hit Wrike on every film change.
+  const foldersRef = useRef(null);
   const [films, setFilms] = useState([]);
   const [filmsLoading, setFilmsLoading] = useState(true);
   const [clients, setClients] = useState([]);
@@ -1858,10 +1866,18 @@ export function JobsSetupSection({ setActiveTab, initialStudio, initialFilm, loc
     );
   };
 
-  // Walk the template, collecting every jobNumber:true leaf with a human-readable description
+  // Walk a tree (studio template OR a film's own subtree), collecting every
+  // jobNumber:true leaf. Film-view nodes carry `allocated`/`code`/`description`
+  // already (read from the live folder name); template nodes don't, so we derive
+  // description from the label and default allocated:false.
   const collectJobLeaves = (node) => {
     let leaves = node.jobNumber
-      ? [{ label: node.label, description: node.label.replace(/^JOBNUMBER_?/i, "").replace(/_/g, " ").trim() || "General" }]
+      ? [{
+          label: node.label,
+          description: node.description || node.label.replace(/^JOBNUMBER_?/i, "").replace(/_/g, " ").trim() || "General",
+          allocated: !!node.allocated,
+          code: node.code || null,
+        }]
       : [];
     (node.children || []).forEach(c => { leaves = leaves.concat(collectJobLeaves(c)); });
     return leaves;
@@ -1893,7 +1909,10 @@ export function JobsSetupSection({ setActiveTab, initialStudio, initialFilm, loc
         const res = await fetch(url);
         if (!res.ok) throw new Error(`Wrike folders fetch failed (${res.status})`);
         const json = await res.json();
-        (json.data || []).forEach(f => { fd[f.id] = { id: f.id, title: f.title, childIds: f.childIds || [] }; });
+        (json.data || []).forEach(f => {
+          if (/^Rb/i.test(f.scope || "")) return; // skip Recycle Bin so a deleted template dupe can't win
+          fd[f.id] = { id: f.id, title: f.title, childIds: f.childIds || [] };
+        });
         url = json.nextPageToken
           ? `/api/wrike/folders?fields=${FF}&nextPageToken=${json.nextPageToken}`
           : null;
@@ -1950,6 +1969,46 @@ export function JobsSetupSection({ setActiveTab, initialStudio, initialFilm, loc
   // loaded is served instantly from templateCache. Req 4's reconcile: every
   // switch re-reads the live tree, so renamed folders in Wrike show up here.
   useEffect(() => { fetchTemplateFromWrike(studio); }, [studio, fetchTemplateFromWrike]);
+
+  // Load (and cache) the whole folder tree once, so we can derive the selected
+  // film's own subtree without re-fetching. `force` busts the cache after a
+  // re-sync so renamed/pushed folders show up.
+  const ensureFolders = useCallback(async ({ force = false } = {}) => {
+    if (!force && foldersRef.current) return foldersRef.current;
+    const byId = await fetchAllFolders();
+    foldersRef.current = byId;
+    return byId;
+  }, []);
+
+  // Read the selected film's OWN live subtree (see buildFilmView). This is what
+  // makes an already-numbered campaign read as done instead of the template's
+  // "activate everything" — the film's real XY##### folders are the truth. Films
+  // with no slot folders yet leave filmView.hasSlots false, and the render falls
+  // back to the studio template to show what could be created.
+  useEffect(() => {
+    let cancelled = false;
+    if (!filmTitle.trim() || !localStorage.getItem("wrike_user_id")) { setFilmView(null); return; }
+    setFilmViewLoading(true);
+    ensureFolders()
+      .then((byId) => { if (!cancelled) setFilmView(buildFilmView(byId, filmTitle)); })
+      .catch(() => { if (!cancelled) setFilmView(null); })
+      .finally(() => { if (!cancelled) setFilmViewLoading(false); });
+    return () => { cancelled = true; };
+  }, [filmTitle, ensureFolders]);
+
+  // Force-refresh both the studio template AND the film's own subtree from Wrike
+  // (busts the folder cache), so a just-pushed / just-renamed film reflects here.
+  const resync = useCallback(() => {
+    foldersRef.current = null;
+    fetchTemplateFromWrike(studio, { force: true });
+    if (filmTitle.trim() && localStorage.getItem("wrike_user_id")) {
+      setFilmViewLoading(true);
+      ensureFolders({ force: true })
+        .then((byId) => setFilmView(buildFilmView(byId, filmTitle)))
+        .catch(() => setFilmView(null))
+        .finally(() => setFilmViewLoading(false));
+    }
+  }, [studio, filmTitle, fetchTemplateFromWrike, ensureFolders]);
 
   // Load which slots are already activated for the selected film — keyed by
   // template_slot, so we know per JOBNUMBER_ folder whether it already has a
@@ -2085,28 +2144,37 @@ export function JobsSetupSection({ setActiveTab, initialStudio, initialFilm, loc
   // name — mirror that here once a film is picked.
   const renderTree = (node, depth = 0, path = "0") => {
     const isSlot = !!node.jobNumber;
-    const activated = isSlot ? slotJobs[node.label] : null;
+    const preAllocated = isSlot && node.allocated;                       // already numbered in Wrike (read-only)
+    const sessionJob = isSlot && !preAllocated ? slotJobs[node.label] : null; // numbered by us this session
+    const done = preAllocated || !!sessionJob;
     const isActivating = activatingSlot === node.label;
-    const leafDesc = isSlot ? node.label.replace(/^JOBNUMBER_?/i, "").replace(/_/g, " ").trim() || "General" : null;
+    const leafDesc = isSlot ? (node.description || node.label.replace(/^JOBNUMBER_?/i, "").replace(/_/g, " ").trim() || "General") : null;
+    const clickable = isSlot && !done && !isActivating && filmTitle.trim();
 
     let displayLabel = node.label;
-    if (depth === 0 && filmTitle.trim()) displayLabel = filmTitle.trim().replace(/\s+/g, "_");
-    else if (activated) displayLabel = node.label.replace(/^JOBNUMBER/i, activated.job_number.match(/XY\d+/)?.[0] || "XY??????");
+    // In the template fallback the root is the generic template name, so wear the
+    // film's name at the top. In the film-driven view the root already IS the
+    // film folder, and allocated leaves already carry their XY code in the title.
+    if (depth === 0 && !filmDriven && filmTitle.trim()) displayLabel = filmTitle.trim().replace(/\s+/g, "_");
+    else if (sessionJob) displayLabel = node.label.replace(/^JOBNUMBER/i, sessionJob.job_number.match(/XY\d+/)?.[0] || "XY??????");
 
     return (
       <div key={path}>
         <div
-          onClick={isSlot && !activated && !isActivating && filmTitle.trim() ? () => activateSlot({ label: node.label, description: leafDesc }) : undefined}
-          className={`flex items-center gap-1.5 py-1 ${isSlot && !activated && filmTitle.trim() ? "cursor-pointer hover:bg-[#12a0e1]/5 rounded-lg -mx-1 px-1" : ""}`}
+          onClick={clickable ? () => activateSlot({ label: node.label, description: leafDesc }) : undefined}
+          className={`flex items-center gap-1.5 py-1 ${clickable ? "cursor-pointer hover:bg-[#12a0e1]/5 rounded-lg -mx-1 px-1" : ""}`}
           style={{ paddingLeft: depth * 18 }}>
           {node.children?.length
             ? <FolderOpen className="w-3.5 h-3.5 text-[#f4b740] shrink-0" />
-            : <Folder className={`w-3.5 h-3.5 shrink-0 ${isSlot && !activated ? "text-[#12a0e1]" : "text-[#b0bec5]"}`} />}
-          <span className={`text-[12px] ${activated ? "font-mono font-bold text-[#12a0e1]" : isSlot ? "text-[#122027] font-bold" : "text-[#122027]"}`}>
+            : <Folder className={`w-3.5 h-3.5 shrink-0 ${isSlot && !done ? "text-[#12a0e1]" : "text-[#b0bec5]"}`} />}
+          <span className={`text-[12px] ${done ? "font-mono font-bold text-[#12a0e1]" : isSlot ? "text-[#122027] font-bold" : "text-[#122027]"}`}>
             {displayLabel}
           </span>
-          {isSlot && !activated && !isActivating && filmTitle.trim() && (
+          {clickable && (
             <span className="text-[9px] font-black uppercase tracking-wider text-[#12a0e1] bg-[#12a0e1]/10 px-1.5 py-0.5 rounded ml-1">Click to activate</span>
+          )}
+          {preAllocated && (
+            <span className="text-[9px] font-black uppercase tracking-wider text-[#1cc1a5] bg-[#1cc1a5]/10 px-1.5 py-0.5 rounded ml-1">Allocated</span>
           )}
           {isActivating && <Loader2 className="w-3 h-3 animate-spin text-[#12a0e1] ml-1" />}
         </div>
@@ -2117,8 +2185,15 @@ export function JobsSetupSection({ setActiveTab, initialStudio, initialFilm, loc
 
   const hasTemplate = !!(fetchedTemplate || FOLDER_TEMPLATES[studio]);
   const templateToShow = fetchedTemplate || (hasTemplate ? FOLDER_TEMPLATES[studio] : null);
-  const allLeaves = templateToShow ? collectJobLeaves(templateToShow) : [];
-  const activatedCount = allLeaves.filter(l => slotJobs[l.label]).length;
+  // When the picked film already has its own job-slot folders in Wrike, THAT is
+  // what we show (truthful, already-numbered where numbered). Only a film with no
+  // slots yet falls back to the studio template to preview what could be created.
+  const filmDriven = !!(filmView && filmView.hasSlots);
+  const viewTree = filmDriven ? filmView.tree : templateToShow;
+  const viewIsLive = filmDriven || !!fetchedTemplate;
+  const allLeaves = viewTree ? collectJobLeaves(viewTree) : [];
+  // "Done" = already numbered in Wrike (allocated) OR activated by us this session.
+  const activatedCount = allLeaves.filter(l => l.allocated || slotJobs[l.label]).length;
 
   return (
     <div className="flex flex-col gap-5">
@@ -2190,13 +2265,13 @@ export function JobsSetupSection({ setActiveTab, initialStudio, initialFilm, loc
           ) : fetchInfo?.error ? (
             <span className="flex items-center gap-2 ml-1">
               <span className="text-xs font-bold text-red-500">{fetchInfo.error}</span>
-              <button onClick={() => fetchTemplateFromWrike(studio, { force: true })}
+              <button onClick={resync}
                 className="text-[#12a0e1] hover:underline text-xs font-bold">Retry</button>
             </span>
           ) : fetchInfo ? (
             <span className="flex items-center gap-2 ml-1">
               <span className="text-[10px] font-black uppercase tracking-wider text-[#12a0e1] bg-[#12a0e1]/10 px-2 py-1 rounded-lg">Live Wrike Data</span>
-              <button onClick={() => fetchTemplateFromWrike(studio, { force: true })}
+              <button onClick={resync}
                 title={`Loaded “${fetchInfo.rootLabel}” — re-sync from Wrike`}
                 className="flex items-center gap-1 text-[#768994] hover:text-[#12a0e1] text-xs font-bold transition-colors">
                 <RefreshCw className="w-3 h-3" /> Re-sync
@@ -2229,29 +2304,46 @@ export function JobsSetupSection({ setActiveTab, initialStudio, initialFilm, loc
       </div>
       )}
 
-      {templateToShow && (
+      {viewTree && (
         <>
           <div className="flex items-center gap-3 flex-wrap">
             <span className="text-xs font-bold text-[#768994]">
               {filmTitle.trim()
-                ? `${activatedCount} / ${allLeaves.length} job number${allLeaves.length === 1 ? "" : "s"} activated for “${filmTitle}”`
+                ? `${activatedCount} / ${allLeaves.length} job number${allLeaves.length === 1 ? "" : "s"} ${filmDriven ? "already allocated" : "activated"} for “${filmTitle}”`
                 : `${allLeaves.length} job slot${allLeaves.length === 1 ? "" : "s"} in this template — select a film above to activate any of them`}
             </span>
-            {loadingSlots && <Loader2 className="w-3.5 h-3.5 animate-spin text-[#768994]" />}
+            {(loadingSlots || filmViewLoading) && <Loader2 className="w-3.5 h-3.5 animate-spin text-[#768994]" />}
+            {filmTitle.trim() && !filmDriven && !filmViewLoading && (
+              <span className="text-[10px] font-bold text-[#768994] italic">no job folders in Wrike yet — showing the {studio} template</span>
+            )}
             {activateError && <span className="text-xs font-bold text-red-500">{activateError}</span>}
           </div>
 
           <div className="grid grid-cols-2 gap-4">
             <div className="border border-[#dce4ec] rounded-2xl p-4 max-h-[420px] overflow-y-auto">
               <p className="text-[10px] font-black uppercase tracking-widest text-[#768994] mb-2">
-                Folder Preview{fetchedTemplate ? " · live from Wrike" : ""}
+                {filmDriven ? "Film Folders" : "Folder Preview"}{viewIsLive ? " · live from Wrike" : ""}
               </p>
-              {renderTree(templateToShow)}
+              {renderTree(viewTree)}
             </div>
             <div className="border border-[#dce4ec] rounded-2xl p-4 max-h-[420px] overflow-y-auto">
               <p className="text-[10px] font-black uppercase tracking-widest text-[#768994] mb-2">Job Slots</p>
               <div className="flex flex-col gap-1.5">
                 {allLeaves.map(l => {
+                  // Already numbered in Wrike (film-driven view) — read-only, no undo:
+                  // the number lives on the live folder, not something we created here.
+                  if (l.allocated) {
+                    return (
+                      <div key={l.label}
+                        className="flex items-center justify-between text-[11px] border-b border-[#f0f4f8] pb-1.5 pt-0.5">
+                        <span className="text-[#768994] truncate mr-2">{l.description}</span>
+                        <span className="flex items-center gap-1.5 shrink-0">
+                          <span className="font-mono font-bold text-[#12a0e1]">{l.code}</span>
+                          <span className="text-[9px] font-black uppercase tracking-wider text-[#1cc1a5] bg-[#1cc1a5]/10 px-1.5 py-0.5 rounded-full">Allocated</span>
+                        </span>
+                      </div>
+                    );
+                  }
                   const activated = slotJobs[l.label];
                   const isActivating = activatingSlot === l.label;
                   const code = activated?.job_number.match(/XY\d+/)?.[0];

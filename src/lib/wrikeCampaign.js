@@ -65,18 +65,27 @@ export async function discoverJobNumberField() {
 
 // ── Folder / project discovery ────────────────────────────────────────────────
 
-// Pull the whole flat folder list once (id, title, childIds, scope, project) so
-// callers can walk the tree locally without N round-trips. `project` is present
-// on folders that are Wrike Projects (item type "Project").
+// Pull the whole flat folder list once (id, title, childIds) so callers can walk
+// the tree locally without N round-trips.
+//
+// Recycle-bin filtering: the FolderTree default mode returns the workspace AND
+// the recycle bin (its root + every recycled descendant) in one flat list — so
+// a *deleted* copy of a film shows up here indistinguishable from the live one
+// unless we filter it out. Wrike tags every tree node with a `scope`: workspace
+// nodes are WsRoot/WsFolder, recycled ones are RbRoot/RbFolder/RbTask. `scope`
+// comes back on its own (like `project` does on the by-id endpoint) — it just
+// can't be named in `fields=` (that 400s "'scope' not allowed"; only childIds is
+// requestable there). We drop every Rb* node at this single source so no
+// downstream matcher (findFilmLocation, findStudioFolder, template lookup,
+// planFilmSync) can ever resolve to something sitting in the recycle bin.
+// Scope-less rows are kept, so if Wrike ever stops returning scope we degrade to
+// the old behaviour rather than nuking the whole tree.
 export async function fetchAllFolders() {
-  // The flat /folders (FolderTree) list only accepts a small set of requestable
-  // fields — `childIds` is valid, but `scope`/`project` are NOT and 400 the whole
-  // call. Project-ness isn't available here; detect it with a targeted by-id
-  // call (fetchFolderProjects) only where we actually need it.
   const FF = encodeURIComponent("[childIds]");
   const rows = await wrikeGetAll(`/folders?fields=${FF}`);
   const byId = {};
   rows.forEach((f) => {
+    if (/^Rb/i.test(f.scope || "")) return; // skip Recycle Bin root + contents
     byId[f.id] = {
       id: f.id,
       title: f.title || "",
@@ -202,6 +211,50 @@ export function findFilmLocation(byId, filmTitle) {
     studioFolder: studioFolder ? { id: studioFolder.id, title: studioFolder.title } : null,
     studio: studioFolder ? studioFolder.title : null,
   };
+}
+
+// Build a display tree of a film's OWN Wrike subtree — NOT the studio template.
+// This is the truthful view: an old campaign's folders have already been renamed
+// in place (JOBNUMBER_French_Canada_Assets → XY025623_French_Canada_Launch) and
+// have drifted from the template's slot set entirely, so the template can't be
+// reconciled against them — only the film itself tells you what exists.
+//
+// Every job-slot folder is tagged from its LIVE name, which is the source of
+// truth for allocation: a title starting "XY#####_" already carries a real job
+// number (allocated); one still "JOBNUMBER_" is a genuine pending slot. This is
+// what stops an already-numbered film from reading as "0 activated" and inviting
+// a duplicate re-number.
+//
+// Returns { filmProject, tree, hasSlots } — hasSlots:false means the film has no
+// job-slot folders yet (never pushed), so the caller should fall back to the
+// studio template to show what COULD be created. null means the film project
+// wasn't found in Wrike at all.
+export function buildFilmView(byId, filmTitle) {
+  const loc = findFilmLocation(byId, filmTitle);
+  if (!loc?.filmProject) return null;
+
+  let slotCount = 0;
+  const codeOf = (t) => (String(t).match(/^XY\d+/i) || [null])[0];
+  const build = (id, seen = new Set()) => {
+    if (seen.has(id)) return null;
+    seen.add(id);
+    const node = byId[id];
+    if (!node) return null;
+    const out = { label: node.title || "" };
+    if (/^(JOBNUMBER|XY\d+)_/i.test(node.title || "")) {
+      const code = codeOf(node.title);
+      out.jobNumber = true;
+      out.allocated = !!code;
+      out.code = code;
+      out.description = slotSuffix(node.title).replace(/_/g, " ").trim() || "General";
+      slotCount += 1;
+    }
+    const children = (node.childIds || []).map((c) => build(c, seen)).filter(Boolean);
+    if (children.length) out.children = children;
+    return out;
+  };
+
+  return { filmProject: loc.filmProject, tree: build(loc.filmProject.id), hasSlots: slotCount > 0 };
 }
 
 // ── Req 6: Film DB sync ───────────────────────────────────────────────────────

@@ -6,6 +6,7 @@ import React, {
   useCallback,
 } from "react";
 import { useLegacyRows, getCurrentWeekStart, hmToHours } from "../hooks/useLegacyRows";
+import { useColumnResize } from "../lib/useColumnResize";
 import { roundToHalfHourSeconds } from "../utils/timeHelpers";
 import { useJobLookup } from "../hooks/useJobLookup";
 import {
@@ -44,6 +45,28 @@ import PageHeader, { pageHeaderActionClass } from "./shared/PageHeader";
 import TableSearchableSelect from "./legacy/TableSearchableSelect";
 
 export default function LegacyTimesheet({ wrikeData, isAdmin = false }) {
+  // Drag-resizable column configs (persisted per table).
+  const WRIKE_TS_COLS = [
+    { key: "title",    label: "Assignment Title", px: 320 },
+    { key: "status",   label: "Status",           px: 140 },
+    { key: "category", label: "Category Link",    px: 240 },
+    { key: "jobkey",   label: "Job Key",          px: 160 },
+    { key: "due",      label: "Due Date",         px: 110 },
+    { key: "location", label: "Location",         px: 160 },
+    ...["Mo", "Tu", "We", "Th", "Fr", "Sa", "Su"].map((d) => ({ key: `day_${d}`, label: d, px: 64 })),
+  ];
+  const { widths: wtWidths, resizeHandle: wtHandle } = useColumnResize("legacy-wrike-ts-cols", WRIKE_TS_COLS, { dark: true });
+
+  // Default widths mirror the previous per-cell w-[…] classes so the layout is
+  // unchanged until the user drags.
+  const CONSOL_PX = {
+    "Job Number": 240, "Client": 140, "Film Title": 150, "Project Description": 220,
+    "Country": 140, "Category": 180, "Client Amends": 70, "Notes": 140,
+    "3D": 50, "Time Spent": 90, "Additional Time": 90,
+  };
+  const CONSOL_COLS = COLUMNS.map((c, i) => ({ key: `c${i}`, label: c, px: CONSOL_PX[c] || 140 }));
+  const { widths: consolWidths, resizeHandle: consolHandle } = useColumnResize("legacy-consol-cols", CONSOL_COLS, { dark: true });
+
   const [activeDay, setActiveDay] = useState(() => {
     return localStorage.getItem("xyi_legacy_activeDay") || "Monday";
   });
@@ -1628,26 +1651,29 @@ export default function LegacyTimesheet({ wrikeData, isAdmin = false }) {
           <div className="flex-1 overflow-auto bg-[#0b0f17] custom-scrollbar">
             {/* TIMESHEET TAB */}
             {modalTab === "timesheet" && (
-              <table className="w-full text-left text-[12px] border-collapse whitespace-nowrap min-w-max">
+              <table className="w-full text-left text-[12px] border-collapse whitespace-nowrap [&_td]:overflow-hidden" style={{ tableLayout: "fixed", minWidth: `${WRIKE_TS_COLS.reduce((s, c) => s + wtWidths[c.key], 0)}px` }}>
+                <colgroup>
+                  {WRIKE_TS_COLS.map((c) => <col key={c.key} style={{ width: wtWidths[c.key] }} />)}
+                </colgroup>
                 <thead className="bg-[#121824] text-slate-400 font-bold uppercase tracking-wider sticky top-0 z-20 shadow-md border-b border-[#222f3e]">
                   <tr>
-                    <th className="px-5 py-3.5 border-r border-[#222f3e] w-[320px]">
-                      Assignment Title
+                    <th className="relative px-5 py-3.5 border-r border-[#222f3e] overflow-hidden">
+                      Assignment Title{wtHandle("title")}
                     </th>
-                    <th className="px-5 py-3.5 border-r border-[#222f3e] w-[140px]">
-                      Status
+                    <th className="relative px-5 py-3.5 border-r border-[#222f3e] overflow-hidden">
+                      Status{wtHandle("status")}
                     </th>
-                    <th className="px-5 py-3.5 border-r border-[#222f3e] w-[240px]">
-                      Category Link
+                    <th className="relative px-5 py-3.5 border-r border-[#222f3e] overflow-hidden">
+                      Category Link{wtHandle("category")}
                     </th>
-                    <th className="px-5 py-3.5 border-r border-[#222f3e]">
-                      Job Key
+                    <th className="relative px-5 py-3.5 border-r border-[#222f3e] overflow-hidden">
+                      Job Key{wtHandle("jobkey")}
                     </th>
-                    <th className="px-5 py-3.5 border-r border-[#222f3e] w-[110px]">
-                      Due Date
+                    <th className="relative px-5 py-3.5 border-r border-[#222f3e] overflow-hidden">
+                      Due Date{wtHandle("due")}
                     </th>
-                    <th className="px-5 py-3.5 border-r border-[#222f3e]">
-                      Location
+                    <th className="relative px-5 py-3.5 border-r border-[#222f3e] overflow-hidden">
+                      Location{wtHandle("location")}
                     </th>
                     {["Mo", "Tu", "We", "Th", "Fr", "Sa", "Su"].map((d, i) => {
                       const dayName = DAYS[i];
@@ -1656,7 +1682,7 @@ export default function LegacyTimesheet({ wrikeData, isAdmin = false }) {
                       return (
                         <th
                           key={d}
-                          className={`px-4 py-3.5 border-r border-[#222f3e] text-center w-16 last:border-r-0 ${
+                          className={`relative px-4 py-3.5 border-r border-[#222f3e] text-center overflow-hidden last:border-r-0 ${
                             isCurrent
                               ? "bg-[#12a0e1]/15 text-[#38bdf8] font-black"
                               : isEnd
@@ -1664,7 +1690,7 @@ export default function LegacyTimesheet({ wrikeData, isAdmin = false }) {
                               : ""
                           }`}
                         >
-                          {d}
+                          {d}{wtHandle(`day_${d}`)}
                         </th>
                       );
                     })}
@@ -2080,17 +2106,21 @@ export default function LegacyTimesheet({ wrikeData, isAdmin = false }) {
 
         {/* --- TABLE AREA --- */}
         <div className="flex-1 bg-white relative overflow-x-auto w-full">
-          <table className="w-full text-left text-[12px] border-collapse min-w-max">
+          <table className="w-full text-left text-[12px] border-collapse" style={{ tableLayout: "fixed", minWidth: `${CONSOL_COLS.reduce((s, c) => s + consolWidths[c.key], 0)}px` }}>
+            <colgroup>
+              {CONSOL_COLS.map((c) => <col key={c.key} style={{ width: consolWidths[c.key] }} />)}
+            </colgroup>
             <thead>
               <tr className="bg-slate-800 text-slate-200 shadow-sm">
-                {COLUMNS.map((col, idx) => (
+                {CONSOL_COLS.map((c, idx) => (
                   <th
-                    key={col}
-                    className={`p-3 border-r border-slate-700 font-bold whitespace-nowrap tracking-wide ${
-                      idx === COLUMNS.length - 1 ? "border-r-0" : ""
+                    key={c.key}
+                    className={`relative p-3 border-r border-slate-700 font-bold whitespace-nowrap tracking-wide overflow-hidden ${
+                      idx === CONSOL_COLS.length - 1 ? "border-r-0" : ""
                     }`}
                   >
-                    {col}
+                    {c.label}
+                    {consolHandle(c.key)}
                   </th>
                 ))}
               </tr>

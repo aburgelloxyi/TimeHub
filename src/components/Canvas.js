@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef, useCallback, useMemo, lazy, Suspens
 import { motion, AnimatePresence } from "framer-motion";
 import { supabase } from "../lib/supabaseClient";
 import { toggleDarkMode } from "../lib/theme";
+import { useColumnResize } from "../lib/useColumnResize";
 import { getFilmName, PRINT_HUB_RE } from "../lib/wrikeEnrich";
 import { fetchTasksByIds } from "../hooks/useWrikeCache";
 import RichNoteEditor from "./shared/RichNoteEditor";
@@ -1923,6 +1924,13 @@ export default function CampaignCanvas({ wrikeData = [], folderCampaigns = [], t
   const [selectedMatrix, setSelectedMatrix] = useState(null);
   const [showMappingsPanel, setShowMappingsPanel] = useState(false);
 
+  const FILM_TABLE_COLS = [
+    { key: "code",   label: "Code",      px: 140 },
+    { key: "name",   label: "Film Name", px: 360 },
+    { key: "source", label: "Source",    px: 140 },
+  ];
+  const { widths: filmWidths, resizeHandle: filmHandle } = useColumnResize("canvas-filmmap-cols", FILM_TABLE_COLS);
+
   // --- COMMAND PALETTE STATE ---
   const [isPaletteOpen, setIsPaletteOpen] = useState(false);
   const [paletteSearch, setPaletteSearch] = useState("");
@@ -3070,12 +3078,15 @@ export default function CampaignCanvas({ wrikeData = [], folderCampaigns = [], t
               </div>
               {/* Table */}
               <div className="overflow-y-auto custom-scrollbar">
-                <table className="w-full text-sm">
+                <table className="w-full text-sm [&_td]:overflow-hidden" style={{ tableLayout: "fixed", minWidth: `${FILM_TABLE_COLS.reduce((s, c) => s + filmWidths[c.key], 0)}px` }}>
+                  <colgroup>
+                    {FILM_TABLE_COLS.map(c => <col key={c.key} style={{ width: filmWidths[c.key] }} />)}
+                  </colgroup>
                   <thead className="sticky top-0 bg-white border-b border-[#dce4ec]">
                     <tr>
-                      <th className="text-left px-5 py-3 text-[10px] font-black tracking-widest text-[#768994] uppercase w-28">Code</th>
-                      <th className="text-left px-5 py-3 text-[10px] font-black tracking-widest text-[#768994] uppercase">Film Name</th>
-                      <th className="text-right px-5 py-3 text-[10px] font-black tracking-widest text-[#768994] uppercase">Source</th>
+                      <th className="relative text-left px-5 py-3 text-[10px] font-black tracking-widest text-[#768994] uppercase overflow-hidden">Code{filmHandle("code")}</th>
+                      <th className="relative text-left px-5 py-3 text-[10px] font-black tracking-widest text-[#768994] uppercase overflow-hidden">Film Name{filmHandle("name")}</th>
+                      <th className="relative text-right px-5 py-3 text-[10px] font-black tracking-widest text-[#768994] uppercase overflow-hidden">Source{filmHandle("source")}</th>
                     </tr>
                   </thead>
                   <tbody>

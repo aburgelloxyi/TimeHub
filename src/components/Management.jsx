@@ -21,6 +21,7 @@ import {
 } from "../lib/wrikeCampaign";
 import { isServiceAccount, DEPT_GROUPS } from "../lib/people";
 import { layoutRect } from "../utils/zoom";
+import { useColumnResize } from "../lib/useColumnResize";
 import { SEED_CLIENTS, SEED_PROJECT_DESCRIPTIONS } from "../data/seedData";
 import { DEFAULT_JOBS, CATEGORIES } from "../constants";
 import { fullName as cleanFullName, cleanNamePart } from "../lib/formatName";
@@ -2509,6 +2510,23 @@ export function JobsSetupSection({ setActiveTab, initialStudio, initialFilm, loc
 // ── Job Book Section ───────────────────────────────────────────────────────────
 // Exported: also rendered standalone as the PMs' "Job Book" page (JobBook.jsx).
 export function JobBookSection({ setActiveTab }) {
+  const JOBBOOK_COLS = [
+    { key: "job_number",  label: "Job #",               px: 90  },
+    { key: "date",        label: "Date",                px: 90  },
+    { key: "client",      label: "Client",              px: 140 },
+    { key: "office",      label: "Office",              px: 70  },
+    { key: "pd",          label: "P/D",                 px: 60  },
+    { key: "film",        label: "Film Title",          px: 160 },
+    { key: "project",     label: "Project Description", px: 220 },
+    { key: "costs",       label: "Costs",               px: 90  },
+    { key: "ordered_by",  label: "Ordered By",          px: 120 },
+    { key: "billed_to",   label: "Billed To",           px: 120 },
+    { key: "status",      label: "Status",              px: 110 },
+    { key: "done",        label: "Done",                px: 70  },
+    { key: "actions",     label: "",                    px: 90  },
+  ];
+  const { widths: jbWidths, resizeHandle: jbHandle } = useColumnResize("mgmt-jobbook-cols", JOBBOOK_COLS);
+
   const [jobs, setJobs]         = useState([]);
   const [loading, setLoading]   = useState(true);
   const [search, setSearch]     = useState("");
@@ -2669,12 +2687,16 @@ export function JobBookSection({ setActiveTab }) {
         </div>
       ) : (
         <div className="overflow-x-auto rounded-2xl border border-[#dce4ec]">
-          <table className="w-full text-xs">
+          <table className="w-full text-xs [&_td]:overflow-hidden" style={{ tableLayout: "fixed", minWidth: `${JOBBOOK_COLS.reduce((s, c) => s + jbWidths[c.key], 0)}px` }}>
+            <colgroup>
+              {JOBBOOK_COLS.map(c => <col key={c.key} style={{ width: jbWidths[c.key] }} />)}
+            </colgroup>
             <thead>
               <tr className="bg-slate-50 border-b border-[#dce4ec]">
-                {["Job #","Date","Client","Office","P/D","Film Title","Project Description","Costs","Ordered By","Billed To","Status","Done",""].map(h => (
-                  <th key={h} className="px-3 py-2.5 text-left text-[9px] font-black uppercase tracking-widest text-[#768994] whitespace-nowrap">
-                    {h}
+                {JOBBOOK_COLS.map(c => (
+                  <th key={c.key} className="relative px-3 py-2.5 text-left text-[9px] font-black uppercase tracking-widest text-[#768994] whitespace-nowrap overflow-hidden">
+                    {c.label}
+                    {jbHandle(c.key)}
                   </th>
                 ))}
               </tr>
@@ -2900,6 +2922,8 @@ export function JobsFeedSection() {
     { key: "total",               label: ["Total"],                    px: 60  },
   ];
 
+  const { widths, resizeHandle } = useColumnResize("mgmt-jobsfeed-cols", COLS, { dark: true });
+
   const getCellValue = (e, key) => {
     const j = e._job || {};
     switch (key) {
@@ -3011,16 +3035,19 @@ export function JobsFeedSection() {
 
       {/* Table */}
       <div className="overflow-x-auto rounded-xl border border-[#dce4ec] shadow-sm">
-        <table className="border-collapse text-[11px] w-full" style={{ minWidth: `${COLS.reduce((s, c) => s + c.px, 0)}px` }}>
+        <table className="border-collapse text-[11px] w-full" style={{ tableLayout: "fixed", minWidth: `${COLS.reduce((s, c) => s + widths[c.key], 0)}px` }}>
+          <colgroup>
+            {COLS.map(c => <col key={c.key} style={{ width: widths[c.key] }} />)}
+          </colgroup>
           <thead>
             <tr>
               {COLS.map(c => (
                 <th
                   key={c.key}
-                  style={{ width: c.px, minWidth: c.px }}
-                  className="px-2 py-2.5 text-center font-black uppercase tracking-widest text-[9px] text-white bg-[#0d1b22] border-r border-white/5 last:border-r-0 whitespace-nowrap"
+                  className="relative px-2 py-2.5 text-center font-black uppercase tracking-widest text-[9px] text-white bg-[#0d1b22] border-r border-white/5 last:border-r-0 whitespace-nowrap overflow-hidden"
                 >
                   {Array.isArray(c.label) ? c.label.map((l, i) => <span key={i} className="block leading-tight">{l}</span>) : c.label}
+                  {resizeHandle(c.key)}
                 </th>
               ))}
             </tr>
@@ -3040,10 +3067,9 @@ export function JobsFeedSection() {
                   return (
                     <td
                       key={c.key}
-                      style={{ width: c.px, minWidth: c.px }}
-                      className={`px-2 py-1.5 border-r border-[#f0f4f8] last:border-r-0 ${isCheck ? "text-center" : ""} ${isMono ? "font-mono text-[10px]" : ""} ${noWrap ? "whitespace-nowrap" : ""} text-[#122027]`}
+                      className={`px-2 py-1.5 border-r border-[#f0f4f8] last:border-r-0 overflow-hidden ${isCheck ? "text-center" : ""} ${isMono ? "font-mono text-[10px]" : ""} ${noWrap ? "whitespace-nowrap" : ""} text-[#122027]`}
                     >
-                      <span className={`block leading-snug ${c.key === "job_number" ? "font-black text-[#12a0e1]" : "font-medium"}`}>
+                      <span className={`block leading-snug ${noWrap ? "truncate" : ""} ${c.key === "job_number" ? "font-black text-[#12a0e1]" : "font-medium"}`}>
                         {val}
                       </span>
                     </td>

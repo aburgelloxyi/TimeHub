@@ -17,10 +17,17 @@ function loadPdfjs() {
 
 const TARGET_COLS = [
   { key: "artworkType", match: /(dinth|foh|dooh)/i },
-  { key: "campaignSelection", match: /artwork.{0,20}selection/i },
-  { key: "mediaSiteName", match: /media.{0,10}site/i },
-  { key: "pixelWidth", match: /(pixel.{0,30}width|width.{0,10}pixel)/i },
-  { key: "pixelHeight", match: /(pixel.{0,30}height|height.{0,10}pixel)/i },
+  // "ARTWORK" and "SELECTION" sit on two lines, and depending on how the PDF
+  // interleaves header rows they don't always end up in one cluster — so match
+  // the distinctive lower word on its own too. "SELECTION" appears in no other
+  // column header in these templates.
+  { key: "campaignSelection", match: /(artwork.{0,20}selection|\bselection\b)/i },
+  { key: "mediaSiteName", match: /media.{0,20}site/i },
+  // Newer delivery templates label these plainly as "WIDTH" / "HEIGHT" (with a
+  // separate "UNIT OF MEASUREMENT" column) rather than "PIXEL WIDTH". Match the
+  // bare word so both templates work — \bwidth\b still catches "PIXEL WIDTH".
+  { key: "pixelWidth", match: /\bwidth\b/i },
+  { key: "pixelHeight", match: /\bheight\b/i },
   { key: "duration", match: /\bduration\b/i },
   { key: "soundReq", match: /\bsound\b/i },
   { key: "fileSize", match: /file.{0,20}size/i },
@@ -125,9 +132,15 @@ function findHeaderRow(rows) {
 // The previous version only bounded a column against the next *targeted*
 // column, so an untargeted neighbour's number was free to be absorbed —
 // that's why Pixel Height read "864 0.30" (0.30 is Aspect Ratio).
-function detectColumns(rows, headerRow) {
-  // Header row and anything above it (labels sometimes wrap upward), never below.
-  const headerCells = rows.slice(0, headerRow + 1).flat();
+function detectColumns(rows, headerRow, headerEnd = headerRow + 1) {
+  // All header lines up to (but not including) the first data row. Labels wrap
+  // BOTH ways: some upward, but "ARTWORK" / "SELECTION" and "MEDIA APPROVED?"
+  // wrap DOWNWARD — the second line sits below the best-scoring header row. If
+  // we stopped at headerRow+1 the word "SELECTION" was excluded, the cluster
+  // read only "ARTWORK", /artwork.*selection/ never matched, and the Campaign
+  // column was dropped (blank → "UNKNOWN"). headerEnd is the data-start row, so
+  // this stays clear of data while capturing every header line.
+  const headerCells = rows.slice(0, headerEnd).flat();
   const clusters = buildHeaderClusters(headerCells);
 
   const colMap = [];
@@ -215,11 +228,39 @@ export async function parsePdfDeliverySpecs(blob) {
 
   const rows = groupIntoRows(allItems);
   const headerRow = findHeaderRow(rows);
-  const colMap = detectColumns(rows, headerRow);
-  if (!colMap.length) return null;
+
+  // First pass: columns from the header row alone, enough to locate where the
+  // data begins (findDataStart only needs the numeric columns).
+  const prelimCols = detectColumns(rows, headerRow);
+  if (!prelimCols.length) return null;
 
   // Data can only start below the header row — never scan back over it.
-  const dataStart = findDataStart(rows, colMap, headerRow + 1);
+  const dataStart = findDataStart(rows, prelimCols, headerRow + 1);
+
+  // Second pass: re-detect columns across ALL header lines above the data
+  // (labels wrap downward too), so multi-line headers like "ARTWORK
+  // SELECTION" are clustered whole instead of losing their lower line.
+  const colMap = detectColumns(rows, headerRow, dataStart);
+  if (!colMap.length) return null;
+
+  // TEMP diagnostics — remove once campaign detection is confirmed. Shows which
+  // columns were detected (and their bands) plus the header clusters we clustered
+  // from, so a screenshot of the console pins down why Campaign came back blank.
+  try {
+    const headerClusters = buildHeaderClusters(rows.slice(0, dataStart).flat());
+    console.log("[pdfParser] headerRow", headerRow, "dataStart", dataStart);
+    console.log(
+      "[pdfParser] clusters",
+      headerClusters.map((c) => ({ text: c.text, cx: Math.round(c.cx) }))
+    );
+    console.log(
+      "[pdfParser] detected columns",
+      colMap.map((c) => c.key)
+    );
+    console.log("[pdfParser] first data row raw", rows[dataStart]);
+  } catch (e) {
+    console.warn("[pdfParser] diag failed", e);
+  }
 
   const results = rows
     .slice(dataStart)

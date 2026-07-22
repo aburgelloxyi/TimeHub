@@ -79,6 +79,14 @@ const AdminModal = lazy(() => import("./components/AdminModal"));
 // TipTap editor, none of which belong in the always-loaded app entry chunk.
 const NotesModal = lazy(() => import("./components/shared/NotesModal"));
 const DeliverySpecsModal = lazy(() => import("./components/DeliverySpecsModal"));
+// CsvPreviewModal is a named export of the (heavy) TaskDetailModal module —
+// lazy-load it so the bubble's Scan-PDF → Export-CSV path doesn't pull TipTap
+// et al. into the entry chunk.
+const CsvPreviewModal = lazy(() =>
+  import("./components/TaskDetailModal").then((m) => ({
+    default: m.CsvPreviewModal,
+  }))
+);
 
 // Suspense fallback for a still-downloading page chunk. The spinner fades in
 // after a beat (CSS delay) so the common case — chunk already prefetched,
@@ -139,6 +147,7 @@ export default function App() {
   const [notesModalOpen, setNotesModalOpen] = useState(false);
   const [pdfSpecs, setPdfSpecs] = useState(null);
   const [pdfName, setPdfName] = useState("");
+  const [csvOpen, setCsvOpen] = useState(false);
   const [hasToken, setHasToken] = useState(
     () => !!localStorage.getItem("wrike_user_id")
   );
@@ -293,6 +302,7 @@ export default function App() {
   const scanPdf = useCallback(async (file) => {
     if (!file) return;
     setPdfName(file.name);
+    setCsvOpen(false);
     notify("Reading PDF…", "info");
     try {
       const { parsePdfDeliverySpecs } = await import("./utils/pdfTableParser");
@@ -864,6 +874,14 @@ export default function App() {
             specs={pdfSpecs}
             pdfName={pdfName}
             onClose={() => setPdfSpecs(null)}
+            onExportCsv={() => setCsvOpen(true)}
+          />
+        )}
+        {csvOpen && pdfSpecs && (
+          <CsvPreviewModal
+            rawSpecs={pdfSpecs}
+            pdfName={pdfName}
+            onClose={() => setCsvOpen(false)}
           />
         )}
       </Suspense>

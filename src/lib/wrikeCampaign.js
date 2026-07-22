@@ -161,6 +161,49 @@ export function findMasterTemplateFolder(byId, studioName) {
   return best ? { id: best.folder.id, title: best.folder.title, jobCount: best.jobCount } : null;
 }
 
+// Which studio does this film live under? Films sit one level inside a studio
+// folder, so the film's parent IS its studio. Resolved from Wrike rather than
+// stored: the films table only keeps a title, and deriving it keeps working for
+// films added long before any of this existed.
+//
+// Matched with norm(), not raw equality — Wrike names projects with underscores
+// ("Fake_Film_Tryout") while the films table stores spaces ("Fake Film Tryout").
+//
+// The subtle part: a film pushed before job folders were renamed in place has a
+// folder named after the film INSIDE the film project, so the title matches
+// twice — the project under Paramount, and the wrapper under that project.
+// Picking the wrapper makes its parent (the project) look like the studio, and
+// we'd go hunting for a "Fake_Film_Tryout" master template. So prefer the match
+// whose parent is NOT itself the same film: the outermost one, sitting in its
+// real studio folder.
+export function findFilmLocation(byId, filmTitle) {
+  if (!(filmTitle || "").trim()) return null;
+
+  // childIds is the only link Wrike gives us, so invert it to walk upwards.
+  const parentOf = {};
+  Object.values(byId).forEach((f) =>
+    (f.childIds || []).forEach((c) => { if (!parentOf[c]) parentOf[c] = f.id; })
+  );
+
+  const isSameFilm = (t) => norm(t) === norm(filmTitle);
+  const matches = Object.values(byId).filter((f) => isSameFilm(f.title));
+  const film =
+    matches.find((f) => {
+      const p = byId[parentOf[f.id]];
+      return p && !isSameFilm(p.title);
+    }) ||
+    matches.find((f) => parentOf[f.id]) ||
+    matches[0];
+  if (!film) return null;
+
+  const studioFolder = byId[parentOf[film.id]] || null;
+  return {
+    filmProject: { id: film.id, title: film.title },
+    studioFolder: studioFolder ? { id: studioFolder.id, title: studioFolder.title } : null,
+    studio: studioFolder ? studioFolder.title : null,
+  };
+}
+
 // ── Req 6: Film DB sync ───────────────────────────────────────────────────────
 
 // Read-only plan: which Wrike film projects are missing from the films table.

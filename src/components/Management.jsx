@@ -15,7 +15,7 @@ import { confirmAction } from "../lib/confirm";
 import { notify } from "../lib/toast";
 import {
   discoverJobNumberField, planFilmSync, fetchAllFolders, findStudioFolder,
-  findMasterTemplateFolder, fetchFolderProjects, collectSubtreeIds,
+  findMasterTemplateFolder, fetchFolderProjects, collectSubtreeIds, findFilmLocation,
   planPropagate, applyPropagate, copyTemplateDeep,
   mapSlotFoldersUnder, slotSuffix, renameFolder,
 } from "../lib/wrikeCampaign";
@@ -199,7 +199,10 @@ const letterPalette = (l) => {
 };
 
 // ── Generic reference-list section ───────────────────────────────────────────
-function SimpleListSection({ table, labelField = "name", label, placeholder, isLong = false, quickFilters = [], quickFilterLabel = "Quick filters", groups = [], wrikeFilmSync = false }) {
+// onItemClick (optional) makes each row's label a button rather than plain
+// text — used by Films to open that film's bulk campaign. Left off elsewhere,
+// so Clients/Categories/Descriptions stay plain editable lists.
+function SimpleListSection({ table, labelField = "name", label, placeholder, isLong = false, quickFilters = [], quickFilterLabel = "Quick filters", groups = [], wrikeFilmSync = false, onItemClick }) {
   const [items, setItems]               = useState([]);
   const [showFilmSync, setShowFilmSync] = useState(false);
   const [loading, setLoading]           = useState(true);
@@ -663,9 +666,19 @@ function SimpleListSection({ table, labelField = "name", label, placeholder, isL
                   </>
                 ) : (
                   <>
-                    <span className={`flex-1 min-w-0 text-sm font-medium text-[#122027] ${isLong ? "leading-snug" : "truncate"}`}>
-                      {text}
-                    </span>
+                    {onItemClick ? (
+                      <button
+                        onClick={() => onItemClick(text)}
+                        title={`Open “${text}”`}
+                        className={`flex-1 min-w-0 text-left text-sm font-medium text-[#122027] hover:text-[#12a0e1] transition-colors ${isLong ? "leading-snug" : "truncate"}`}
+                      >
+                        {text}
+                      </button>
+                    ) : (
+                      <span className={`flex-1 min-w-0 text-sm font-medium text-[#122027] ${isLong ? "leading-snug" : "truncate"}`}>
+                        {text}
+                      </span>
+                    )}
                     <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity shrink-0">
                       <button onClick={() => { setEditId(item.id); setEditVal(text); }}
                         className="p-1.5 hover:bg-slate-100 rounded-lg text-slate-400 hover:text-[#122027]">
@@ -1763,10 +1776,15 @@ const JOBS_SETUP_TABS = [
 ];
 
 // Exported: also rendered inside the PMs' standalone Job Book page (JobBook.jsx).
-export function JobsSetupSection({ setActiveTab }) {
+// initialStudio/initialFilm + lockPickers let this same section be rendered
+// against one already-chosen film (the Films tab's campaign modal), where the
+// studio and film are resolved from Wrike instead of picked by hand — so that
+// modal gets the real thing (activate, push, re-tag) rather than a read-only
+// copy that would drift out of step with this one.
+export function JobsSetupSection({ setActiveTab, initialStudio, initialFilm, lockPickers = false }) {
   const [innerTab, setInnerTab] = useState("campaign");
-  const [studio, setStudio] = useState("Paramount");
-  const [filmTitle, setFilmTitle] = useState("");
+  const [studio, setStudio] = useState(initialStudio || "Paramount");
+  const [filmTitle, setFilmTitle] = useState(initialFilm || "");
   const [fetchedTemplate, setFetchedTemplate] = useState(null); // real subtree pulled live from Wrike
   const [fetchingTemplate, setFetchingTemplate] = useState(false);
   const [fetchInfo, setFetchInfo] = useState(null); // { rootLabel, jobCount } | { error }
@@ -2144,6 +2162,7 @@ export function JobsSetupSection({ setActiveTab }) {
         </p>
       </div>
 
+      {!lockPickers && (
       <div>
         <label className="block text-[10px] font-black uppercase tracking-widest text-[#768994] mb-1.5">Studio Template</label>
         <div className="flex items-center gap-2 flex-wrap">
@@ -2186,7 +2205,9 @@ export function JobsSetupSection({ setActiveTab }) {
           ) : null}
         </div>
       </div>
+      )}
 
+      {!lockPickers && (
       <div>
         <div className="flex items-center justify-between mb-1.5">
           <label className="block text-[10px] font-black uppercase tracking-widest text-[#768994]">Film</label>
@@ -2206,6 +2227,7 @@ export function JobsSetupSection({ setActiveTab }) {
           </p>
         )}
       </div>
+      )}
 
       {templateToShow && (
         <>
@@ -3338,6 +3360,92 @@ const HUB_SLIDE_VARIANTS = {
   exit: (dir) => ({ x: dir > 0 ? -28 : 28, opacity: 0, transition: { duration: 0.16, ease: [0.25, 0.1, 0.25, 1] } }),
 };
 
+// A film's bulk campaign, opened straight from the Films list instead of going
+// to Bulk Campaign and re-picking studio + film.
+//
+// It renders the real JobsSetupSection with its pickers locked, rather than a
+// read-only imitation: activate, push, re-tag and the session review all work
+// exactly as they do on the Bulk Campaign page, because they ARE that page. A
+// separate view would have been a second implementation to keep in step, and
+// would have drifted the first time either side changed. (Defined here rather
+// than in its own file purely because importing JobsSetupSection from outside
+// Management would form an import cycle.)
+//
+// The only thing this adds is resolving the film's studio, which the films
+// table doesn't store — a film project's parent folder in Wrike IS its studio.
+function FilmCampaignModal({ filmTitle, onClose }) {
+  const [studio, setStudio] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      setLoading(true);
+      setError(null);
+      try {
+        if (!localStorage.getItem("wrike_user_id")) {
+          throw new Error("Wrike isn't connected — connect it in Profile → Settings first.");
+        }
+        const byId = await fetchAllFolders();
+        const loc = findFilmLocation(byId, filmTitle);
+        if (!loc) throw new Error(`No “${filmTitle}” project found in Wrike. It may not have been created there yet.`);
+        if (!loc.studio) throw new Error(`Found “${filmTitle}” in Wrike, but it isn't inside a studio folder — can't tell which template applies.`);
+        if (!alive) return;
+        setStudio(loc.studio);
+      } catch (e) {
+        if (alive) setError(e.message);
+      } finally {
+        if (alive) setLoading(false);
+      }
+    })();
+    return () => { alive = false; };
+  }, [filmTitle]);
+
+  return (
+    <div
+      className="fixed inset-0 z-[9999] bg-[#122027]/60 backdrop-blur-sm flex items-start justify-center p-4 sm:p-8 overflow-y-auto"
+      onMouseDown={onClose}
+    >
+      <div
+        className="bg-white rounded-3xl shadow-2xl w-full max-w-6xl my-4 flex flex-col overflow-hidden border border-[#dce4ec]"
+        onMouseDown={(e) => e.stopPropagation()}
+      >
+        <div className="px-6 pt-5 pb-4 border-b border-[#dce4ec] flex items-start justify-between gap-4 shrink-0">
+          <div className="min-w-0">
+            <p className="text-[9px] font-black uppercase tracking-widest text-[#12a0e1] mb-0.5">
+              Bulk campaign · live from Wrike
+            </p>
+            <h2 className="text-xl font-black text-[#122027] truncate flex items-center gap-2">
+              <Film className="w-4 h-4 text-[#768994] shrink-0" />
+              {filmTitle}
+            </h2>
+            {studio && <p className="text-xs text-[#768994] mt-0.5">{studio}</p>}
+          </div>
+          <button onClick={onClose}
+            className="p-2 hover:bg-slate-100 rounded-xl text-slate-400 hover:text-slate-600 transition-colors shrink-0">
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+
+        <div className="px-6 py-5">
+          {loading ? (
+            <div className="flex items-center justify-center gap-2 py-16 text-[#768994]">
+              <Loader2 className="w-4 h-4 animate-spin" /> Finding “{filmTitle}” in Wrike…
+            </div>
+          ) : error ? (
+            <div className="py-12 text-center">
+              <p className="text-sm font-bold text-red-500">{error}</p>
+            </div>
+          ) : (
+            <JobsSetupSection initialStudio={studio} initialFilm={filmTitle} lockPickers />
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function Management({ wrikeUserId, department, wrikeData = [] }) {
   // expandedGroup is purely a display toggle — which group's items are
   // unfolded inline on the hub, an accordion, not a navigation state.
@@ -3345,6 +3453,8 @@ export default function Management({ wrikeUserId, department, wrikeData = [] }) 
   // (accordion open or not), a value means "showing that item's content".
   const [expandedGroup, setExpandedGroup] = useState(null);
   const [activeTab, setActiveTab] = useState(null);
+  // Film whose bulk campaign is open in a modal (from the Films tab).
+  const [campaignFilm, setCampaignFilm] = useState(null);
   // Tracks which way the content panel should slide: forward opening an
   // item, backward returning to the hub.
   const [navDirection, setNavDirection] = useState(1);
@@ -3458,7 +3568,7 @@ export default function Management({ wrikeUserId, department, wrikeData = [] }) 
                     />
                   )}
                   {activeTab === "people"     && <PeopleSection />}
-                  {activeTab === "films"      && <SimpleListSection table="films" labelField="title" label="Films" placeholder="Film title…" wrikeFilmSync />}
+                  {activeTab === "films"      && <SimpleListSection table="films" labelField="title" label="Films" placeholder="Film title…" wrikeFilmSync onItemClick={setCampaignFilm} />}
                   {activeTab === "clients"    && <SimpleListSection table="clients" labelField="name" label="Clients" quickFilters={STUDIO_GROUPS} quickFilterLabel="Filter by studio" />}
                   {activeTab === "categories" && <SimpleListSection table="job_categories" labelField="name" label="Item Categories" groups={CATEGORY_GROUPS} />}
                   {activeTab === "descs"      && <SimpleListSection table="project_descriptions" labelField="description" label="Project Type Descriptions" isLong quickFilters={DESC_QUICK_FILTERS} quickFilterLabel="Filter by territory" groups={DESCRIPTION_GROUPS} />}
@@ -3472,6 +3582,10 @@ export default function Management({ wrikeUserId, department, wrikeData = [] }) 
           </motion.div>
         </AnimatePresence>
       </div>
+
+      {campaignFilm && (
+        <FilmCampaignModal filmTitle={campaignFilm} onClose={() => setCampaignFilm(null)} />
+      )}
     </div>
   );
 }

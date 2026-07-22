@@ -18,6 +18,7 @@ import {
   findMasterTemplateFolder, fetchFolderProjects, collectSubtreeIds, findFilmLocation,
   planPropagate, applyPropagate, copyTemplateDeep,
   mapSlotFoldersUnder, slotSuffix, renameFolder, buildFilmView,
+  setFolderJobNumber, triggerFieldCascade,
 } from "../lib/wrikeCampaign";
 import { isServiceAccount, DEPT_GROUPS } from "../lib/people";
 import { layoutRect } from "../utils/zoom";
@@ -1455,6 +1456,7 @@ function PushToWrikeModal({ studio, filmTitle, slotJobs, mode = "push", onClose 
 
   // Activated slots, with the code we'll write as the field value.
   const slots = useMemo(() => Object.values(slotJobs).map((j) => ({
+    id: j.id,
     label: j.template_slot,
     jobNumber: j.job_number,
     code: (j.job_number?.match(/XY\d+/) || [])[0] || j.job_number,
@@ -1546,8 +1548,9 @@ function PushToWrikeModal({ studio, filmTitle, slotJobs, mode = "push", onClose 
         slotFolders = await mapSlotFoldersUnder(filmProject.id);
       }
 
-      // Rename each activated slot's folder to its code and tag any tasks beneath.
-      let renamed = 0, propagated = 0, failed = 0, skipped = 0;
+      // Rename each activated slot's folder to its code, set the Job Number field
+      // on the folder, then let Wrike cascade that value down to every subitem.
+      let renamed = 0, cascaded = 0, propagated = 0, failed = 0, skipped = 0;
       for (let i = 0; i < slots.length; i++) {
         const s = slots[i];
         const suffix = slotSuffix(s.label);
@@ -1559,16 +1562,37 @@ function PushToWrikeModal({ studio, filmTitle, slotJobs, mode = "push", onClose 
         setProgress({ step: `Assigning ${s.code}…`, done: i, total: slots.length });
         if (folder.title !== newTitle) { await renameFolder(folder.id, newTitle); renamed += 1; }
 
-        // Tag tasks/subtasks beneath (0 while the folder is still empty — Re-tag
-        // or a later run tops them up once work is added).
+        // Remember which Wrike folder this job now owns, and under what name — so
+        // the app can later tell "reverted/renamed in Wrike" from "never pushed"
+        // (a job with no folder id was never pushed) and offer to reconcile.
+        if (s.id) {
+          await supabase.from("jobs")
+            .update({ wrike_folder_id: folder.id, wrike_folder_title: newTitle })
+            .eq("id", s.id);
+        }
+
+        // Fill the slot folder's own Job Number field, then turn on Wrike-native
+        // cascading so the value flows down to every current AND future subitem
+        // (nested market folders + tasks) — no per-item walk needed.
+        try {
+          await setFolderJobNumber(folder.id, plan.field.id, s.code);
+          await triggerFieldCascade(folder.id, plan.field.id);
+          cascaded += 1;
+        } catch {
+          failed += 1; // keep going with the remaining slots; count surfaces in the summary
+        }
+
+        // Belt-and-braces: also tag existing tasks directly. Redundant once cascade
+        // is confirmed live, but harmless (same value) and safe if a field's config
+        // limits cascade — remove once the cascade path is verified on the account.
         const p = await planPropagate(folder.id, plan.field.id, s.code);
         const r = await applyPropagate(p.willSet, plan.field.id, s.code,
           (d, t) => setProgress({ step: `Tagging ${s.code} tasks…`, done: d, total: t }));
         propagated += r.ok.length;
         failed += r.failed.length;
       }
-      setResult({ renamed, propagated, failed, skipped, droppedTaskFolders });
-      notify(`Wrike updated — ${renamed} folder${renamed === 1 ? "" : "s"} named${propagated ? `, ${propagated} task${propagated === 1 ? "" : "s"} tagged` : ""}${failed ? `, ${failed} failed` : ""}.`,
+      setResult({ renamed, cascaded, propagated, failed, skipped, droppedTaskFolders });
+      notify(`Wrike updated — ${renamed} folder${renamed === 1 ? "" : "s"} named${cascaded ? `, ${cascaded} cascaded` : ""}${propagated ? `, ${propagated} task${propagated === 1 ? "" : "s"} tagged` : ""}${failed ? `, ${failed} failed` : ""}.`,
         failed ? "error" : "success");
     } catch (e) {
       setError(e.message);
@@ -1596,6 +1620,7 @@ function PushToWrikeModal({ studio, filmTitle, slotJobs, mode = "push", onClose 
             </p>
             <p className="text-xs text-[#768994]">
               {result.renamed ? `${result.renamed} folder${result.renamed === 1 ? "" : "s"} named · ` : ""}
+              {result.cascaded ? `${result.cascaded} cascaded · ` : ""}
               {result.propagated} task{result.propagated === 1 ? "" : "s"} tagged
               {result.failed ? ` · ${result.failed} failed` : ""}
               {result.skipped ? ` · ${result.skipped} slot${result.skipped === 1 ? "" : "s"} had no matching folder` : ""}.
@@ -1997,20 +2022,6 @@ export function JobsSetupSection({ setActiveTab, initialStudio, initialFilm, loc
     return () => { cancelled = true; };
   }, [filmTitle, ensureFolders]);
 
-  // Force-refresh both the studio template AND the film's own subtree from Wrike
-  // (busts the folder cache), so a just-pushed / just-renamed film reflects here.
-  const resync = useCallback(() => {
-    foldersRef.current = null;
-    fetchTemplateFromWrike(studio, { force: true });
-    if (filmTitle.trim() && localStorage.getItem("wrike_user_id")) {
-      setFilmViewLoading(true);
-      ensureFolders({ force: true })
-        .then((byId) => setFilmView(buildFilmView(byId, filmTitle)))
-        .catch(() => setFilmView(null))
-        .finally(() => setFilmViewLoading(false));
-    }
-  }, [studio, filmTitle, fetchTemplateFromWrike, ensureFolders]);
-
   // Load which slots are already activated for the selected film — keyed by
   // template_slot, so we know per JOBNUMBER_ folder whether it already has a
   // real job number or is still a pending, un-clicked placeholder.
@@ -2025,6 +2036,35 @@ export function JobsSetupSection({ setActiveTab, initialStudio, initialFilm, loc
   }, []);
 
   useEffect(() => { loadSlotJobs(filmTitle); }, [filmTitle, loadSlotJobs]);
+
+  // Re-read just the film's own subtree from Wrike (busts the folder cache), so a
+  // folder renamed/reverted in Wrike reflects here on demand. Lighter than resync
+  // (doesn't re-pull the studio template) and available even when the pickers —
+  // and their Re-sync button — are hidden (lockPickers, opened from the Films tab).
+  const refreshFilmView = useCallback(() => {
+    if (!filmTitle.trim() || !localStorage.getItem("wrike_user_id")) return;
+    loadSlotJobs(filmTitle); // re-read Job Book too, so folder-tracking (wrike_folder_id) is current for reconciliation
+    foldersRef.current = null;
+    setFilmViewLoading(true);
+    ensureFolders({ force: true })
+      .then((byId) => setFilmView(buildFilmView(byId, filmTitle)))
+      .catch(() => setFilmView(null))
+      .finally(() => setFilmViewLoading(false));
+  }, [filmTitle, ensureFolders, loadSlotJobs]);
+
+  // Force-refresh both the studio template AND the film's own subtree from Wrike
+  // (busts the folder cache), so a just-pushed / just-renamed film reflects here.
+  const resync = useCallback(() => {
+    foldersRef.current = null;
+    fetchTemplateFromWrike(studio, { force: true });
+    if (filmTitle.trim() && localStorage.getItem("wrike_user_id")) {
+      setFilmViewLoading(true);
+      ensureFolders({ force: true })
+        .then((byId) => setFilmView(buildFilmView(byId, filmTitle)))
+        .catch(() => setFilmView(null))
+        .finally(() => setFilmViewLoading(false));
+    }
+  }, [studio, filmTitle, fetchTemplateFromWrike, ensureFolders]);
 
   // Activate exactly one slot: allocate the next sequential XY code fresh
   // (reflects anything created anywhere since we last looked), create one job
@@ -2196,6 +2236,37 @@ export function JobsSetupSection({ setActiveTab, initialStudio, initialFilm, loc
   // "Done" = already numbered in Wrike (allocated) OR activated by us this session.
   const activatedCount = allLeaves.filter(l => l.allocated || slotJobs[l.label]).length;
 
+  // ── Job Book ↔ Wrike reconciliation ──────────────────────────────────────
+  // Every folder in the film's live subtree, by id, so we can look up the exact
+  // folder a job was pushed to and see whether it still carries that job's code.
+  const liveByFolderId = useMemo(() => {
+    const out = {};
+    const walk = (n) => { if (n?.id) out[n.id] = n; (n?.children || []).forEach(walk); };
+    if (filmView?.tree) walk(filmView.tree);
+    return out;
+  }, [filmView]);
+
+  // Activated jobs whose Wrike folder no longer matches them. We ONLY consider
+  // jobs that were actually pushed (wrike_folder_id set) — a job without one was
+  // never pushed and is just pending, not a mismatch. A pushed job is stale if
+  // its folder was renamed off its code (e.g. reverted to JOBNUMBER_…) or the
+  // folder is gone. This is the source-of-truth check: Wrike is the truth, and
+  // when Job Book disagrees we offer to un-allocate.
+  const jobMismatches = useMemo(() => {
+    if (!filmView?.filmProject) return [];
+    const out = [];
+    Object.values(slotJobs).forEach((job) => {
+      if (!job.wrike_folder_id) return; // never pushed → pending, not stale
+      const code = (job.job_number?.match(/XY\d+/) || [])[0];
+      if (!code) return;
+      const live = liveByFolderId[job.wrike_folder_id];
+      if (!live) out.push({ job, code, reason: "deleted" });
+      else if (!new RegExp(`^${code}_`, "i").test(live.label || ""))
+        out.push({ job, code, reason: "renamed", liveLabel: live.label });
+    });
+    return out;
+  }, [slotJobs, liveByFolderId, filmView]);
+
   return (
     <div className="flex flex-col gap-5">
       <div className="grid grid-cols-2 gap-4">
@@ -2314,11 +2385,52 @@ export function JobsSetupSection({ setActiveTab, initialStudio, initialFilm, loc
                 : `${allLeaves.length} job slot${allLeaves.length === 1 ? "" : "s"} in this template — select a film above to activate any of them`}
             </span>
             {(loadingSlots || filmViewLoading) && <Loader2 className="w-3.5 h-3.5 animate-spin text-[#768994]" />}
+            {filmTitle.trim() && !filmViewLoading && (
+              <button onClick={refreshFilmView}
+                title="Re-read this film's folders from Wrike (reflects renames done in Wrike)"
+                className="flex items-center gap-1 text-[11px] font-bold text-[#768994] hover:text-[#12a0e1] transition-colors">
+                <RefreshCw className="w-3 h-3" /> Refresh from Wrike
+              </button>
+            )}
             {filmTitle.trim() && !filmDriven && !filmViewLoading && (
               <span className="text-[10px] font-bold text-[#768994] italic">no job folders in Wrike yet — showing the {studio} template</span>
             )}
             {activateError && <span className="text-xs font-bold text-red-500">{activateError}</span>}
           </div>
+
+          {/* Source-of-truth reconciliation: Job Book numbers whose Wrike folder
+              no longer carries them (renamed off their code, or deleted). Wrike is
+              the truth — offer to clear the stale Job Book entry. */}
+          {jobMismatches.length > 0 && (
+            <div className="border border-[#f4b740]/40 bg-[#f4b740]/10 rounded-2xl overflow-hidden">
+              <div className="flex items-center justify-between gap-3 px-4 py-2.5 border-b border-[#f4b740]/30">
+                <p className="flex items-center gap-2 text-xs font-black uppercase tracking-widest text-[#8a6d1a]">
+                  <AlertTriangle className="w-4 h-4" />
+                  {jobMismatches.length} job number{jobMismatches.length === 1 ? "" : "s"} out of step with Wrike
+                </p>
+              </div>
+              <div className="divide-y divide-[#f4b740]/20">
+                {jobMismatches.map(({ job, code, reason, liveLabel }) => (
+                  <div key={job.id} className="flex items-center gap-3 px-4 py-2.5">
+                    <span className="font-mono font-bold text-[#8a6d1a] text-xs shrink-0">{code}</span>
+                    <span className="text-[11px] text-[#122027] flex-1 min-w-0 truncate">
+                      {job.project_description}
+                      <span className="text-[#8a6d1a] italic ml-1.5">
+                        — {reason === "deleted"
+                          ? "its Wrike folder was deleted"
+                          : `its Wrike folder was renamed to “${liveLabel}”`}
+                      </span>
+                    </span>
+                    <button onClick={() => undoActivation(job)} disabled={undoingId === job.id}
+                      className="flex items-center gap-1.5 text-[11px] font-bold text-rose-600 hover:text-rose-700 disabled:opacity-40 shrink-0 transition-colors">
+                      {undoingId === job.id ? <Loader2 className="w-3 h-3 animate-spin" /> : <Undo2 className="w-3 h-3" />}
+                      Un-allocate
+                    </button>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
 
           <div className="grid grid-cols-2 gap-4">
             <div className="border border-[#dce4ec] rounded-2xl p-4 max-h-[420px] overflow-y-auto">

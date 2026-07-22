@@ -240,7 +240,7 @@ export function buildFilmView(byId, filmTitle) {
     seen.add(id);
     const node = byId[id];
     if (!node) return null;
-    const out = { label: node.title || "" };
+    const out = { id, label: node.title || "" };
     if (/^(JOBNUMBER|XY\d+)_/i.test(node.title || "")) {
       const code = codeOf(node.title);
       out.jobNumber = true;
@@ -345,6 +345,36 @@ export async function applyPropagate(willSet, fieldId, jobNumber, onProgress) {
     onProgress?.(i + 1, willSet.length);
   }
   return { ok, failed };
+}
+
+// Set the Job Number custom field on a single FOLDER. Folders take customFields
+// exactly like tasks (PUT with the JSON-encoded array) — renaming only stamps
+// the title, so this is what actually fills the folder's own "Job Number" field.
+export async function setFolderJobNumber(folderId, fieldId, value) {
+  const cf = encodeURIComponent(JSON.stringify([{ id: fieldId, value: String(value) }]));
+  const res = await fetch(`${WRIKE}/folders/${folderId}?customFields=${cf}`, { method: "PUT" });
+  if (!res.ok) {
+    const body = await res.text().catch(() => "");
+    throw new Error(`set field on folder ${folderId} (${res.status})${body ? `: ${body}` : ""}`);
+  }
+}
+
+// Turn on Wrike-native field cascading for one field on a folder: Wrike then
+// pushes the folder's CURRENT value down to every subitem — nested folders AND
+// tasks, current AND any created later. This is exactly the UI's "Apply value to
+// all current and future subitems" button, so we set the folder value first
+// (setFolderJobNumber) and then call this.
+//
+// Contract verified live against the account (the published reference is wrong):
+// the param is a SINGULAR `fieldId` plain-string query param, NOT a `fieldIds`
+// array — Wrike 400s "Parameter 'fieldIds' is not allowed" otherwise, and 200s
+// with { kind: "cascadingFieldSettings", data:[{ fieldId, … }] } on this shape.
+export async function triggerFieldCascade(folderId, fieldId) {
+  const res = await fetch(`${WRIKE}/folders/${folderId}/cascading_field_settings?fieldId=${encodeURIComponent(fieldId)}`, { method: "POST" });
+  if (!res.ok) {
+    const body = await res.text().catch(() => "");
+    throw new Error(`cascade field on folder ${folderId} (${res.status})${body ? `: ${body}` : ""}`);
+  }
 }
 
 // ── Req 5: duplicate the whole studio template into Wrike ─────────────────────

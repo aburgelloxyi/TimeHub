@@ -20,6 +20,7 @@ import {
   mapSlotFoldersUnder, slotSuffix, renameFolder,
 } from "../lib/wrikeCampaign";
 import { isServiceAccount, DEPT_GROUPS } from "../lib/people";
+import { layoutRect } from "../utils/zoom";
 import { SEED_CLIENTS, SEED_PROJECT_DESCRIPTIONS } from "../data/seedData";
 import { DEFAULT_JOBS, CATEGORIES } from "../constants";
 import { fullName as cleanFullName, cleanNamePart } from "../lib/formatName";
@@ -884,7 +885,10 @@ function StrictSelect({ value, onChange, options, placeholder, loading, classNam
   }, [options, q]);
 
   const toggle = () => {
-    if (!open) setRect(btnRef.current.getBoundingClientRect());
+    // layoutRect, not getBoundingClientRect: the panel below is position:fixed
+    // and styled from this rect, so under html{zoom:1.1} a raw (visual) rect
+    // would be zoomed a second time on paint and land offset from the button.
+    if (!open) setRect(layoutRect(btnRef.current));
     setOpen(o => !o);
   };
 
@@ -898,7 +902,7 @@ function StrictSelect({ value, onChange, options, placeholder, loading, classNam
   // page doesn't leave it stranded over the wrong spot.
   useEffect(() => {
     if (!open) return;
-    const reposition = () => setRect(btnRef.current.getBoundingClientRect());
+    const reposition = () => setRect(layoutRect(btnRef.current));
     window.addEventListener("scroll", reposition, true);
     window.addEventListener("resize", reposition);
     return () => {

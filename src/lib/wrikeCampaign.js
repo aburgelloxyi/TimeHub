@@ -137,6 +137,140 @@ export function collectSubtreeIds(byId, rootId, seen = new Set()) {
   return seen;
 }
 
+// Studio keywords used to derive a job's client by climbing its folder ancestry.
+// Same set as Management's STUDIO_GROUPS; kept here so the scanner is self-contained.
+const STUDIO_KEYWORDS = [
+  "Universal", "Paramount", "Sony", "Disney", "Warner",
+  "Netflix", "Apple", "Amazon", "Lionsgate", "XYi",
+];
+
+// Map a studio-folder keyword to the client name the Job Book / Legacy expect.
+const STUDIO_CLIENT = {
+  sony: "Sony Pictures",
+  paramount: "Paramount Pictures",
+  universal: "Universal Pictures",
+  warner: "Warner Bros",
+  disney: "Disney",
+  netflix: "Netflix",
+  apple: "Apple",
+  amazon: "Amazon",
+  lionsgate: "Lionsgate",
+  xyi: "XYi Internal",
+};
+
+const deUnderscore = (s) => (s || "").replace(/[_]+/g, " ").replace(/\s+/g, " ").trim();
+
+// Scan the whole visible folder tree and return one candidate Job Book row per
+// unique XY code found.
+//
+// Real job folders live at STUDIO space → <Studio> (e.g. SONY) → <Film> (e.g.
+// "Focker In-Law") → <Job> ("XY025563_Germany_Launch_Assets"). So for every
+// folder whose title carries an XY code we:
+//   • take the code (XY025563),
+//   • read the description from the folder-title suffix after the code
+//     ("_Germany_Launch_Assets" → "Germany Launch Assets"),
+//   • climb the ancestry to the studio folder → derive client, and take the
+//     child-of-studio on that path as the film ("Focker In-Law"),
+//   • assemble the canonical Job Book line "Film : CODE, Description".
+// Folders that are ALREADY in canonical "Film : CODE, Desc" shape are taken
+// verbatim instead of reassembled. `totalFolders` is returned so the caller can
+// tell an empty result (pattern miss) apart from a dead/blocked fetch (0 folders).
+export async function scanStudioJobNumbers({ studioKeywords } = {}) {
+  const KEYWORDS = studioKeywords || STUDIO_KEYWORDS;
+  const byId = await fetchAllFolders();
+  const totalFolders = Object.keys(byId).length;
+
+  // Upward parent map (fetchAllFolders only gives childIds, i.e. downward).
+  const parentOf = {};
+  Object.values(byId).forEach((f) =>
+    (f.childIds || []).forEach((c) => { parentOf[c] = f.id; })
+  );
+
+  const studioKwOf = (title) =>
+    KEYWORDS.find((k) => new RegExp(`\\b${k}\\b`, "i").test(title || ""));
+  // An "archived" job is one filed under the studio's _Archive folder (or a
+  // master-template tree). Cheap, org-native active/inactive signal — no per-job
+  // status fetch, which job folders don't carry anyway (only Projects do).
+  const isArchiveNode = (title) =>
+    /(^|[\s_])_?archive\b/i.test(title || "") || /master.?template/i.test(title || "");
+
+  // A bare year / number (e.g. "2026") is an organisational folder, not a film.
+  const isYearFolder = (title) => /^\d{2,4}$/.test((title || "").trim());
+
+  // Climb the full ancestry of a job folder. The film is the folder between the
+  // studio and the job — but studios often insert a "2026" year folder in
+  // between, so we take the DEEPEST non-year folder on that stretch (closest to
+  // the job) rather than blindly the child-of-studio, which would be the year.
+  const ancestryOf = (startId) => {
+    const chain = [];
+    let cur = parentOf[startId], guard = 0;
+    while (cur && guard++ < 40) { chain.push(byId[cur]); cur = parentOf[cur]; }
+    const si = chain.findIndex((n) => n && studioKwOf(n.title));
+    const studioKw = si >= 0 ? studioKwOf(chain[si].title) : "";
+    let filmNode = null;
+    if (si >= 1) {
+      for (let i = si - 1; i >= 0; i--) {
+        if (chain[i] && !isYearFolder(chain[i].title)) { filmNode = chain[i]; break; }
+      }
+      if (!filmNode) filmNode = chain[si - 1]; // all year folders — fall back
+    }
+    const filmTitle = filmNode ? deUnderscore(filmNode.title) : "";
+    const archived = chain.some((n) => isArchiveNode(n && n.title));
+    return { studioKw, filmTitle, archived };
+  };
+
+  const CODE = /XY\d{5,6}/i;
+  const seen = new Set();
+  const out = [];
+  Object.values(byId).forEach((f) => {
+    const title = (f.title || "").trim();
+    const m = title.match(CODE);
+    if (!m) return;
+    const code = m[0].toUpperCase();
+    if (seen.has(code)) return;          // one line per code
+    seen.add(code);
+
+    const { studioKw, filmTitle: ancestorFilm, archived } = ancestryOf(f.id);
+    const client = studioKw ? STUDIO_CLIENT[studioKw.toLowerCase()] || studioKw : "";
+
+    let filmTitle, projectDescription, jobNumber;
+    if (title.includes(" : ")) {
+      // Already canonical ("Film : CODE, Desc") — trust it verbatim.
+      jobNumber = title;
+      filmTitle = title.split(" : ")[0].trim();
+      projectDescription = deUnderscore(
+        title.slice(title.indexOf(m[0]) + m[0].length).replace(/^[\s,–—-]+/, "")
+      );
+    } else {
+      // Underscore folder ("XY025563_Germany_Launch_Assets") — reassemble.
+      projectDescription = deUnderscore(
+        title.slice(title.indexOf(m[0]) + m[0].length).replace(/^[\s,_–—-]+/, "")
+      );
+      filmTitle = ancestorFilm;
+      jobNumber = filmTitle
+        ? `${filmTitle} : ${code}${projectDescription ? `, ${projectDescription}` : ""}`
+        : `${code}${projectDescription ? `, ${projectDescription}` : ""}`;
+    }
+
+    out.push({ code, jobNumber, filmTitle, projectDescription, client, archived, folderId: f.id });
+  });
+
+  // Pull each job folder's Wrike createdDate (the flat tree endpoint doesn't
+  // carry it; the by-id endpoint returns it by default). Batched 100 at a time.
+  const ids = out.map((o) => o.folderId).filter(Boolean);
+  const createdById = {};
+  for (let i = 0; i < ids.length; i += 100) {
+    const batch = ids.slice(i, i + 100);
+    const rows = await wrikeGet(`/folders/${batch.join(",")}`);
+    rows.forEach((f) => { if (f.createdDate) createdById[f.id] = f.createdDate.slice(0, 10); });
+  }
+  out.forEach((o) => { o.createdDate = createdById[o.folderId] || null; });
+
+  out.sort((a, b) => a.code.localeCompare(b.code));
+  out.totalFolders = totalFolders; // stashed on the array for the caller's diagnostics
+  return out;
+}
+
 // Count JOBNUMBER folders anywhere beneath a node — used to score master-template
 // candidates (the real, populated template has the most).
 function countJobNumberFolders(byId, rootId, seen = new Set()) {

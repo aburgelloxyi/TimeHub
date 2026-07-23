@@ -49,6 +49,11 @@ export default function TableSearchableSelect({
     if (isCountry) w = Math.min(800, vw - 16);
     else if (isCategory) w = Math.min(750, vw - 16);
     else if (isTime) w = 160;
+    // Job dropdown tracks its column width (the trigger spans the cell), so it
+    // lines up under the column and grows when the column is resized. Floor keeps
+    // it readable when the column is narrow; long job strings wrap rather than
+    // horizontally scroll.
+    else if (isJob) w = Math.min(vw - 16, Math.max(rect.width, 280));
 
     const rightAlign = isTime || (isCategory && !isDarkModal);
     let left = rightAlign ? rect.right - w : rect.left;

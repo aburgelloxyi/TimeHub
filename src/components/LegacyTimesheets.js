@@ -7,9 +7,11 @@ import React, {
 } from "react";
 import { useLegacyRows, getCurrentWeekStart, hmToHours } from "../hooks/useLegacyRows";
 import { useColumnResize } from "../lib/useColumnResize";
+import { layoutRect } from "../utils/zoom";
 import { roundToHalfHourSeconds } from "../utils/timeHelpers";
 import { useJobLookup } from "../hooks/useJobLookup";
 import {
+  supabase,
   setWrikeUserId as stampWrikeUserId,
   fetchExistingTimelogIds,
 } from "../lib/supabaseClient";
@@ -229,6 +231,59 @@ export default function LegacyTimesheet({ wrikeData, isAdmin = false }) {
       timeSpent: "none",
       additionalTime: "none",
     });
+  };
+
+  // Add one new entry (row) into a job group while consolidated — inherits the
+  // group's job/client/film, leaves territory/category/time blank to fill in.
+  // This is what lets you add times without leaving consolidated view.
+  const addEntryToGroup = (g, extra = {}) => {
+    if (frozenDays[activeDay]) return;
+    addRow({
+      id: Date.now() + Math.floor(Math.random() * 1000),
+      taskId: null,
+      dayOfWeek: activeDay,
+      jobNumber: g.jobNumber || "",
+      client: g.client || "",
+      filmTitle: g.filmTitle || "",
+      projectDescription: g.projectDescription || "",
+      territory: "",
+      category: "",
+      clientAmends: false,
+      notes: "",
+      is3D: false,
+      timeSpent: "none",
+      additionalTime: "none",
+      ...extra,
+    });
+    setCollapsedGroups((prev) => ({ ...prev, [g.jobNumber]: false })); // ensure visible
+  };
+
+  // Multi-country: one entry per selected country, all sharing the group's
+  // job/category/time. Each stays a real single-country row (subrow), so
+  // exports and totals are unaffected — see the modal picker below.
+  const addMultiCountryEntries = (g, countries, extra = {}) => {
+    if (frozenDays[activeDay] || !countries?.length) return;
+    countries.forEach((territory, i) =>
+      addRow({
+        id: Date.now() + i * 7 + Math.floor(Math.random() * 1000),
+        taskId: null,
+        dayOfWeek: activeDay,
+        jobNumber: g.jobNumber || "",
+        client: g.client || "",
+        filmTitle: g.filmTitle || "",
+        projectDescription: g.projectDescription || "",
+        territory,
+        category: "",
+        clientAmends: false,
+        notes: "",
+        is3D: false,
+        timeSpent: "none",
+        additionalTime: "none",
+        ...extra,
+      })
+    );
+    setCollapsedGroups((prev) => ({ ...prev, [g.jobNumber]: false }));
+    setAddEntryFor(null);
   };
 
   const [isWrikeModalOpen, setIsWrikeModalOpen] = useState(false);
@@ -775,7 +830,11 @@ export default function LegacyTimesheet({ wrikeData, isAdmin = false }) {
         // Upgrade a bare/suffixed code to Job Book's canonical
         // "Film : CODE, Description" string so it reads consistently with jobs
         // that carried the full string from Wrike.
-        if (known2?.job_number?.includes(" : ") && !(fields.jobNumber || "").includes(" : ")) {
+        if (known2?.job_number && (known2.job_number.includes(" : ") || !(fields.jobNumber || "").includes(" : "))) {
+          // Job Book is authoritative — adopt its registered number whenever the
+          // code is on file (canonical wins; a bare row won't downgrade a
+          // canonical guess). The scanner-backfilled book makes this the primary
+          // match, not a fallback.
           fields.jobNumber = known2.job_number;
         } else if (
           fields.jobNumber &&
@@ -1178,7 +1237,10 @@ export default function LegacyTimesheet({ wrikeData, isAdmin = false }) {
           // Upgrade a bare "XY025716" to Job Book's canonical
           // "Film : XY025716, Description" string so pulled rows read
           // consistently with those that carried the full string from Wrike.
-          if (known1?.job_number?.includes(" : ") && !(guessed.jobNumber || "").includes(" : ")) {
+          if (known1?.job_number && (known1.job_number.includes(" : ") || !(guessed.jobNumber || "").includes(" : "))) {
+            // Job Book is authoritative — adopt its registered number whenever
+            // the code is on file (canonical wins; a bare row won't downgrade a
+            // canonical guess). Backfilled book = primary match, not a fallback.
             guessed.jobNumber = known1.job_number;
           } else if (
             guessed.jobNumber &&
@@ -1375,13 +1437,15 @@ export default function LegacyTimesheet({ wrikeData, isAdmin = false }) {
   // updateRow(id, field, value) and deleteRow(id) are provided by useLegacyRows
   const handleUpdateRow = (id, field, value) => {
     if (frozenDays[activeDay]) return;
-    // Auto-fill projectDescription from jobNumber if it contains a comma
-    if (field === "jobNumber" && value && value.includes(",")) {
-      updateRow(
-        id,
-        "projectDescription",
-        value.substring(value.indexOf(",") + 1).trim()
-      );
+    // Picking a job fills client / film / description from the Job Book, exactly
+    // like a Wrike pull does — so a manually-set job isn't left with blank
+    // client & film columns.
+    if (field === "jobNumber" && value) {
+      const known = jobLookup?.getJob?.(value);
+      if (known?.client) updateRow(id, "client", known.client);
+      if (known?.film_title) updateRow(id, "filmTitle", known.film_title);
+      const desc = value.includes(",") ? value.substring(value.indexOf(",") + 1).trim() : "";
+      if (desc) updateRow(id, "projectDescription", desc);
     }
     updateRow(id, field, value);
   };
@@ -1398,55 +1462,216 @@ export default function LegacyTimesheet({ wrikeData, isAdmin = false }) {
     }));
   };
 
-  const currentDayRows = rows.filter((r) => r.dayOfWeek === activeDay);
+  // Clean a stored job number for display: if the Job Book has a canonical
+  // "Film : CODE, Desc" for this code, show that instead of whatever polluted
+  // string an old logged row carries (e.g. the bloated field value). Purely a
+  // display fix — the row persists its clean value only if the user edits it.
+  const canonicalJob = useCallback((jn) => {
+    const known = jn && jobLookup?.getJob?.(jn);
+    return known?.job_number?.includes(" : ") ? known.job_number : jn;
+  }, [jobLookup]);
+  const currentDayRows = useMemo(
+    () => rows.filter((r) => r.dayOfWeek === activeDay).map((r) => ({ ...r, jobNumber: canonicalJob(r.jobNumber) })),
+    [rows, activeDay, canonicalJob]
+  );
   const isDayFrozen = frozenDays[activeDay] || false;
 
   const [consolidatedView, setConsolidatedView] = useState(true);
+
+  // ── Job-number dropdown options: jobs we've actually logged, most-recent
+  // first, then the static catalogue as a fallback. RLS scopes the tasks query
+  // to the caller's own rows, so this is genuinely "jobs I've logged". Dates are
+  // stored dd/mm/yyyy (or ISO), so parse before comparing — a string sort would
+  // put 31/01 ahead of 01/12.
+  // Dropdown options come from the Job Book (the curated, clean list) — NOT the
+  // raw logged rows, which can still carry old polluted job strings. We only use
+  // the logged rows to *order* the book by recency (the codes I've logged most
+  // recently float to the top); the label always comes from the book, so a
+  // deleted/renamed job never reappears from stale timesheet history.
+  const [recentJobs, setRecentJobs] = useState([]);
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      const codeKey = (j) => (j.match(/XY\d{5,6}/i)?.[0] || j).trim().toUpperCase();
+      const [booksRes, tasksRes, filmsRes] = await Promise.all([
+        supabase.from("jobs").select("job_number"),
+        supabase.from("tasks").select("job_number, date").eq("source", "legacy").not("job_number", "is", null),
+        supabase.from("films").select("title"),
+      ]);
+      if (!alive) return;
+      // Real films from the DB — used to sink pseudo-"films" (e.g. a "2026" year
+      // folder) below genuine titles in the dropdown grouping.
+      const normFilm = (s) => (s || "").toLowerCase().replace(/[_\s]+/g, " ").trim();
+      const realFilms = new Set((filmsRes.data || []).map((f) => normFilm(f.title)));
+      // A group name like "2026" (a year folder) or a purely numeric/blank token
+      // isn't a real film — sink those regardless of whether the films table read
+      // succeeded. Confirmed DB films rank highest.
+      const looksNonFilm = (film) => /^\d{2,4}$/.test(film.trim()) || !/[a-z]/i.test(film);
+      const filmRank = (label) => {
+        const film = (label.split(" : ")[0] || "").trim();
+        if (realFilms.has(normFilm(film))) return 2;
+        if (looksNonFilm(film)) return 0;
+        return 1;
+      };
+      // Book: code -> best canonical label (prefer "Film : CODE, Desc").
+      const bookLabel = {};
+      (booksRes.data || []).forEach((r) => {
+        const j = (r.job_number || "").trim();
+        if (!j) return;
+        const k = codeKey(j);
+        if (!bookLabel[k] || (j.includes(" : ") && !bookLabel[k].includes(" : "))) bookLabel[k] = j;
+      });
+      // Recency: code -> most recent date it was logged.
+      const parseDate = (d) => {
+        if (!d) return 0;
+        const dmy = /^(\d{2})\/(\d{2})\/(\d{4})$/.exec(d);
+        if (dmy) return new Date(+dmy[3], +dmy[2] - 1, +dmy[1]).getTime();
+        const t = Date.parse(d);
+        return isNaN(t) ? 0 : t;
+      };
+      const recency = {};
+      (tasksRes.data || []).forEach((r) => {
+        const k = codeKey(r.job_number || "");
+        if (!k) return;
+        const t = parseDate(r.date);
+        if (!(k in recency) || t > recency[k]) recency[k] = t;
+      });
+      // Book jobs: real films first, then most-recently-logged, then alphabetical.
+      const codes = Object.keys(bookLabel).sort((a, b) =>
+        (filmRank(bookLabel[b]) - filmRank(bookLabel[a])) ||
+        ((recency[b] || 0) - (recency[a] || 0)) ||
+        bookLabel[a].localeCompare(bookLabel[b])
+      );
+      setRecentJobs(codes.map((k) => bookLabel[k]));
+    })();
+    return () => { alive = false; };
+  }, [rows.length]);
+
+  // Book-first (recency-ordered), de-duped by XY code, with the static catalogue
+  // appended so nothing that used to be selectable disappears. Finally, sink any
+  // pseudo-film bucket (a year/numeric group name like "2026" the scan derived
+  // from a year folder) BELOW real films — applied to the merged list so a real
+  // film from the catalogue floats above a "2026" job from the book. Stable sort
+  // keeps recency order within each bucket.
+  const jobOptions = useMemo(() => {
+    const seen = new Set();
+    const out = [];
+    const codeKey = (j) => (j.match(/XY\d{5,6}/i)?.[0] || j).toUpperCase();
+    [...recentJobs, ...DEFAULT_JOBS].forEach((j) => {
+      const k = codeKey(j);
+      if (!seen.has(k)) { seen.add(k); out.push(j); }
+    });
+    const nonFilm = (label) => {
+      const f = (label.split(" : ")[0] || "").trim();
+      return /^\d{2,4}$/.test(f) || !/[a-z]/i.test(f);
+    };
+    return out.sort((a, b) => (nonFilm(a) ? 1 : 0) - (nonFilm(b) ? 1 : 0));
+  }, [recentJobs]);
+
   const [expandedSessions, setExpandedSessions] = useState({});
   const toggleSessions = (rowKey) =>
     setExpandedSessions((prev) => ({ ...prev, [rowKey]: !prev[rowKey] }));
+  // Collapsed job groups in consolidated view (default: expanded, so you see
+  // every territory/category subrow). Keyed by jobNumber.
+  const [collapsedGroups, setCollapsedGroups] = useState({});
+  const toggleJobGroup = (jobNumber) =>
+    setCollapsedGroups((prev) => ({ ...prev, [jobNumber]: !prev[jobNumber] }));
+  // Multi-country add: which job group's "add entry" popover is open, and the
+  // countries currently ticked in it.
+  const [addEntryFor, setAddEntryFor] = useState(null);
+  const [addEntryPos, setAddEntryPos] = useState(null);
+  const [multiCountrySel, setMultiCountrySel] = useState([]);
+  const [countryQuery, setCountryQuery] = useState("");
+  // Position the popover as position:fixed anchored to the "+" button so it
+  // escapes the table's scroll container (which would otherwise clip it at the
+  // table's bottom edge). layoutRect corrects for the app's html{zoom:1.1}.
+  const openAddPopover = (jobNumber, e) => {
+    if (addEntryFor === jobNumber) { setAddEntryFor(null); return; }
+    const rect = layoutRect(e.currentTarget);
+    const w = 256, estH = 380;
+    let left = Math.max(8, Math.min(rect.right - w, window.innerWidth - w - 8));
+    const spaceBelow = window.innerHeight - rect.bottom;
+    const top = spaceBelow < estH && rect.top > spaceBelow
+      ? Math.max(8, rect.top - estH)
+      : rect.bottom + 6;
+    setAddEntryPos({ left, top, width: w });
+    setAddEntryFor(jobNumber);
+    setMultiCountrySel([]);
+    setCountryQuery("");
+  };
 
+  // Consolidated = grouped by Job Number. Each job bundles every territory /
+  // category / session logged against it that day; those individual entries are
+  // the group's editable subrows. (Previously grouped by the whole
+  // job+territory+category triple, which fragmented one job across many rows.)
+  const sToHM = (s) => {
+    if (!(s > 0)) return "none";
+    const mins = Math.round(s / 60);
+    const h = Math.floor(mins / 60);
+    const m = mins % 60;
+    return `${h}:${String(m).padStart(2, "0")}`;
+  };
   const consolidatedRows = useMemo(() => {
     const groups = {};
     currentDayRows.forEach((row) => {
-      const key = `${row.jobNumber}|||${row.territory}|||${row.category}`;
+      const key = row.jobNumber || "(no job number)";
       if (!groups[key]) {
         groups[key] = {
-          ...row,
+          id: `grp:${key}`,           // stable key for the group header row
+          isGroup: true,
+          jobNumber: row.jobNumber,
+          client: row.client,
+          filmTitle: row.filmTitle,
+          projectDescription: row.projectDescription,
           _rawSeconds: 0,
           _additionalSeconds: 0,
-          _notes: new Set(),
-          _count: 0,
+          _territories: new Set(),
+          _categories: new Set(),
+          _subRows: [],
         };
       }
-      // Sum raw seconds — never the already-rounded timeSpent values
-      groups[key]._rawSeconds += row.rawSeconds ?? 0;
-      groups[key]._additionalSeconds += row.additionalSeconds ?? 0;
-      if (row.notes) groups[key]._notes.add(row.notes);
-      groups[key]._count += 1;
-      if (!groups[key]._subRows) groups[key]._subRows = [];
-      groups[key]._subRows.push(row);
+      const g = groups[key];
+      g._rawSeconds += row.rawSeconds ?? 0;
+      g._additionalSeconds += row.additionalSeconds ?? 0;
+      if (row.territory) g._territories.add(row.territory);
+      if (row.category) g._categories.add(row.category);
+      // First non-empty client/film wins, so the header isn't blank when only
+      // some sessions carry them.
+      if (!g.client && row.client) g.client = row.client;
+      if (!g.filmTitle && row.filmTitle) g.filmTitle = row.filmTitle;
+      g._subRows.push(row);
     });
-    const sToHM = (s) => {
-      if (!(s > 0)) return "none";
-      const mins = Math.round(s / 60);
-      const h = Math.floor(mins / 60);
-      const m = mins % 60;
-      return `${h}:${String(m).padStart(2, "0")}`;
-    };
     return Object.values(groups).map((g) => ({
       ...g,
       rawSeconds: g._rawSeconds,
       additionalSeconds: g._additionalSeconds,
       timeSpent: sToHM(g._rawSeconds),
       additionalTime: sToHM(g._additionalSeconds),
-      notes: [...g._notes].filter(Boolean).join(" | "),
-      _subRows: g._subRows || [],
+      territories: [...g._territories],
+      categories: [...g._categories],
     }));
   }, [currentDayRows]);
 
+  // Flat list of what the tbody renders. Consolidated view emits a group-header
+  // row followed by its editable subrows (unless the group is collapsed); flat
+  // view emits each real row directly. Either way every item ultimately edits a
+  // real row by its own id — the group header is a read-only summary and never
+  // routes an edit.
+  const renderItems = useMemo(() => {
+    if (!consolidatedView) return currentDayRows.map((row) => ({ type: "row", row }));
+    return consolidatedRows.flatMap((g) => {
+      const collapsed = collapsedGroups[g.jobNumber];
+      return [
+        { type: "group", group: g },
+        ...(collapsed ? [] : g._subRows.map((sub) => ({ type: "sub", row: sub, group: g }))),
+      ];
+    });
+  }, [consolidatedView, currentDayRows, consolidatedRows, collapsedGroups]);
+
   const displayRows = consolidatedView ? consolidatedRows : currentDayRows;
-  const rowsAreEditable = !isDayFrozen && !consolidatedView;
+  // Only the explicit per-day Lock blocks editing now — consolidated view is
+  // fully editable (you edit real subrows, never the merged summary).
+  const rowsAreEditable = !isDayFrozen;
   const showConsolidationWarning =
     !consolidatedView &&
     currentDayRows.some(
@@ -1948,16 +2173,6 @@ export default function LegacyTimesheet({ wrikeData, isAdmin = false }) {
           <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse shrink-0" />
           Welcome Back, {wrikeFullName ? wrikeFullName : "Loading..."}
         </div>
-        {wrikeUserId && (
-          <button
-            onClick={() => handleSyncMyJobs()}
-            disabled={isSyncingJobs}
-            className={pageHeaderActionClass}
-          >
-            <RefreshCw className={`w-3.5 h-3.5 ${isSyncingJobs ? "animate-spin" : ""}`} />
-            {isSyncingJobs ? "Syncing..." : "Sync My Jobs"}
-          </button>
-        )}
       </PageHeader>
 
       {/* Everything below the full-bleed header gets the page's horizontal
@@ -1982,9 +2197,9 @@ export default function LegacyTimesheet({ wrikeData, isAdmin = false }) {
         )}
 
       {/* --- STANDARD UI --- */}
-      <div className="max-w-[1800px] mx-auto bg-white shadow-2xl rounded-2xl relative min-h-[calc(100vh-10rem)] flex flex-col border border-slate-200">
+      <div className="max-w-[1800px] mx-auto bg-white shadow-2xl rounded-2xl relative flex flex-col border border-slate-200">
         {/* --- MODERN TABS --- */}
-        <div className="flex px-4 pt-4 bg-slate-50 border-b border-slate-200 gap-2">
+        <div className="flex px-4 pt-4 bg-slate-50 border-b border-slate-200 gap-2 rounded-t-2xl">
           {DAYS.map((day) => {
             const isWeekend = day === "Saturday" || day === "Sunday";
             const isActive = activeDay === day;
@@ -2047,76 +2262,53 @@ export default function LegacyTimesheet({ wrikeData, isAdmin = false }) {
           })}
         </div>
 
-        {/* Freeze toggle strip */}
-        <div className="bg-white border-b border-slate-100 px-4 py-1.5 flex items-center justify-end gap-4">
-          {/* Consolidated view toggle */}
+        {/* View controls — segmented pill buttons */}
+        <div className="bg-white border-b border-slate-100 px-4 py-2 flex items-center justify-between gap-3">
+          <span className="text-[10px] font-black uppercase tracking-widest text-slate-300">View</span>
           <div className="flex items-center gap-2">
-            <Layers
-              className={`w-3.5 h-3.5 ${
-                consolidatedView ? "text-[#12a0e1]" : "text-slate-400"
-              }`}
-            />
-            <span
-              className={`text-[11px] font-bold transition-colors ${
-                consolidatedView ? "text-[#12a0e1]" : "text-slate-400"
-              }`}
-              title="Merges rows with same job/territory/category and sums raw time before rounding — more accurate than viewing individually"
-            >
-              Consolidated
-            </span>
             <button
               onClick={() => setConsolidatedView((v) => !v)}
-              title="Merge rows with same job, country & category"
-              className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors focus:outline-none ${
+              title="Merge rows with the same job number — territories & categories become subrows, raw time summed before rounding"
+              className={`flex items-center gap-1.5 pl-2 pr-2.5 py-1.5 rounded-lg text-[11px] font-bold border transition-all active:scale-95 ${
                 consolidatedView
-                  ? "bg-[#12a0e1]"
-                  : "bg-slate-200 hover:bg-slate-300"
+                  ? "bg-[#12a0e1]/10 text-[#12a0e1] border-[#12a0e1]/30"
+                  : "bg-white text-slate-400 border-slate-200 hover:border-slate-300 hover:text-slate-600"
               }`}
             >
-              <span
-                className={`inline-block h-3.5 w-3.5 rounded-full bg-white shadow transition-transform ${
-                  consolidatedView ? "translate-x-4" : "translate-x-0.5"
-                }`}
-              />
+              <Layers className="w-3.5 h-3.5" />
+              Consolidated
+              <span className={`ml-0.5 text-[9px] font-black px-1.5 py-0.5 rounded ${consolidatedView ? "bg-[#12a0e1] text-white" : "bg-slate-100 text-slate-400"}`}>
+                {consolidatedView ? "ON" : "OFF"}
+              </span>
+            </button>
+            <button
+              onClick={toggleFreeze}
+              title={isDayFrozen ? "Unlock day to allow edits" : "Lock this day to prevent edits"}
+              className={`flex items-center gap-1.5 pl-2 pr-2.5 py-1.5 rounded-lg text-[11px] font-bold border transition-all active:scale-95 ${
+                isDayFrozen
+                  ? "bg-amber-100 text-amber-700 border-amber-300"
+                  : "bg-white text-slate-400 border-slate-200 hover:border-slate-300 hover:text-slate-600"
+              }`}
+            >
+              <Lock className="w-3.5 h-3.5" />
+              {isDayFrozen ? `${activeDay} locked` : `Lock ${activeDay}`}
             </button>
           </div>
-          <div className="w-px h-4 bg-slate-200" />
-          <span
-            className={`text-[11px] font-bold transition-colors ${
-              isDayFrozen ? "text-amber-500" : "text-slate-400"
-            }`}
-          >
-            {isDayFrozen ? `${activeDay} is locked` : `Lock ${activeDay}`}
-          </span>
-          <button
-            onClick={toggleFreeze}
-            title={isDayFrozen ? "Unlock day" : "Lock day to prevent edits"}
-            className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors focus:outline-none ${
-              isDayFrozen ? "bg-amber-400" : "bg-slate-200 hover:bg-slate-300"
-            }`}
-          >
-            <span
-              className={`inline-block h-3.5 w-3.5 rounded-full bg-white shadow transition-transform ${
-                isDayFrozen ? "translate-x-4" : "translate-x-0.5"
-              }`}
-            />
-          </button>
-          {isDayFrozen && <Lock className="w-3.5 h-3.5 text-amber-400" />}
         </div>
 
         {/* --- TABLE AREA --- */}
-        <div className="flex-1 bg-white relative overflow-x-auto w-full">
-          <table className="w-full text-left text-[12px] border-collapse" style={{ tableLayout: "fixed", minWidth: `${CONSOL_COLS.reduce((s, c) => s + consolWidths[c.key], 0)}px` }}>
+        <div className="flex-1 bg-white relative overflow-x-auto w-full min-h-[600px]">
+          <table className="w-full text-left text-[12px] border-collapse [&_td]:overflow-hidden" style={{ tableLayout: "fixed", minWidth: `${CONSOL_COLS.reduce((s, c) => s + consolWidths[c.key], 0)}px` }}>
             <colgroup>
               {CONSOL_COLS.map((c) => <col key={c.key} style={{ width: consolWidths[c.key] }} />)}
             </colgroup>
-            <thead>
-              <tr className="bg-slate-800 text-slate-200 shadow-sm">
+            <thead className="sticky top-0 z-20">
+              <tr className="bg-slate-50 text-[#768994] shadow-sm border-b-2 border-slate-200">
                 {CONSOL_COLS.map((c, idx) => (
                   <th
                     key={c.key}
-                    className={`relative p-3 border-r border-slate-700 font-bold whitespace-nowrap tracking-wide overflow-hidden ${
-                      idx === CONSOL_COLS.length - 1 ? "border-r-0" : ""
+                    className={`relative p-3 text-[10px] font-black uppercase tracking-widest whitespace-nowrap overflow-hidden ${
+                      idx === CONSOL_COLS.length - 1 ? "" : "border-r border-slate-200/70"
                     }`}
                   >
                     {c.label}
@@ -2141,22 +2333,175 @@ export default function LegacyTimesheet({ wrikeData, isAdmin = false }) {
                   </td>
                 </tr>
               )}
-              {displayRows.map((row) => (
+              {renderItems.map((item) => {
+                // ── Group header row (consolidated view) ─────────────────────
+                if (item.type === "group") {
+                  const g = item.group;
+                  const collapsed = collapsedGroups[g.jobNumber];
+                  return (
+                    <tr key={g.id} className="bg-slate-100/70 border-y border-slate-200">
+                      {/* overflow-visible (inline, to beat the table's [&_td]:overflow-hidden)
+                          so the multi-country add popover isn't clipped by the cell. */}
+                      <td className="p-2 border-r border-slate-200/60 align-middle" style={{ overflow: "visible" }}>
+                        <div className="flex items-center gap-1.5 pl-1">
+                          <button
+                            onClick={() => toggleJobGroup(g.jobNumber)}
+                            className="w-5 h-5 grid place-items-center rounded-md text-slate-400 hover:text-[#12a0e1] hover:bg-white transition-colors shrink-0"
+                            title={collapsed ? "Expand" : "Collapse"}
+                          >
+                            <span className="text-[10px]">{collapsed ? "▶" : "▼"}</span>
+                          </button>
+                          {g.jobNumber ? (
+                            <span className="font-black text-[12px] text-[#122027] truncate">
+                              {g.jobNumber}
+                            </span>
+                          ) : (
+                            <div className="flex-1 min-w-0">
+                              <TableSearchableSelect
+                                options={jobOptions}
+                                value=""
+                                onChange={(val) => {
+                                  if (val) g._subRows.forEach((sub) => handleUpdateRow(sub.id, "jobNumber", val));
+                                }}
+                                placeholder="Set job for these entries…"
+                                isGrouped={true}
+                                dropdownId={`job-grp-${g.id}`}
+                                activeDropdown={activeDropdown}
+                                setActiveDropdown={setActiveDropdown}
+                                isJob={true}
+                                disabled={!rowsAreEditable}
+                              />
+                            </div>
+                          )}
+                          <span className="text-[9px] font-black text-[#768994] bg-white border border-slate-200 rounded-full px-1.5 py-0.5 shrink-0">
+                            {g._subRows.length}
+                          </span>
+                          {rowsAreEditable && (
+                            <div className="ml-auto shrink-0 relative">
+                              <button
+                                onClick={(e) => openAddPopover(g.jobNumber, e)}
+                                title="Add entries to this job"
+                                className={`rounded-md w-5 h-5 grid place-items-center transition-colors ${
+                                  addEntryFor === g.jobNumber
+                                    ? "bg-[#12a0e1] text-white"
+                                    : "text-[#12a0e1] hover:bg-[#12a0e1]/10"
+                                }`}
+                              >
+                                <Plus className="w-3.5 h-3.5" />
+                              </button>
+                              {addEntryFor === g.jobNumber && (
+                                <>
+                                  <div
+                                    className="fixed inset-0 z-[99998]"
+                                    onClick={() => setAddEntryFor(null)}
+                                  />
+                                  <div
+                                    style={{ position: "fixed", left: addEntryPos?.left, top: addEntryPos?.top, width: addEntryPos?.width, zIndex: 99999 }}
+                                    className="bg-white border border-slate-200 rounded-xl shadow-2xl p-2.5 text-left animate-in fade-in slide-in-from-top-1 duration-150"
+                                  >
+                                    <button
+                                      onClick={() => {
+                                        addEntryToGroup(g);
+                                        setAddEntryFor(null);
+                                      }}
+                                      className="w-full flex items-center gap-2 px-2.5 py-2 rounded-lg text-[12px] font-bold text-slate-700 hover:bg-[#12a0e1]/10 hover:text-[#12a0e1] transition-colors"
+                                    >
+                                      <Plus className="w-3.5 h-3.5" /> One blank entry
+                                    </button>
+                                    <div className="my-1.5 border-t border-slate-100" />
+                                    <p className="px-1.5 py-1 text-[9px] font-black uppercase tracking-widest text-slate-400">
+                                      Multi-country — one entry each
+                                    </p>
+                                    <input
+                                      value={countryQuery}
+                                      onChange={(e) => setCountryQuery(e.target.value)}
+                                      placeholder="Filter countries…"
+                                      className="w-full mb-1.5 px-2.5 py-1.5 text-[11px] font-semibold rounded-lg border border-slate-200 outline-none focus:border-[#12a0e1] focus:ring-2 focus:ring-[#12a0e1]/10"
+                                    />
+                                    <div className="max-h-44 overflow-y-auto custom-scrollbar pr-0.5">
+                                      {TERRITORIES.filter((t) =>
+                                        t.toLowerCase().includes(countryQuery.toLowerCase())
+                                      ).map((t) => {
+                                        const on = multiCountrySel.includes(t);
+                                        return (
+                                          <button
+                                            key={t}
+                                            onClick={() =>
+                                              setMultiCountrySel((prev) =>
+                                                on ? prev.filter((x) => x !== t) : [...prev, t]
+                                              )
+                                            }
+                                            className={`w-full flex items-center gap-2 px-2 py-1.5 rounded-lg text-[11px] font-semibold transition-colors ${
+                                              on
+                                                ? "bg-[#12a0e1]/10 text-[#12a0e1]"
+                                                : "text-slate-600 hover:bg-slate-50"
+                                            }`}
+                                          >
+                                            <span className={`w-3.5 h-3.5 rounded border grid place-items-center shrink-0 ${on ? "bg-[#12a0e1] border-[#12a0e1] text-white" : "border-slate-300"}`}>
+                                              {on && <CheckCircle className="w-2.5 h-2.5" />}
+                                            </span>
+                                            <span className="shrink-0">{TERRITORY_FLAGS[t]}</span>
+                                            <span className="truncate">{t}</span>
+                                          </button>
+                                        );
+                                      })}
+                                    </div>
+                                    <button
+                                      disabled={!multiCountrySel.length}
+                                      onClick={() => addMultiCountryEntries(g, multiCountrySel)}
+                                      className={`w-full mt-2 px-3 py-2 rounded-lg text-[11px] font-black transition-colors ${
+                                        multiCountrySel.length
+                                          ? "bg-[#12a0e1] text-white hover:bg-[#0e8bc4]"
+                                          : "bg-slate-100 text-slate-300 cursor-not-allowed"
+                                      }`}
+                                    >
+                                      Add {multiCountrySel.length || ""} {multiCountrySel.length === 1 ? "entry" : "entries"}
+                                    </button>
+                                  </div>
+                                </>
+                              )}
+                            </div>
+                          )}
+                        </div>
+                      </td>
+                      <td className="p-2 border-r border-slate-200/60 align-middle text-[12px] font-semibold text-slate-600 truncate px-3">{g.client}</td>
+                      <td className="p-2 border-r border-slate-200/60 align-middle text-[12px] font-black text-slate-800 truncate px-3">{g.filmTitle}</td>
+                      <td className="p-2 border-r border-slate-200/60 align-middle text-[11px] text-slate-400 truncate px-3">{g.projectDescription}</td>
+                      <td className="p-2 border-r border-slate-200/60 align-middle text-[11px] text-slate-500 px-3">
+                        {g.territories.length ? `${g.territories.length} ${g.territories.length === 1 ? "country" : "countries"}` : "—"}
+                      </td>
+                      <td className="p-2 border-r border-slate-200/60 align-middle text-[11px] text-slate-500 px-3">
+                        {g.categories.length ? `${g.categories.length} ${g.categories.length === 1 ? "category" : "categories"}` : "—"}
+                      </td>
+                      <td className="p-2 border-r border-slate-200/60" />
+                      <td className="p-2 border-r border-slate-200/60" />
+                      <td className="p-2 border-r border-slate-200/60" />
+                      <td className="p-2 border-r border-slate-200/60 align-middle text-center text-[12px] font-black text-[#122027] tabular-nums">{g.timeSpent}</td>
+                      <td className="p-2 align-middle text-center text-[12px] font-black text-[#122027] tabular-nums">{g.additionalTime}</td>
+                    </tr>
+                  );
+                }
+
+                // ── Editable data row (a flat row, or a group's subrow) ──────
+                const row = item.row;
+                const isSub = item.type === "sub";
+                return (
                 <tr
                   key={row.id}
                   className={`timesheet-row transition-colors group relative ${
                     !rowsAreEditable ? "frozen-row" : ""
-                  }`}
+                  } ${isSub ? "bg-white" : ""}`}
                 >
-                  <td className="p-2 border-r border-slate-100 align-middle min-w-[240px]">
+                  <td className={`p-2 border-r border-slate-100 align-middle min-w-[240px] ${isSub ? "bg-slate-50/40" : ""}`}>
                     <div className="flex items-start gap-2 pl-1">
                       <button
                         onClick={() => handleDeleteRow(row.id)}
                         disabled={!rowsAreEditable}
+                        title={rowsAreEditable ? "Delete row" : undefined}
                         className={`mt-1.5 transition-opacity ${
                           !rowsAreEditable
-                            ? "opacity-20 cursor-not-allowed"
-                            : "opacity-50 hover:opacity-100"
+                            ? "opacity-0 cursor-not-allowed"
+                            : "opacity-0 group-hover:opacity-70 hover:!opacity-100"
                         }`}
                       >
                         <XCircle
@@ -2168,85 +2513,43 @@ export default function LegacyTimesheet({ wrikeData, isAdmin = false }) {
                         />
                       </button>
                       <div className="flex flex-col w-full">
-                        <TableSearchableSelect
-                          options={DEFAULT_JOBS}
-                          value={row.jobNumber}
-                          onChange={(val) =>
-                            handleUpdateRow(row.id, "jobNumber", val)
-                          }
-                          placeholder="Select Job..."
-                          isGrouped={true}
-                          dropdownId={`job-${row.id}`}
-                          activeDropdown={activeDropdown}
-                          setActiveDropdown={setActiveDropdown}
-                          isJob={true}
-                          disabled={!rowsAreEditable}
-                        />
+                        {isSub ? (
+                          // The job is set once at the group top, never per subrow —
+                          // the subrow just carries its own country/category identity.
+                          <div className="flex items-center gap-1.5 pl-3 border-l-2 border-[#12a0e1]/25 py-1 min-w-0">
+                            <span className="text-slate-300 text-[11px] shrink-0">↳</span>
+                            <span className="text-[13px] leading-none shrink-0">{TERRITORY_FLAGS[row.territory] || "🌐"}</span>
+                            <span className="text-[11px] font-bold text-slate-600 truncate">
+                              {row.territory || "No country"}
+                              {row.category ? <span className="font-medium text-slate-400"> · {row.category.replace(/^(Digital|Print|XYi)\s*-\s*/, "")}</span> : null}
+                            </span>
+                          </div>
+                        ) : (
+                          <div className={`flex items-center gap-1.5 w-full min-w-0 ${isSub ? "pl-2 border-l-2 border-[#12a0e1]/25" : ""}`}>
+                            {isSub && <span className="text-slate-300 text-[11px] shrink-0" title="Set a job for this entry">↳</span>}
+                            <div className="flex-1 min-w-0">
+                              <TableSearchableSelect
+                                options={jobOptions}
+                                value={row.jobNumber}
+                                onChange={(val) =>
+                                  handleUpdateRow(row.id, "jobNumber", val)
+                                }
+                                placeholder={isSub ? "Set job…" : "Select Job..."}
+                                isGrouped={true}
+                                dropdownId={`job-${row.id}`}
+                                activeDropdown={activeDropdown}
+                                setActiveDropdown={setActiveDropdown}
+                                isJob={true}
+                                disabled={!rowsAreEditable}
+                              />
+                            </div>
+                          </div>
+                        )}
                         {row.wrikeTimelogId && (
                           <span className="text-[10px] font-bold text-emerald-600 ml-2 mt-0.5 flex items-center gap-1 opacity-80">
                             <CheckCircle className="w-3 h-3" /> Wrike Synced
                           </span>
                         )}
-                        {consolidatedView &&
-                          row._count > 1 &&
-                          (() => {
-                            const rowKey = `${row.jobNumber}|||${row.territory}|||${row.category}`;
-                            const isExpanded = expandedSessions[rowKey];
-                            const fmtSecs = (s) => {
-                              const h = Math.floor(s / 3600),
-                                m = Math.floor((s % 3600) / 60),
-                                sec = s % 60;
-                              return (
-                                [h && `${h}h`, m && `${m}m`, sec && `${sec}s`]
-                                  .filter(Boolean)
-                                  .join(" ") || "0s"
-                              );
-                            };
-                            return (
-                              <>
-                                <button
-                                  onClick={() => toggleSessions(rowKey)}
-                                  className="text-[10px] font-black text-[#12a0e1] bg-[#12a0e1]/10 border border-[#12a0e1]/20 hover:bg-[#12a0e1]/20 px-1.5 py-0.5 rounded-full ml-2 mt-1 flex items-center gap-1 shrink-0 transition-colors"
-                                >
-                                  <Layers className="w-3 h-3" />
-                                  {row._count} sessions
-                                  <span className="opacity-60">
-                                    {isExpanded ? "▲" : "▼"}
-                                  </span>
-                                </button>
-                                {isExpanded && (
-                                  <div className="ml-2 mt-1.5 space-y-1 border-l-2 border-[#12a0e1]/20 pl-2">
-                                    <p className="text-[9px] font-black text-[#768994] uppercase tracking-wider mb-1">
-                                      Raw sessions — time summed before rounding
-                                    </p>
-                                    {row._subRows.map((sub, i) => (
-                                      <div
-                                        key={sub.id}
-                                        className="flex items-center gap-2 text-[10px] text-slate-500"
-                                      >
-                                        <span className="font-bold text-slate-400">
-                                          #{i + 1}
-                                        </span>
-                                        <span className="font-bold text-[#122027]">
-                                          {fmtSecs(sub.rawSeconds ?? 0)}
-                                        </span>
-                                        {sub.notes && (
-                                          <span className="italic truncate max-w-[120px]">
-                                            {sub.notes}
-                                          </span>
-                                        )}
-                                        {sub.date && (
-                                          <span className="text-[9px] text-slate-400">
-                                            {sub.date}
-                                          </span>
-                                        )}
-                                      </div>
-                                    ))}
-                                  </div>
-                                )}
-                              </>
-                            );
-                          })()}
                       </div>
                     </div>
                   </td>
@@ -2406,7 +2709,8 @@ export default function LegacyTimesheet({ wrikeData, isAdmin = false }) {
                     />
                   </td>
                 </tr>
-              ))}
+                );
+              })}
               {/* Ghost Add Row */}
               {rowsAreEditable && (
                 <tr
@@ -2431,12 +2735,25 @@ export default function LegacyTimesheet({ wrikeData, isAdmin = false }) {
             <div className="flex flex-col items-center justify-center py-20 text-slate-400 w-full left-0 right-0 absolute">
               <RefreshCw className="w-10 h-10 mb-4 opacity-20" />
               <p className="text-sm font-bold text-slate-500 font-sans">
-                No time logged for {activeDay}.
+                Nothing logged for {activeDay} yet.
               </p>
-              <p className="text-xs mt-1">Hit pull below to sync with Wrike.</p>
+              <p className="text-xs mt-1">Pull your times from Wrike below, or add a row to start.</p>
             </div>
           )}
         </div>
+
+        {/* Day totals — visible in the table, not only on the tab */}
+        {currentDayRows.length > 0 && (
+          <div className="px-4 py-2.5 border-t border-slate-200 bg-white flex items-center justify-end gap-6 text-[11px] font-bold text-[#768994]">
+            <span className="uppercase tracking-widest text-[10px] font-black text-slate-400">{activeDay} total</span>
+            <span className="tabular-nums">
+              {currentDayRows.length} {currentDayRows.length === 1 ? "entry" : "entries"}
+            </span>
+            <span className="tabular-nums text-[#122027] text-sm font-black">
+              {formatDayTotal(getDayTotal(activeDay))}h
+            </span>
+          </div>
+        )}
 
         {/* Bottom Action Bar */}
         <div className="p-4 border-t border-slate-200 bg-slate-50 rounded-b-2xl flex flex-wrap gap-3 justify-between items-center">
@@ -2518,14 +2835,6 @@ export default function LegacyTimesheet({ wrikeData, isAdmin = false }) {
                 <Copy className="w-4 h-4" />
               )}
               {jsonCopied ? "JSON Copied!" : "Copy JSON"}
-            </button>
-
-            <button
-              onClick={handleExportExcel}
-              className="flex items-center gap-2 bg-emerald-500 hover:bg-emerald-600 text-white px-5 py-2.5 text-sm font-bold rounded-xl shadow-lg shadow-emerald-500/30 transition-all active:scale-95"
-            >
-              <FileSpreadsheet className="w-4 h-4" />
-              Export to Excel
             </button>
           </div>
         </div>

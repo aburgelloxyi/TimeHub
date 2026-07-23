@@ -184,7 +184,12 @@ export const guessFieldsFromTask = (linkedTask, jobOptions = [], extraText = "",
     // "Film : XY025716, Description" string so pulled rows read consistently
     // with those that carried the full string from Wrike. This also lets the
     // caller's comma-split derive a project description it otherwise couldn't.
-    if (known?.job_number?.includes(" : ") && !guessedJob.includes(" : ")) {
+    if (known?.job_number && (known.job_number.includes(" : ") || !guessedJob.includes(" : "))) {
+      // Job Book is authoritative: if this code is on file, adopt its registered
+      // number outright. A canonical book entry always wins; a bare book row
+      // won't downgrade a canonical guess. This is the "match the book first"
+      // path — since the scanner backfills the book from Wrike, a real code
+      // should essentially always resolve here instead of being guessed.
       guessedJob = known.job_number;
     } else if (!guessedJob.includes(" : ") && filmTitle && filmTitle !== "XYi Unbilled") {
       // Brand-new job with no Job Book record yet — synthesize the canonical

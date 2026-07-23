@@ -18,7 +18,7 @@ import {
   findMasterTemplateFolder, fetchFolderProjects, collectSubtreeIds, findFilmLocation,
   planPropagate, applyPropagate, copyTemplateDeep,
   mapSlotFoldersUnder, slotSuffix, renameFolder, buildFilmView,
-  setFolderJobNumber, triggerFieldCascade,
+  setFolderJobNumber, triggerFieldCascade, scanStudioJobNumbers,
 } from "../lib/wrikeCampaign";
 import { isServiceAccount, DEPT_GROUPS } from "../lib/people";
 import { layoutRect } from "../utils/zoom";
@@ -2469,7 +2469,6 @@ export function JobsSetupSection({ setActiveTab, initialStudio, initialFilm, loc
             </span>
           ) : fetchInfo ? (
             <span className="flex items-center gap-2 ml-1">
-              <span className="text-[10px] font-black uppercase tracking-wider text-[#12a0e1] bg-[#12a0e1]/10 px-2 py-1 rounded-lg">Live Wrike Data</span>
               <button onClick={resync}
                 title={`Loaded “${fetchInfo.rootLabel}” — re-sync from Wrike`}
                 className="flex items-center gap-1 text-[#768994] hover:text-[#12a0e1] text-xs font-bold transition-colors">
@@ -2792,11 +2791,271 @@ export function JobsSetupSection({ setActiveTab, initialStudio, initialFilm, loc
   );
 }
 
+// ── Studio Job-Number Scanner ──────────────────────────────────────────────────
+// Walks every visible Wrike folder for canonical "Film : CODE, Desc" job folders
+// and backfills the Job Book with any codes it doesn't already have. Read-only
+// against Wrike; the only write is the confirmed bulk insert into `jobs`, and it
+// never touches an existing row (codes already in the book are shown but locked).
+const scanCodeOf = (s) => {
+  const m = (s || "").match(/XY\d{5,6}/i);
+  return m ? m[0].toUpperCase() : (s || "").trim().toUpperCase();
+};
+
+// The "film" of a job label: the part before " : ". A bare year/number (e.g.
+// "2026") or a letterless token isn't a real film — those are what the scan's
+// year-folder fix now resolves to a real parent film.
+const scanFilmOf = (s) => ((s || "").includes(" : ") ? (s || "").split(" : ")[0] : "").trim();
+const scanIsPseudoFilm = (film) => !film || /^\d{2,4}$/.test(film.trim()) || !/[a-z]/i.test(film);
+
+function StudioJobScanModal({ onClose, onApplied }) {
+  const [phase, setPhase] = useState("scanning"); // scanning | review | saving | done
+  const [error, setError] = useState("");
+  const [candidates, setCandidates] = useState([]);
+  const [totalFolders, setTotalFolders] = useState(0);
+  const [existingCodes, setExistingCodes] = useState(new Set());
+  const [existingByCode, setExistingByCode] = useState({}); // code -> book row
+  const [fixedCount, setFixedCount] = useState(0);
+  const [selected, setSelected] = useState({});   // code -> bool
+  const [savedCount, setSavedCount] = useState(0);
+  const [search, setSearch] = useState("");
+  const [activeOnly, setActiveOnly] = useState(true);
+
+  const loadScan = useCallback(async () => {
+    setPhase("scanning");
+    try {
+      const [found, existing] = await Promise.all([
+        scanStudioJobNumbers(),
+        supabase.from("jobs").select("id, job_number, film_title, client"),
+      ]);
+      const byCode = {};
+      (existing.data || []).forEach((j) => { byCode[scanCodeOf(j.job_number)] = j; });
+      const have = new Set(Object.keys(byCode));
+      const sel = {};
+      found.forEach((c) => { if (!have.has(c.code)) sel[c.code] = true; });
+      setExistingCodes(have);
+      setExistingByCode(byCode);
+      setCandidates(found);
+      setTotalFolders(found.totalFolders || 0);
+      setSelected(sel);
+      setPhase("review");
+    } catch (e) {
+      setError(e.message || String(e));
+      setPhase("review");
+    }
+  }, []);
+
+  useEffect(() => { let alive = true; if (alive) loadScan(); return () => { alive = false; }; }, [loadScan]);
+
+  // Existing book rows whose stored film is a pseudo-film (e.g. "2026") that the
+  // re-derived scan now resolves to a real film — safe to correct in place. Rows
+  // that already have a real film are never touched.
+  const corrections = candidates.filter((c) => {
+    const cur = existingByCode[c.code];
+    if (!cur) return false;
+    const curFilm = scanFilmOf(cur.job_number) || cur.film_title || "";
+    return scanIsPseudoFilm(curFilm) && c.filmTitle && !scanIsPseudoFilm(c.filmTitle);
+  });
+
+  const allNew  = candidates.filter((c) => !existingCodes.has(c.code));
+  const newOnes = allNew.filter((c) => !activeOnly || !c.archived);
+  const archivedHidden = activeOnly ? allNew.filter((c) => c.archived).length : 0;
+  const dupes   = candidates.filter((c) => existingCodes.has(c.code));
+  const shown = newOnes.filter((c) => {
+    if (!search) return true;
+    const q = search.toLowerCase();
+    return (
+      c.code.toLowerCase().includes(q) ||
+      (c.filmTitle || "").toLowerCase().includes(q) ||
+      (c.client || "").toLowerCase().includes(q)
+    );
+  });
+  const selectedCount = newOnes.filter((c) => selected[c.code]).length;
+  const allShownSelected = shown.length > 0 && shown.every((c) => selected[c.code]);
+
+  const toggle = (code) => setSelected((p) => ({ ...p, [code]: !p[code] }));
+  const toggleAllShown = () =>
+    setSelected((p) => {
+      const next = { ...p };
+      shown.forEach((c) => { next[c.code] = !allShownSelected; });
+      return next;
+    });
+
+  const apply = async () => {
+    const rows = newOnes
+      .filter((c) => selected[c.code])
+      .map((c) => ({
+        job_number: c.jobNumber,
+        film_title: c.filmTitle || null,
+        client: c.client || null,
+        project_description: c.projectDescription || null,
+        start_date: c.createdDate || null, // Wrike folder creation date
+      }));
+    if (!rows.length) return;
+    setPhase("saving");
+    // Chunked insert so a large backfill doesn't hit request limits.
+    let saved = 0;
+    for (let i = 0; i < rows.length; i += 200) {
+      const chunk = rows.slice(i, i + 200);
+      const { error: err } = await supabase.from("jobs").insert(chunk);
+      if (err) { setError(err.message); setPhase("review"); return; }
+      saved += chunk.length;
+    }
+    setSavedCount(saved);
+    setPhase("done");
+  };
+
+  // Correct existing book rows whose film was a pseudo-film ("2026") to the
+  // real film the re-derived scan found — updates film, client, job number and
+  // description in place. Only touches the `corrections` set (safe rows).
+  const fixMisfilmed = async () => {
+    if (!corrections.length) return;
+    const ok = await confirmAction({
+      title: `Fix ${corrections.length} mis-filmed job${corrections.length === 1 ? "" : "s"}?`,
+      message: "These entries currently show a year/placeholder as their film (e.g. “2026”). This updates them to the real film the scan resolved — nothing that already has a proper film is touched.",
+      confirmLabel: `Fix ${corrections.length}`,
+    });
+    if (!ok) return;
+    setPhase("saving");
+    let fixed = 0;
+    for (const c of corrections) {
+      const cur = existingByCode[c.code];
+      const { error: err } = await supabase.from("jobs").update({
+        job_number: c.jobNumber,
+        film_title: c.filmTitle || null,
+        client: c.client || null,
+        project_description: c.projectDescription || null,
+      }).eq("id", cur.id);
+      if (err) { setError(err.message); setPhase("review"); return; }
+      fixed += 1;
+    }
+    setFixedCount(fixed);
+    await loadScan(); // re-derive so corrected rows drop out of the list
+  };
+
+  return (
+    <div className="fixed inset-0 z-[9999] bg-black/40 flex items-center justify-center p-4" onMouseDown={onClose}>
+      <div
+        className="bg-white rounded-3xl w-full max-w-3xl max-h-[85vh] flex flex-col shadow-2xl overflow-hidden"
+        onMouseDown={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-center justify-between px-6 py-4 border-b border-slate-100">
+          <h2 className="text-lg font-black text-[#122027]">Scan Wrike for job numbers</h2>
+          <button onClick={onClose} className="text-slate-400 hover:text-slate-700"><X className="w-5 h-5" /></button>
+        </div>
+
+        {phase === "scanning" && (
+          <div className="flex-1 flex flex-col items-center justify-center py-20 gap-3 text-[#768994]">
+            <RefreshCw className="w-6 h-6 animate-spin text-[#1cc1a5]" />
+            <p className="font-bold text-sm">Reading the Wrike folder tree…</p>
+          </div>
+        )}
+
+        {phase === "done" && (
+          <div className="flex-1 flex flex-col items-center justify-center py-20 gap-3">
+            <CheckCircle2 className="w-10 h-10 text-emerald-500" />
+            <p className="font-black text-[#122027]">Added {savedCount} {savedCount === 1 ? "job" : "jobs"} to the Job Book.</p>
+            <button onClick={onApplied} className="mt-2 px-5 py-2 bg-[#1cc1a5] hover:bg-[#17a892] text-white text-sm font-bold rounded-xl">
+              Done
+            </button>
+          </div>
+        )}
+
+        {(phase === "review" || phase === "saving") && (
+          <>
+            <div className="px-6 py-3 border-b border-slate-100 flex flex-wrap items-center gap-3 text-[11px] font-bold">
+              <span className="text-emerald-600">{newOnes.length} new</span>
+              <span className="text-[#768994]">{dupes.length} already in book</span>
+              {archivedHidden > 0 && <span className="text-slate-400">{archivedHidden} archived hidden</span>}
+              <span className="text-[#122027]">{candidates.length} job codes / {totalFolders} folders</span>
+              <label className="ml-auto flex items-center gap-1.5 text-[#122027] cursor-pointer">
+                <input type="checkbox" checked={activeOnly} onChange={(e) => setActiveOnly(e.target.checked)} className="accent-[#1cc1a5]" />
+                Active only
+              </label>
+              {error && <span className="text-rose-500">⚠ {error}</span>}
+            </div>
+
+            {corrections.length > 0 && (
+              <div className="px-6 py-2.5 border-b border-amber-100 bg-amber-50/60 flex items-center gap-3">
+                <span className="text-[11px] font-bold text-amber-700">
+                  {corrections.length} existing {corrections.length === 1 ? "entry has" : "entries have"} a year/placeholder film (e.g. “2026”) the scan can now resolve to a real film.
+                </span>
+                <button onClick={fixMisfilmed} disabled={phase === "saving"}
+                  className="ml-auto shrink-0 flex items-center gap-1.5 px-3 py-1.5 bg-amber-500 hover:bg-amber-600 disabled:opacity-50 text-white text-[11px] font-bold rounded-lg transition-colors">
+                  Fix {corrections.length}
+                </button>
+              </div>
+            )}
+
+            {newOnes.length === 0 ? (
+              <div className="flex-1 flex items-center justify-center py-16 text-center text-[#768994] italic text-sm px-8">
+                {error
+                  ? "Scan failed — see above."
+                  : totalFolders === 0
+                  ? "Wrike returned no folders — the connection isn’t authorised in this environment."
+                  : candidates.length === 0
+                  ? `Walked ${totalFolders} folders but found no XY job codes.`
+                  : "No new job numbers found. The Job Book is already up to date."}
+              </div>
+            ) : (
+              <>
+                <div className="px-6 py-2.5 flex items-center gap-3 border-b border-slate-100">
+                  <label className="flex items-center gap-2 text-[11px] font-black text-[#768994] cursor-pointer shrink-0">
+                    <input type="checkbox" checked={allShownSelected} onChange={toggleAllShown} className="accent-[#1cc1a5]" />
+                    Select shown
+                  </label>
+                  <div className="relative flex-1">
+                    <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-[#768994]" />
+                    <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Filter…"
+                      className="w-full pl-8 pr-3 py-1.5 text-[12px] border border-slate-200 rounded-lg outline-none focus:border-[#1cc1a5]" />
+                  </div>
+                </div>
+                <div className="flex-1 overflow-y-auto">
+                  <table className="w-full text-[12px]">
+                    <thead className="sticky top-0 bg-slate-50 z-10">
+                      <tr className="text-left text-[9px] font-black uppercase tracking-widest text-[#768994]">
+                        <th className="px-4 py-2 w-8"></th>
+                        <th className="px-2 py-2">Code</th>
+                        <th className="px-2 py-2">Film</th>
+                        <th className="px-2 py-2">Client</th>
+                        <th className="px-2 py-2">Description</th>
+                        <th className="px-2 py-2">Created</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {shown.map((c) => (
+                        <tr key={c.code} className="border-b border-slate-50 hover:bg-slate-50/60 cursor-pointer" onClick={() => toggle(c.code)}>
+                          <td className="px-4 py-2"><input type="checkbox" checked={!!selected[c.code]} onChange={() => toggle(c.code)} className="accent-[#1cc1a5]" onClick={(e) => e.stopPropagation()} /></td>
+                          <td className="px-2 py-2 font-black font-mono text-[#1cc1a5]">{c.code}</td>
+                          <td className="px-2 py-2 font-bold text-[#122027] truncate max-w-[140px]" title={c.jobNumber}>{c.filmTitle || "—"}</td>
+                          <td className="px-2 py-2 text-slate-600">{c.client || <span className="text-slate-300">—</span>}</td>
+                          <td className="px-2 py-2 text-slate-500 truncate max-w-[180px]" title={c.projectDescription}>{c.projectDescription || "—"}</td>
+                          <td className="px-2 py-2 text-slate-400 whitespace-nowrap tabular-nums">{c.createdDate || "—"}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+                <div className="px-6 py-3 border-t border-slate-100 flex items-center justify-between">
+                  <p className="text-[11px] text-[#768994] font-medium">Stored verbatim as the folder title — existing rows are never touched.</p>
+                  <button onClick={apply} disabled={selectedCount === 0 || phase === "saving"}
+                    className="flex items-center gap-1.5 px-5 py-2 bg-[#1cc1a5] hover:bg-[#17a892] disabled:bg-slate-200 disabled:text-slate-400 text-white text-sm font-bold rounded-xl transition-all">
+                    {phase === "saving" ? <><RefreshCw className="w-4 h-4 animate-spin" /> Saving…</> : <><Plus className="w-4 h-4" /> Add {selectedCount} to Job Book</>}
+                  </button>
+                </div>
+              </>
+            )}
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
 // ── Job Book Section ───────────────────────────────────────────────────────────
 // Exported: also rendered standalone as the PMs' "Job Book" page (JobBook.jsx).
 export function JobBookSection({ setActiveTab }) {
   const JOBBOOK_COLS = [
-    { key: "job_number",  label: "Job #",               px: 90  },
+    { key: "job_number",  label: "Job #",               px: 110 },
     { key: "date",        label: "Date",                px: 90  },
     { key: "client",      label: "Client",              px: 140 },
     { key: "office",      label: "Office",              px: 70  },
@@ -2817,6 +3076,7 @@ export function JobBookSection({ setActiveTab }) {
   const [search, setSearch]     = useState("");
   const [monthFilter, setMonthFilter] = useState(() => new Date().toISOString().slice(0, 7));
   const [showModal, setShowModal] = useState(false);
+  const [showScan, setShowScan] = useState(false);
   const [editJob, setEditJob]   = useState(null);
   const [saving, setSaving]     = useState(false);
   const [clients, setClients]   = useState([]);
@@ -2825,6 +3085,12 @@ export function JobBookSection({ setActiveTab }) {
   const [descs, setDescs]       = useState([]);
   const [page, setPage]         = useState(0);
   const PER_PAGE = 50;
+
+  // ── Bulk edit ────────────────────────────────────────────────────────────────
+  const [selectedIds, setSelectedIds] = useState(() => new Set());
+  const [bulkField, setBulkField] = useState("client");
+  const [bulkValue, setBulkValue] = useState("");
+  const [bulkBusy, setBulkBusy]   = useState(false);
 
   const loadRef = useCallback(async () => {
     const [c, f, cat, d] = await Promise.all([
@@ -2921,6 +3187,88 @@ export function JobBookSection({ setActiveTab }) {
     return "—";
   };
 
+  // Columns that can be set across many rows at once. `type` drives the value
+  // control; `list` supplies a datalist of existing values for free-text fields.
+  const BULK_FIELDS = [
+    { key: "client",              label: "Client",              type: "text",   list: clients },
+    { key: "status",             label: "Status",              type: "select", opts: JOB_STATUSES },
+    { key: "print_digital",       label: "Print / Digital",     type: "select", opts: ["Digital", "Print", "XYi"] },
+    { key: "office",              label: "Office",              type: "text" },
+    { key: "film_title",          label: "Film Title",          type: "text",   list: films },
+    { key: "project_description", label: "Project Description", type: "text",   list: descs },
+    { key: "ordered_by",          label: "Ordered By",          type: "text" },
+    { key: "billed_to",           label: "Billed To",           type: "text" },
+    { key: "start_date",          label: "Start Date",          type: "date" },
+    { key: "job_done",            label: "Done",                type: "bool" },
+  ];
+  const activeBulkField = BULK_FIELDS.find((f) => f.key === bulkField) || BULK_FIELDS[0];
+
+  // Selection is over the *filtered* set (across pages), so a search + "select
+  // all" lets you retag a whole studio's worth of imported rows in one go.
+  const filteredIds = useMemo(() => filtered.map((j) => j.id), [filtered]);
+  const allFilteredSelected = filteredIds.length > 0 && filteredIds.every((id) => selectedIds.has(id));
+  const toggleRow = (id) =>
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      next.has(id) ? next.delete(id) : next.add(id);
+      return next;
+    });
+  const toggleAllFiltered = () =>
+    setSelectedIds(allFilteredSelected ? new Set() : new Set(filteredIds));
+  const clearSelection = () => setSelectedIds(new Set());
+
+  const applyBulk = async () => {
+    if (!selectedIds.size) return;
+    let val;
+    if (activeBulkField.type === "bool") val = bulkValue === "yes";
+    else if (activeBulkField.type === "date") val = bulkValue || null;
+    else val = bulkValue.trim() === "" ? null : bulkValue.trim();
+
+    const ok = await confirmAction({
+      title: `Set ${activeBulkField.label} on ${selectedIds.size} job${selectedIds.size === 1 ? "" : "s"}?`,
+      message:
+        val === null
+          ? `This clears ${activeBulkField.label} on every selected row.`
+          : `Every selected row's ${activeBulkField.label} becomes “${activeBulkField.type === "bool" ? (val ? "Done" : "Not done") : val}”.`,
+      confirmLabel: "Apply to all",
+    });
+    if (!ok) return;
+
+    setBulkBusy(true);
+    const ids = [...selectedIds];
+    for (let i = 0; i < ids.length; i += 200) {
+      const chunk = ids.slice(i, i + 200);
+      const { error: err } = await supabase.from("jobs").update({ [bulkField]: val }).in("id", chunk);
+      if (err) { setBulkBusy(false); await confirmAction({ title: "Bulk update failed", message: err.message, confirmLabel: "OK" }); return; }
+    }
+    setBulkBusy(false);
+    clearSelection();
+    setBulkValue("");
+    await loadJobs();
+  };
+
+  const bulkDelete = async () => {
+    if (!selectedIds.size) return;
+    const n = selectedIds.size;
+    const ok = await confirmAction({
+      title: `Delete ${n} job${n === 1 ? "" : "s"}?`,
+      message: `${n} Job Book row${n === 1 ? "" : "s"} will be permanently removed. This can't be undone. (Rescanning Wrike re-imports them.)`,
+      confirmLabel: `Delete ${n}`,
+      danger: true,
+    });
+    if (!ok) return;
+    setBulkBusy(true);
+    const ids = [...selectedIds];
+    for (let i = 0; i < ids.length; i += 200) {
+      const chunk = ids.slice(i, i + 200);
+      const { error: err } = await supabase.from("jobs").delete().in("id", chunk);
+      if (err) { setBulkBusy(false); await confirmAction({ title: "Bulk delete failed", message: err.message, confirmLabel: "OK" }); return; }
+    }
+    setBulkBusy(false);
+    clearSelection();
+    await loadJobs();
+  };
+
   return (
     <div>
       <div className="flex flex-wrap items-center gap-3 mb-5">
@@ -2938,14 +3286,25 @@ export function JobBookSection({ setActiveTab }) {
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-[#768994]" />
           <input value={search} onChange={e => setSearch(e.target.value)}
             placeholder="Search job number, client, film…"
-            className="w-full pl-9 pr-4 py-2 text-sm border border-[#dce4ec] rounded-xl outline-none focus:border-[#12a0e1] bg-white"
+            className="w-full pl-9 pr-4 py-2 text-sm border border-[#dce4ec] rounded-xl outline-none focus:border-[#1cc1a5] bg-white"
           />
         </div>
+        <button onClick={() => setShowScan(true)}
+          className="flex items-center gap-1.5 px-4 py-2 bg-white border border-[#dce4ec] hover:border-[#1cc1a5] text-[#122027] text-sm font-bold rounded-xl transition-all shrink-0">
+          <RefreshCw className="w-4 h-4 text-[#1cc1a5]" /> Scan Wrike
+        </button>
         <button onClick={() => setActiveTab?.("jobsSetup")}
-          className="flex items-center gap-1.5 px-4 py-2 bg-[#12a0e1] hover:bg-[#0d8bc4] text-white text-sm font-bold rounded-xl transition-all shrink-0">
+          className="flex items-center gap-1.5 px-4 py-2 bg-[#1cc1a5] hover:bg-[#17a892] text-white text-sm font-bold rounded-xl transition-all shrink-0">
           <Plus className="w-4 h-4" /> Add Jobs
         </button>
       </div>
+
+      {showScan && (
+        <StudioJobScanModal
+          onClose={() => setShowScan(false)}
+          onApplied={async () => { setShowScan(false); await loadJobs(); }}
+        />
+      )}
 
       <div className="flex items-center justify-between mb-2">
         <p className="text-[10px] font-black text-[#768994] uppercase tracking-widest">
@@ -2966,6 +3325,55 @@ export function JobBookSection({ setActiveTab }) {
         )}
       </div>
 
+      {selectedIds.size > 0 && (
+        <div className="mb-3 flex flex-wrap items-center gap-2 bg-[#1cc1a5]/[0.06] border border-[#1cc1a5]/30 rounded-2xl px-4 py-2.5">
+          <span className="text-[11px] font-black text-[#1cc1a5]">{selectedIds.size} selected</span>
+          <button onClick={clearSelection} className="text-[11px] font-bold text-[#768994] hover:text-rose-500">Clear</button>
+          <span className="text-[11px] font-bold text-[#768994] ml-2">Set</span>
+          <select value={bulkField} onChange={(e) => { setBulkField(e.target.value); setBulkValue(""); }}
+            className="text-[12px] font-bold border border-[#dce4ec] rounded-lg px-2 py-1.5 bg-white outline-none focus:border-[#1cc1a5]">
+            {BULK_FIELDS.map(f => <option key={f.key} value={f.key}>{f.label}</option>)}
+          </select>
+          <span className="text-[11px] font-bold text-[#768994]">to</span>
+          {activeBulkField.type === "select" ? (
+            <select value={bulkValue} onChange={(e) => setBulkValue(e.target.value)}
+              className="text-[12px] font-bold border border-[#dce4ec] rounded-lg px-2 py-1.5 bg-white outline-none focus:border-[#1cc1a5] min-w-[120px]">
+              <option value="">— (clear)</option>
+              {activeBulkField.opts.map(o => <option key={o} value={o}>{o}</option>)}
+            </select>
+          ) : activeBulkField.type === "bool" ? (
+            <select value={bulkValue} onChange={(e) => setBulkValue(e.target.value)}
+              className="text-[12px] font-bold border border-[#dce4ec] rounded-lg px-2 py-1.5 bg-white outline-none focus:border-[#1cc1a5]">
+              <option value="">—</option>
+              <option value="yes">Done</option>
+              <option value="no">Not done</option>
+            </select>
+          ) : activeBulkField.type === "date" ? (
+            <input type="date" value={bulkValue} onChange={(e) => setBulkValue(e.target.value)}
+              className="text-[12px] font-bold border border-[#dce4ec] rounded-lg px-2 py-1.5 bg-white outline-none focus:border-[#1cc1a5]" />
+          ) : (
+            <>
+              <input list={`bulk-${activeBulkField.key}`} value={bulkValue} onChange={(e) => setBulkValue(e.target.value)}
+                placeholder="value (blank = clear)"
+                className="text-[12px] font-medium border border-[#dce4ec] rounded-lg px-2.5 py-1.5 bg-white outline-none focus:border-[#1cc1a5] min-w-[180px]" />
+              {activeBulkField.list && (
+                <datalist id={`bulk-${activeBulkField.key}`}>
+                  {activeBulkField.list.map(v => <option key={v} value={v} />)}
+                </datalist>
+              )}
+            </>
+          )}
+          <button onClick={applyBulk} disabled={bulkBusy}
+            className="ml-auto flex items-center gap-1.5 px-4 py-1.5 bg-[#1cc1a5] hover:bg-[#17a892] disabled:bg-slate-200 disabled:text-slate-400 text-white text-[12px] font-bold rounded-lg transition-all">
+            {bulkBusy ? <><RefreshCw className="w-3.5 h-3.5 animate-spin" /> Applying…</> : `Apply to ${selectedIds.size}`}
+          </button>
+          <button onClick={bulkDelete} disabled={bulkBusy} title="Delete selected rows"
+            className="flex items-center gap-1.5 px-3 py-1.5 bg-white border border-rose-200 hover:bg-rose-50 hover:border-rose-300 disabled:opacity-40 text-rose-600 text-[12px] font-bold rounded-lg transition-all">
+            <Trash2 className="w-3.5 h-3.5" /> Delete
+          </button>
+        </div>
+      )}
+
       {loading ? (
         <div className="flex items-center justify-center py-16 gap-2 text-[#768994]">
           <RefreshCw className="w-4 h-4 animate-spin" /> Loading jobs…
@@ -2980,7 +3388,13 @@ export function JobBookSection({ setActiveTab }) {
               <tr className="bg-slate-50 border-b border-[#dce4ec]">
                 {JOBBOOK_COLS.map(c => (
                   <th key={c.key} className="relative px-3 py-2.5 text-left text-[9px] font-black uppercase tracking-widest text-[#768994] whitespace-nowrap overflow-hidden">
-                    {c.label}
+                    {c.key === "job_number" ? (
+                      <span className="flex items-center gap-2">
+                        <input type="checkbox" checked={allFilteredSelected} onChange={toggleAllFiltered}
+                          title="Select all filtered" className="accent-[#1cc1a5]" />
+                        {c.label}
+                      </span>
+                    ) : c.label}
                     {jbHandle(c.key)}
                   </th>
                 ))}
@@ -2988,11 +3402,14 @@ export function JobBookSection({ setActiveTab }) {
             </thead>
             <tbody>
               {paginated.length === 0 ? (
-                <tr><td colSpan={13} className="text-center py-12 text-[#768994] italic">No jobs found</td></tr>
+                <tr><td colSpan={JOBBOOK_COLS.length} className="text-center py-12 text-[#768994] italic">No jobs found</td></tr>
               ) : paginated.map(j => (
-                <tr key={j.id} className={`border-b border-[#dce4ec] last:border-0 hover:bg-slate-50/50 transition-colors ${j.job_done ? "opacity-50" : ""}`}>
+                <tr key={j.id} className={`border-b border-[#dce4ec] last:border-0 transition-colors ${selectedIds.has(j.id) ? "bg-[#1cc1a5]/5" : "hover:bg-slate-50/50"} ${j.job_done ? "opacity-50" : ""}`}>
                   <td className="px-3 py-2.5">
-                    <span className="font-black text-[#12a0e1] font-mono">{j.job_number}</span>
+                    <span className="flex items-start gap-2">
+                      <input type="checkbox" checked={selectedIds.has(j.id)} onChange={() => toggleRow(j.id)} className="accent-[#1cc1a5] mt-0.5 shrink-0" />
+                      <span className="font-black text-[#1cc1a5] font-mono">{j.job_number}</span>
+                    </span>
                   </td>
                   <td className="px-3 py-2.5 whitespace-nowrap text-[#768994]">
                     {j.start_date ? new Date(j.start_date).toLocaleDateString("en-GB", { day:"2-digit", month:"short", year:"2-digit" }) : "—"}
@@ -3288,7 +3705,7 @@ export function JobsFeedSection() {
         <select
           value={monthFilter}
           onChange={e => setMonthFilter(e.target.value)}
-          className="border border-[#dce4ec] rounded-xl px-3 py-2 text-sm font-bold text-[#122027] outline-none focus:border-[#12a0e1] bg-white"
+          className="border border-[#dce4ec] rounded-xl px-3 py-2 text-sm font-bold text-[#122027] outline-none focus:border-[#1cc1a5] bg-white"
         >
           {monthOptions.map(m => (
             <option key={m} value={m}>{fmtMonthLabel(m)}</option>
@@ -3300,7 +3717,7 @@ export function JobsFeedSection() {
             value={search}
             onChange={e => setSearch(e.target.value)}
             placeholder="Search job, client, film, person…"
-            className="w-full pl-9 pr-3 py-2 border border-[#dce4ec] rounded-xl text-sm text-[#122027] outline-none focus:border-[#12a0e1] bg-white"
+            className="w-full pl-9 pr-3 py-2 border border-[#dce4ec] rounded-xl text-sm text-[#122027] outline-none focus:border-[#1cc1a5] bg-white"
           />
         </div>
         <div className="flex items-center gap-3 ml-auto">
@@ -3354,7 +3771,7 @@ export function JobsFeedSection() {
                       key={c.key}
                       className={`px-2 py-1.5 border-r border-[#f0f4f8] last:border-r-0 overflow-hidden ${isCheck ? "text-center" : ""} ${isMono ? "font-mono text-[10px]" : ""} ${noWrap ? "whitespace-nowrap" : ""} text-[#122027]`}
                     >
-                      <span className={`block leading-snug ${noWrap ? "truncate" : ""} ${c.key === "job_number" ? "font-black text-[#12a0e1]" : "font-medium"}`}>
+                      <span className={`block leading-snug ${noWrap ? "truncate" : ""} ${c.key === "job_number" ? "font-black text-[#1cc1a5]" : "font-medium"}`}>
                         {val}
                       </span>
                     </td>

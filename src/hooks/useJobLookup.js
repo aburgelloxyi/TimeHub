@@ -39,13 +39,31 @@ const rowScore = (j) =>
   (j.client ? 1 : 0) +
   ((j.job_number || "").includes(" : ") ? 1 : 0);
 
+// Every column any consumer of getJob() actually reads, and nothing else.
+//
+//   job_number, film_title, client   guessFieldsFromTask, LegacyTimesheets,
+//                                    rowScore, ensureJob's patch target
+//   job_done, start_date, created_at Tracker.jsx:131, picking the most recent
+//                                    still-open job for a code
+//   id                               kept so a row is identifiable
+//
+// `select("*")` pulled 171 kB per mount against 95 kB for this set — 45% of
+// every read was columns nobody looked at (cost fields, notes, template_slot,
+// wrike ids), and the hook mounts in four places.
+//
+// IF YOU READ A NEW FIELD OFF getJob(), ADD IT HERE. It will be `undefined`
+// otherwise, and silently so — the shape looks right and the value is just
+// missing. Narrowing this without checking is how the Tracker would have
+// broken: job_done/start_date/created_at are read nowhere near this file.
+const COLUMNS = "id,job_number,film_title,client,job_done,start_date,created_at";
+
 export function useJobLookup() {
   const [jobMap, setJobMap] = useState({});
 
   const load = useCallback(async () => {
     // selectAll, not .select(): a plain read stops at 1000 rows, so the newest
     // jobs — the ones most likely to be looked up — fell out of the map.
-    const data = await selectAll("jobs", "*");
+    const data = await selectAll("jobs", COLUMNS);
     const map = {};
     (data || []).forEach((j) => {
       if (!j.job_number) return;

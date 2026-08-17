@@ -3725,7 +3725,7 @@ function StudioJobScanModal({ onClose, onApplied }) {
   return (
     <div className="fixed inset-0 z-[9999] bg-black/40 flex items-center justify-center p-4" onMouseDown={onClose}>
       <div
-        className="bg-white rounded-3xl w-full max-w-3xl max-h-[85vh] flex flex-col shadow-2xl overflow-hidden"
+        className="bg-white rounded-3xl w-full max-w-[min(1600px,96vw)] max-h-[93vh] flex flex-col shadow-2xl overflow-hidden"
         onMouseDown={(e) => e.stopPropagation()}
       >
         <div className="flex items-center justify-between px-6 py-4 border-b border-slate-100">
@@ -3752,7 +3752,7 @@ function StudioJobScanModal({ onClose, onApplied }) {
 
         {(phase === "review" || phase === "saving") && (
           <>
-            <div className="px-6 py-3 border-b border-slate-100 flex flex-wrap items-center gap-3 text-[11px] font-bold">
+            <div className="px-6 py-3 border-b border-slate-100 flex flex-wrap items-center gap-3 text-[13px] font-bold">
               <span className="text-emerald-600">{newOnes.length} new</span>
               <span className="text-[#768994]">{dupes.length} already in book</span>
               {archivedHidden > 0 && <span className="text-slate-400">{archivedHidden} archived hidden</span>}
@@ -3772,7 +3772,7 @@ function StudioJobScanModal({ onClose, onApplied }) {
             {(corrections.length > 0 || redundantRows.length > 0) && (
               <div className="border-b border-amber-100 bg-amber-50/60">
                 <div className="px-6 py-2.5 flex items-center gap-3">
-                  <span className="text-[11px] font-bold text-amber-700">
+                  <span className="text-[13px] font-bold text-amber-700">
                     {corrections.length > 0 && (
                       <>
                         {corrections.length} existing {corrections.length === 1 ? "entry disagrees" : "entries disagree"} with Wrike — filed under the wrong film, describing different work, or with the folder name stuck in the job number. These are in the book already, which is why they don’t show as new.
@@ -3789,34 +3789,34 @@ function StudioJobScanModal({ onClose, onApplied }) {
                     )}
                   </span>
                   <button onClick={() => setShowCorrections(v => !v)}
-                    className="ml-auto shrink-0 px-3 py-1.5 bg-white border border-amber-300 hover:border-amber-400 text-amber-700 text-[11px] font-bold rounded-lg transition-colors">
+                    className="ml-auto shrink-0 px-3 py-1.5 bg-white border border-amber-300 hover:border-amber-400 text-amber-700 text-[12px] font-bold rounded-lg transition-colors">
                     {showCorrections ? "Hide" : "Review"}
                   </button>
                   {/* Fix is gated behind Review so nobody can accidentally fix
                       everything at once — you have to see the rows (and can Keep
                       some) before it unlocks. */}
                   <button onClick={fixMisfilmed} disabled={phase === "saving" || !showCorrections || fixableCorrections.length + fixableRedundant.length === 0}
-                    className="shrink-0 flex items-center gap-1.5 px-3 py-1.5 bg-amber-500 hover:bg-amber-600 disabled:opacity-50 text-white text-[11px] font-bold rounded-lg transition-colors">
+                    className="shrink-0 flex items-center gap-1.5 px-3 py-1.5 bg-amber-500 hover:bg-amber-600 disabled:opacity-50 text-white text-[12px] font-bold rounded-lg transition-colors">
                     Fix {fixableCorrections.length + fixableRedundant.length}
                   </button>
                 </div>
                 {showCorrections && (
-                  <div className="max-h-52 overflow-y-auto border-t border-amber-100 px-6 py-2">
-                    <table className="w-full text-[11px]">
+                  <div className="max-h-[52vh] overflow-y-auto border-t border-amber-100 px-6 py-2">
+                    <table className="w-full text-[13px]">
                       <tbody>
                         {corrections.map((c) => {
                           const kept = keptCodes.has(c.code);
                           return (
                             <tr key={c.code} className={`align-top ${kept ? "opacity-50" : ""}`}>
                               <td className="py-1 pr-3 font-mono font-black text-amber-700 whitespace-nowrap">{c.code}</td>
-                              <td className="py-1 pr-2 text-slate-400 line-through truncate max-w-[240px]"
+                              <td className="py-1 pr-2 text-slate-400 line-through truncate max-w-[520px]"
                                   title={existingByCode[c.code]?.job_number}>
                                 {existingByCode[c.code]?.job_number || "—"}
                               </td>
-                              <td className="py-1 max-w-[240px]">
+                              <td className="py-1 max-w-[620px]">
                                 <div className="text-[#122027] truncate" title={c.jobNumber}>→ {c.jobNumber}</div>
                                 {c.folderPath && (
-                                  <div className="text-[10px] text-slate-400 truncate" title={c.folderPath}>
+                                  <div className="text-[12px] text-slate-500 truncate" title={c.folderPath}>
                                     Wrike: {c.folderPath}
                                   </div>
                                 )}
@@ -3826,13 +3826,13 @@ function StudioJobScanModal({ onClose, onApplied }) {
                                   <>
                                     <span className="mr-1.5 text-[9px] font-black uppercase tracking-wider text-emerald-600 bg-emerald-50 border border-emerald-200 px-1.5 py-0.5 rounded">Kept</span>
                                     <button onClick={() => unkeepCode(c.code)}
-                                      className="px-2 py-0.5 text-[10px] font-black rounded-md bg-slate-100 text-slate-500 hover:bg-slate-200 transition-colors">
+                                      className="px-2 py-0.5 text-[12px] font-black rounded-md bg-slate-100 text-slate-500 hover:bg-slate-200 transition-colors">
                                       Undo
                                     </button>
                                   </>
                                 ) : (
                                   <button onClick={() => keepCode(c.code)}
-                                    className="px-2 py-0.5 text-[10px] font-black rounded-md border border-slate-300 text-slate-500 hover:border-amber-400 hover:text-amber-700 transition-colors">
+                                    className="px-2 py-0.5 text-[12px] font-black rounded-md border border-slate-300 text-slate-500 hover:border-amber-400 hover:text-amber-700 transition-colors">
                                     Keep
                                   </button>
                                 )}
@@ -3850,16 +3850,16 @@ function StudioJobScanModal({ onClose, onApplied }) {
                               <td className="py-1 pr-3 font-mono font-black text-amber-700 whitespace-nowrap">
                                 {rCode}
                               </td>
-                              <td className="py-1 pr-2 text-slate-400 line-through truncate max-w-[240px]"
+                              <td className="py-1 pr-2 text-slate-400 line-through truncate max-w-[520px]"
                                   title={r.job_number}>
                                 {r.job_number}
                               </td>
-                              <td className="py-1 max-w-[240px]">
+                              <td className="py-1 max-w-[620px]">
                                 <div className="text-slate-500 italic truncate" title={existingByCode[rCode]?.job_number}>
                                   → duplicate, removed (kept: {existingByCode[rCode]?.job_number})
                                 </div>
                                 {candByCode[rCode]?.folderPath && (
-                                  <div className="text-[10px] text-slate-400 truncate" title={candByCode[rCode].folderPath}>
+                                  <div className="text-[12px] text-slate-500 truncate" title={candByCode[rCode].folderPath}>
                                     Wrike: {candByCode[rCode].folderPath}
                                   </div>
                                 )}
@@ -3869,13 +3869,13 @@ function StudioJobScanModal({ onClose, onApplied }) {
                                   <>
                                     <span className="mr-1.5 text-[9px] font-black uppercase tracking-wider text-emerald-600 bg-emerald-50 border border-emerald-200 px-1.5 py-0.5 rounded">Kept</span>
                                     <button onClick={() => unkeepCode(rCode)}
-                                      className="px-2 py-0.5 text-[10px] font-black rounded-md bg-slate-100 text-slate-500 hover:bg-slate-200 transition-colors">
+                                      className="px-2 py-0.5 text-[12px] font-black rounded-md bg-slate-100 text-slate-500 hover:bg-slate-200 transition-colors">
                                       Undo
                                     </button>
                                   </>
                                 ) : (
                                   <button onClick={() => keepCode(rCode)}
-                                    className="px-2 py-0.5 text-[10px] font-black rounded-md border border-slate-300 text-slate-500 hover:border-amber-400 hover:text-amber-700 transition-colors">
+                                    className="px-2 py-0.5 text-[12px] font-black rounded-md border border-slate-300 text-slate-500 hover:border-amber-400 hover:text-amber-700 transition-colors">
                                     Keep
                                   </button>
                                 )}
@@ -3903,18 +3903,18 @@ function StudioJobScanModal({ onClose, onApplied }) {
             ) : (
               <>
                 <div className="px-6 py-2.5 flex items-center gap-3 border-b border-slate-100">
-                  <label className="flex items-center gap-2 text-[11px] font-black text-[#768994] cursor-pointer shrink-0">
+                  <label className="flex items-center gap-2 text-[12px] font-black text-[#768994] cursor-pointer shrink-0">
                     <input type="checkbox" checked={allShownSelected} onChange={toggleAllShown} className="accent-[#1cc1a5]" />
                     Select shown
                   </label>
                   <div className="relative flex-1">
                     <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-[#768994]" />
                     <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Filter…"
-                      className="w-full pl-8 pr-3 py-1.5 text-[12px] border border-slate-200 rounded-lg outline-none focus:border-[#1cc1a5]" />
+                      className="w-full pl-8 pr-3 py-2 text-[13px] border border-slate-200 rounded-lg outline-none focus:border-[#1cc1a5]" />
                   </div>
                 </div>
                 <div className="flex-1 overflow-y-auto">
-                  <table className="w-full text-[12px]">
+                  <table className="w-full text-[13px]">
                     <thead className="sticky top-0 bg-slate-50 z-10">
                       <tr className="text-left text-[9px] font-black uppercase tracking-widest text-[#768994]">
                         <th className="px-4 py-2 w-8"></th>
@@ -3931,14 +3931,14 @@ function StudioJobScanModal({ onClose, onApplied }) {
                         <tr key={c.code} className="border-b border-slate-50 hover:bg-slate-50/60 cursor-pointer" onClick={() => toggle(c.code)}>
                           <td className="px-4 py-2"><input type="checkbox" checked={!!selected[c.code]} onChange={() => toggle(c.code)} className="accent-[#1cc1a5]" onClick={(e) => e.stopPropagation()} /></td>
                           <td className="px-2 py-2 font-black font-mono text-[#1cc1a5]">{c.code}</td>
-                          <td className="px-2 py-2 font-bold text-[#122027] truncate max-w-[140px]" title={c.jobNumber}>{c.filmTitle || "—"}</td>
+                          <td className="px-2 py-2 font-bold text-[#122027] truncate max-w-[280px]" title={c.jobNumber}>{c.filmTitle || "—"}</td>
                           <td className="px-2 py-2">
                             {c.region
                               ? <span className="text-[10px] font-black px-1.5 py-0.5 rounded bg-[#12a0e1]/10 text-[#12a0e1]">{c.region}</span>
                               : <span className="text-slate-300">—</span>}
                           </td>
                           <td className="px-2 py-2 text-slate-600">{c.client || <span className="text-slate-300">—</span>}</td>
-                          <td className="px-2 py-2 text-slate-500 truncate max-w-[180px]" title={c.projectDescription}>{c.projectDescription || "—"}</td>
+                          <td className="px-2 py-2 text-slate-500 truncate max-w-[360px]" title={c.projectDescription}>{c.projectDescription || "—"}</td>
                           <td className="px-2 py-2 text-slate-400 whitespace-nowrap tabular-nums">{c.createdDate || "—"}</td>
                         </tr>
                       ))}
@@ -3946,7 +3946,7 @@ function StudioJobScanModal({ onClose, onApplied }) {
                   </table>
                 </div>
                 <div className="px-6 py-3 border-t border-slate-100 flex items-center justify-between">
-                  <p className="text-[11px] text-[#768994] font-medium">Taken from the folder title, prefixed with the region its studio folder sits under — existing rows are never touched.</p>
+                  <p className="text-[12px] text-[#768994] font-medium">Taken from the folder title, prefixed with the region its studio folder sits under — existing rows are never touched.</p>
                   <button onClick={apply} disabled={selectedCount === 0 || phase === "saving"}
                     className="flex items-center gap-1.5 px-5 py-2 bg-[#1cc1a5] hover:bg-[#17a892] disabled:bg-slate-200 disabled:text-slate-400 text-white text-sm font-bold rounded-xl transition-[background-color] ease-[cubic-bezier(0.16,1,0.3,1)]">
                     {phase === "saving" ? <><RefreshCw className="w-4 h-4 animate-spin" /> Saving…</> : <><Plus className="w-4 h-4" /> Add {selectedCount} to Job Book</>}

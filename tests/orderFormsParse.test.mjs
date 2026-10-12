@@ -196,3 +196,37 @@ fillMergedDown(merged, [{ s: { r: 3, c: 10 }, e: { r: 4, c: 10 } }, { s: { r: 3,
 check("a site under a merged size has that size",
   parseMarket("New Zealand (NZL)", merged).orders.map((o) => `${o.siteName} ${o.width}x${o.height}`),
   ["Henderson IN 1152x384", "Henderson OUT 1152x384"]);
+
+// ── Universal's layout ────────────────────────────────────────────────────────
+// Different header wording, and the XYi block's headers share the header row.
+{
+  const { parseMarket } = await import("../src/lib/orderForms/parseWorkbook.js");
+  const head = [
+    "TERRITORY CODE", "Are your orders confirmed? Y/N\n\nCONFIRMED - select confirmed", "DELIVERY DEADLINE\n(DD/MM/YYYY)", "GO LIVE DATE",
+    "DINTH / FOH / DOOH", "MEDIA SITE NAME \nThis will be added", "ADDITIONAL NOTES", "LOS / MOS / STATIC", "PIXEL \nWIDTH ", "PIXEL \nHEIGHT ",
+    "ASPECT RATIO", "DURATION", "SOUND REQ.", "SPECIFIC VIDEO REQUIREMENTS \n(if not .MOV)", "XYi Received ", "PUMA DELIVERY NAME\nSee below",
+    "", "Title", "Workflow", "Market Deadline", "Aspect ratio",
+  ];
+  const banner = ["UIP - BULGARIA - [MOTION DOOH] - ORDER FORM ", "", "", "", "", "", "", "", "", "", "", "", "", "", "DO NOT EDIT - XYi USE"];
+  const rows = [
+    banner,
+    head,
+    ["BG", "Confirmed", "17/08/2026", "24/08/2026", "DINTH", "Foyer", "Loop it", "MOS", 1080, 1920, 0.5625, 15, "No", ".mp4", true, "FID_Foyer_BG", "", "FID_INTL_Foyer_BG", "Studio", "17/08/2026", 0.5625],
+    ["BG", "Pending", 46258, "", "DOOH", "Mall", "", "MOS", 1920, 1080, 1.7778, 10, "No", "", false, "", "", "FID_INTL_Mall_BG", "Studio", 46258, 1.7778],
+    ["BG", "", "", "", "DOOH", "", "", "", "", "", "", "", "", "", false, "", "", "", "", "", ""],
+  ];
+  const bg = parseMarket("BULGARIA (BG)", rows);
+  check("universal: readable", bg.unreadable, null);
+  check("universal: kind from the banner", bg.kind, "motion");
+  check("universal: orders", bg.orders.map((o) => [o.marketCode, o.status, o.deliveryDeadline, o.siteName]), [["BG", "confirmed", "2026-08-17", "Foyer"], ["BG", "pending", "2026-08-24", "Mall"]]);
+  check("universal: pixel size, live date, notes", [bg.orders[0].width, bg.orders[0].height, bg.orders[0].liveDate, bg.orders[0].notes], ["1080", "1920", "2026-08-24", "Loop it"]);
+  check("universal: motion fields", [bg.orders[0].format, bg.orders[0].duration, bg.orders[0].sound, bg.orders[0].videoFormat], ["MOS", "15", "No", ".mp4"]);
+  check("universal: delivery name", bg.orders[0].deliveryName, "FID_Foyer_BG");
+  check("universal: XYi block read from the header row", [bg.orders[0].xyi.title, bg.orders[0].xyi.workflow, bg.orders[0].xyi.marketDeadline, bg.orders[0].xyi.aspectRatio], ["FID_INTL_Foyer_BG", "Studio", "2026-08-17", "0.56"]);
+  check("universal: XYi received is the tick box", bg.orders.map((o) => o.received), [true, false]);
+  check("universal: an untouched template row is ignored", bg.undated, 0);
+
+  const print = parseMarket("X", [["UIP - X - [PRINT OOH] - ORDER FORM"], ["TERRITORY CODE", "Are your orders confirmed?", "DELIVERY DEADLINE", "WIDTH", "HEIGHT"], ["BG", "Confirmed", 46240, 4, 3]]);
+  check("universal: print banner", print.kind, "print");
+  check("a form with no XYi Received column doesn't claim an answer", print.orders[0].received, null);
+}

@@ -61,6 +61,7 @@ export default function OrderPanel({ order, task, parent, today }) {
             )],
             ["Live date", formatDay(order.liveDate, today)],
             ["Media approved", order.mediaApproved],
+            ["XYi received", order.received == null ? "" : order.received ? "Yes" : "Not yet"],
           ]}
         />
         <Group

@@ -3,6 +3,8 @@
 //
 // Columns are found by header text, not position, so the Motion and Print
 // layouts share one parser and an inserted column doesn't shift anything.
+// Paramount's and Universal's forms word some headers differently; where they
+// do, a field lists both.
 
 const norm = (v) => String(v ?? "").replace(/\s+/g, " ").trim().toLowerCase();
 
@@ -76,41 +78,47 @@ export function orderStatus(confirmedCell) {
 
 export const isMarketTab = (name) => !name.startsWith("_") && name !== "AA_Test_Market";
 
+// The header of the column that says which market a row is for. Finding it is
+// how the header row itself is found.
+const MARKET_HEADERS = ["market", "territory code"];
+
 // field → the header it sits under. A string matches the start of the header;
 // { is } matches the whole header, for words that also start other headers.
 const COLUMNS = [
-  ["marketCode", [{ is: "market" }]],
+  ["marketCode", MARKET_HEADERS.map((is) => ({ is }))],
   ["confirmed", ["are your orders confirmed"]],
   ["deliveryDeadline", ["delivery deadline"]],
-  ["liveDate", ["live date"]],
+  ["liveDate", ["live date", "go live date"]],
   ["mediaApproved", ["media approved"]],
-  ["placement", ["inth / foh / ooh", "dinth / dfoh / dooh"]],
+  ["placement", ["inth / foh / ooh", "dinth / dfoh / dooh", "dinth / foh / dooh"]],
   ["artwork", ["artwork selection"]],
   ["translations", ["translations"]],
   ["siteName", ["media site name", "media / location site name"]],
-  ["width", [{ is: "width" }]],
-  ["height", [{ is: "height" }]],
+  ["width", [{ is: "width" }, { is: "pixel width" }]],
+  ["height", [{ is: "height" }, { is: "pixel height" }]],
   ["unit", ["unit of measurement"]],
   ["orientation", ["orientation"]],
-  ["notes", [{ is: "notes" }]],
-  ["deliveryName", ["enterprise delivery name"]],
+  ["notes", [{ is: "notes" }, { is: "additional notes" }]],
+  ["received", ["xyi received"]],
+  ["deliveryName", ["enterprise delivery name", "puma delivery name"]],
   // Motion
-  ["format", ["format / animation"]],
+  ["format", ["format / animation", "los / mos / static"]],
   ["duration", ["duration"]],
   ["fileSize", ["file size"]],
   ["bitRate", ["bit rate"]],
-  ["videoFormat", ["video format"]],
-  ["sound", ["sound required"]],
+  ["videoFormat", ["video format", "specific video requirements"]],
+  ["sound", ["sound req"]],
   ["rotation", ["canvas rotation"]],
-  ["specSheet", ["spec sheet"]],
+  ["specSheet", ["spec sheet", "upload specifications"]],
   // Print
   ["type", [{ is: "type" }]],
   ["colourMode", ["rgb"]],
   ["specs", ["written detailed specifications"]],
 ];
 
-// The XYi block's headers sit one row above the header row; in the header row
-// those columns hold default values.
+// The XYi block. On Paramount's forms its headers sit one row above the header
+// row, and in the header row those columns hold default values. On Universal's
+// they are in the header row with everything else.
 const XYI_COLUMNS = [
   ["title", "title"],
   ["workflow", "workflow"],
@@ -155,8 +163,8 @@ function kindOf(rows, headerAt, cols) {
   for (const row of rows.slice(0, headerAt)) {
     for (const cell of row || []) {
       const text = norm(cell);
-      if (text.includes("[motion]")) return "motion";
-      if (text.includes("[print]")) return "print";
+      if (text.includes("[motion")) return "motion";
+      if (text.includes("[print")) return "print";
     }
   }
   return "duration" in cols ? "motion" : "print";
@@ -181,6 +189,8 @@ function readOrder(row, rowNumber, cols, xyiCols) {
     const raw = field in cols ? row[cols[field]] : "";
     order[field] = DATE_FIELDS.has(field) ? toDeadline(raw) : cleanCell(raw);
   }
+  // A tick box: true once XYi has the order, null on a form with no such column.
+  order.received = "received" in cols ? /^(true|y|yes)$/.test(norm(order.received)) : null;
   order.status = orderStatus(order.confirmed);
   if (!order.deliveryDeadline) {
     return order.status !== "unanswered" || MARKET_TYPED.some((f) => order[f]) ? "undated" : null;
@@ -197,7 +207,7 @@ function readOrder(row, rowNumber, cols, xyiCols) {
 }
 
 export function parseMarket(name, rows) {
-  const headerAt = rows.findIndex((row) => (row || []).some((cell) => norm(cell) === "market"));
+  const headerAt = rows.findIndex((row) => (row || []).some((cell) => MARKET_HEADERS.includes(norm(cell))));
   if (headerAt === -1) return unreadable(name, "No header row found");
 
   const cols = mapColumns(rows[headerAt]);
@@ -207,7 +217,8 @@ export function parseMarket(name, rows) {
   // Only look for XYi headers to the right of the market's own columns: "Format"
   // and "Art" would otherwise be ambiguous with anything a market adds.
   const marketEnd = cols.deliveryName ?? Math.max(...Object.values(cols));
-  const xyiCols = mapXyiColumns(rows[headerAt - 1], marketEnd);
+  const above = mapXyiColumns(rows[headerAt - 1], marketEnd);
+  const xyiCols = "title" in above ? above : mapXyiColumns(rows[headerAt], marketEnd);
 
   const orders = [];
   let undated = 0;

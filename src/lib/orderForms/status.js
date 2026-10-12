@@ -54,6 +54,8 @@ export function marketSummary(market, todayIso) {
     unanswered,
     undated: market.undated || 0,
     mediaApproved: orders.filter((o) => isApproved(o.mediaApproved)).length,
+    // null when the form has no XYi Received column, or was loaded before it was read.
+    received: orders.some((o) => o.received != null) ? orders.filter((o) => o.received).length : null,
     nextDeadline: earliest(open) || earliest(orders),
     urgency,
   };

@@ -24,7 +24,7 @@ const COMPARE = {
   deadline: (a, b) => (a.nextDeadline || "9999").localeCompare(b.nextDeadline || "9999"),
 };
 
-const GRID = "grid grid-cols-[minmax(0,1.4fr)_120px_minmax(0,1fr)_120px_90px_90px_20px] gap-4 items-center px-5";
+const GRID = "grid grid-cols-[minmax(0,1.4fr)_120px_minmax(0,1fr)_120px_90px_90px_90px_20px] gap-4 items-center px-5";
 
 function MarketName({ name, undated = 0 }) {
   return (
@@ -78,83 +78,115 @@ export default function MarketList({ file, today, wrikeIndex, onOpen, arriving =
   const onSort = (by) =>
     setSort((s) => (s?.by !== by ? { by, desc: false } : s.desc ? null : { by, desc: true }));
 
+  // Markets with no orders yet get a list of their own under the table, so
+  // they don't sit between the ones a PM has something to read in.
+  const active = rows.filter((m) => m.status !== "notStarted");
+  const idle = rows.filter((m) => m.status === "notStarted");
+
   const counts = { confirmed: totals.confirmed, pending: totals.pending, unconfirmed: totals.unconfirmed, due: totals.due, notStarted: totals.notStarted };
 
   return (
-    <div className="bg-white border border-[#dce4ec] rounded-2xl shadow-sm overflow-hidden">
-      <div className="flex flex-wrap items-center gap-2 px-5 py-4 border-b border-[#dce4ec]">
-        {FILTERS.map((f) => (
-          <button
-            key={f.id}
-            onClick={() => setFilter(filter === f.id ? null : f.id)}
-            aria-pressed={filter === f.id}
-            className={`flex items-center gap-2 px-3 py-1.5 rounded-xl border text-sm font-bold transition-colors ${
-              filter === f.id ? f.on : "bg-white border-[#dce4ec] text-[#122027] hover:border-[#9aabb5]"
-            }`}
-          >
-            {f.label}
-            <span className={filter === f.id ? "text-white/80" : "text-[#768994]"}>{counts[f.id]}</span>
-          </button>
-        ))}
-        <p className="ml-auto text-sm text-[#768994]">
-          {totals.markets} markets · {totals.orders} orders
-        </p>
-      </div>
+    <div className="space-y-4">
+      <div className="bg-white border border-[#dce4ec] rounded-2xl shadow-sm overflow-hidden">
+        <div className="flex flex-wrap items-center gap-2 px-5 py-4 border-b border-[#dce4ec]">
+          {FILTERS.map((f) => (
+            <button
+              key={f.id}
+              onClick={() => setFilter(filter === f.id ? null : f.id)}
+              aria-pressed={filter === f.id}
+              className={`flex items-center gap-2 px-3 py-1.5 rounded-xl border text-sm font-bold transition-colors ${
+                filter === f.id ? f.on : "bg-white border-[#dce4ec] text-[#122027] hover:border-[#9aabb5]"
+              }`}
+            >
+              {f.label}
+              <span className={filter === f.id ? "text-white/80" : "text-[#768994]"}>{counts[f.id]}</span>
+            </button>
+          ))}
+          <p className="ml-auto text-sm text-[#768994]">
+            {totals.markets} markets · {totals.orders} orders
+          </p>
+        </div>
 
-      <div className={`${GRID} py-2.5 border-b border-[#dce4ec] bg-slate-50/60 text-[10px] font-black uppercase tracking-widest text-[#768994]`}>
-        <SortHeader id="name" sort={sort} onSort={onSort}>Market</SortHeader>
-        <SortHeader id="status" sort={sort} onSort={onSort}>Status</SortHeader>
-        <span>Orders confirmed</span>
-        <SortHeader id="deadline" sort={sort} onSort={onSort}>Next deadline</SortHeader>
-        <span>Media ok</span>
-        <span title="Orders whose task name matches a Wrike task TimeHub has loaded. A task it hasn't loaded doesn't show.">In Wrike</span>
-        <span />
-      </div>
+        {active.length > 0 && <div className={`${GRID} py-2.5 border-b border-[#dce4ec] bg-slate-50/60 text-[10px] font-black uppercase tracking-widest text-[#768994]`}>
+          <SortHeader id="name" sort={sort} onSort={onSort}>Market</SortHeader>
+          <SortHeader id="status" sort={sort} onSort={onSort}>Status</SortHeader>
+          <span>Orders confirmed</span>
+          <SortHeader id="deadline" sort={sort} onSort={onSort}>Next deadline</SortHeader>
+          <span>Media ok</span>
+          <span title="Orders ticked in the sheet's XYi Received column.">XYi received</span>
+          <span title="Orders whose task name matches a Wrike task TimeHub has loaded. A task it hasn't loaded doesn't show.">In Wrike</span>
+          <span />
+        </div>}
 
-      {rows.length === 0 && (
-        <p className="px-5 py-10 text-center text-sm text-[#768994]">No markets match this filter.</p>
-      )}
+        {rows.length === 0 && (
+          <p className="px-5 py-10 text-center text-sm text-[#768994]">No markets match this filter.</p>
+        )}
 
-      {rows.map((m) => {
-        if (m.status === "unreadable") {
+        {active.map((m) => {
+          if (m.status === "unreadable") {
+            return (
+              <div key={m.name} className={`${GRID} py-3 border-b border-slate-100 last:border-b-0 text-sm ${arriving ? "list-row-in" : ""}`}>
+                <MarketName name={m.name} />
+                <span><span className={`${pillClass} ${STATUS_CLASS.unreadable}`}>{STATUS_LABEL.unreadable}</span></span>
+                <span className="col-span-6 text-[#768994] truncate">{m.unreadable}</span>
+              </div>
+            );
+          }
+          const pct = m.total ? Math.round((m.confirmed / m.total) * 100) : 0;
           return (
-            <div key={m.name} className={`${GRID} py-3 border-b border-slate-100 last:border-b-0 text-sm ${arriving ? "list-row-in" : ""}`}>
-              <MarketName name={m.name} />
-              <span><span className={`${pillClass} ${STATUS_CLASS.unreadable}`}>{STATUS_LABEL.unreadable}</span></span>
-              <span className="col-span-5 text-[#768994] truncate">{m.unreadable}</span>
-            </div>
-          );
-        }
-        const pct = m.total ? Math.round((m.confirmed / m.total) * 100) : 0;
-        return (
-          <button
-            key={m.name}
-            onClick={() => onOpen?.(m.name)}
-            disabled={arriving}
-            className={`${arriving ? "list-row-in " : ""}${GRID} w-full py-3 border-b border-slate-100 last:border-b-0 text-sm text-left hover:bg-slate-50 focus:outline-none focus-visible:bg-slate-50 transition-colors group`}
-          >
-            <MarketName name={m.name} undated={m.undated} />
-            <span><span className={`${pillClass} ${STATUS_CLASS[m.status]}`}>{STATUS_LABEL[m.status]}</span></span>
-            <span className="flex items-center gap-3 min-w-0">
-              <span className="flex-1 h-1.5 rounded-full bg-slate-100 overflow-hidden">
-                <span className={`block h-full rounded-full bg-[#1cc1a5] ${arriving ? "bar-fill" : ""}`} style={{ width: `${pct}%` }} />
+            <button
+              key={m.name}
+              onClick={() => onOpen?.(m.name)}
+              disabled={arriving}
+              className={`${arriving ? "list-row-in " : ""}${GRID} w-full py-3 border-b border-slate-100 last:border-b-0 text-sm text-left hover:bg-slate-50 focus:outline-none focus-visible:bg-slate-50 transition-colors group`}
+            >
+              <MarketName name={m.name} undated={m.undated} />
+              <span><span className={`${pillClass} ${STATUS_CLASS[m.status]}`}>{STATUS_LABEL[m.status]}</span></span>
+              <span className="flex items-center gap-3 min-w-0">
+                <span className="flex-1 h-1.5 rounded-full bg-slate-100 overflow-hidden">
+                  <span className={`block h-full rounded-full bg-[#1cc1a5] ${arriving ? "bar-fill" : ""}`} style={{ width: `${pct}%` }} />
+                </span>
+                <span className="text-xs text-[#768994] tabular-nums shrink-0 w-14 text-right">{m.confirmed} of {m.total}</span>
               </span>
-              <span className="text-xs text-[#768994] tabular-nums shrink-0 w-14 text-right">{m.confirmed} of {m.total}</span>
-            </span>
-            <span className={`tabular-nums ${m.urgency ? `font-bold ${URGENCY_TEXT[m.urgency]}` : m.nextDeadline ? "text-[#122027]" : "text-[#b6c3cc]"}`}>
-              {m.nextDeadline ? formatDay(m.nextDeadline, today) : "—"}
-              {m.urgency === "overdue" && <span className="block text-[10px] font-black uppercase tracking-wider">Overdue</span>}
-            </span>
-            <span className={`tabular-nums ${m.total ? "text-[#122027]" : "text-[#b6c3cc]"}`}>
-              {m.total ? `${m.mediaApproved} of ${m.total}` : "—"}
-            </span>
-            <span className={`tabular-nums ${inWrike.get(m.name) ? "text-[#122027]" : "text-[#b6c3cc]"}`}>
-              {inWrike.get(m.name) ? `${inWrike.get(m.name)} of ${m.total}` : "—"}
-            </span>
-            <ChevronRight className="w-4 h-4 text-[#b6c3cc] group-hover:text-[#122027] group-hover:translate-x-0.5 transition-[color,transform]" />
-          </button>
-        );
-      })}
+              <span className={`tabular-nums ${m.urgency ? `font-bold ${URGENCY_TEXT[m.urgency]}` : m.nextDeadline ? "text-[#122027]" : "text-[#b6c3cc]"}`}>
+                {m.nextDeadline ? formatDay(m.nextDeadline, today) : "—"}
+                {m.urgency === "overdue" && <span className="block text-[10px] font-black uppercase tracking-wider">Overdue</span>}
+              </span>
+              <span className={`tabular-nums ${m.total ? "text-[#122027]" : "text-[#b6c3cc]"}`}>
+                {m.total ? `${m.mediaApproved} of ${m.total}` : "—"}
+              </span>
+              <span className={`tabular-nums ${m.received ? "text-[#122027]" : "text-[#b6c3cc]"}`}>
+                {m.received != null && m.total ? `${m.received} of ${m.total}` : "—"}
+              </span>
+              <span className={`tabular-nums ${inWrike.get(m.name) ? "text-[#122027]" : "text-[#b6c3cc]"}`}>
+                {inWrike.get(m.name) ? `${inWrike.get(m.name)} of ${m.total}` : "—"}
+              </span>
+              <ChevronRight className="w-4 h-4 text-[#b6c3cc] group-hover:text-[#122027] group-hover:translate-x-0.5 transition-[color,transform]" />
+            </button>
+          );
+        })}
+      </div>
+
+      {idle.length > 0 && (
+        <div className="bg-white border border-[#dce4ec] rounded-2xl shadow-sm overflow-hidden">
+          <div className="flex items-baseline gap-2 px-5 py-3 border-b border-[#dce4ec] bg-slate-50/60">
+            <h3 className="text-[10px] font-black uppercase tracking-widest text-[#768994]">Not started</h3>
+            <p className="text-xs text-[#768994]">{idle.length} {idle.length === 1 ? "market" : "markets"} with no orders yet</p>
+          </div>
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+            {idle.map((m) => (
+              <button
+                key={m.name}
+                onClick={() => onOpen?.(m.name)}
+                disabled={arriving}
+                className={`${arriving ? "list-row-in " : ""}flex items-center px-5 py-2.5 border-b border-slate-100 text-sm text-left hover:bg-slate-50 focus:outline-none focus-visible:bg-slate-50 transition-colors`}
+              >
+                <MarketName name={m.name} undated={m.undated} />
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
     </div>
   );
 }

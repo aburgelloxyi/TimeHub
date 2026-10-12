@@ -63,3 +63,11 @@ check("totals", fileTotals(file, TODAY), { markets: 7, orders: 5, confirmed: 1, 
 const sorted = sortMarkets(file.markets.map((m) => marketSummary(m, TODAY))).map((m) => m.name);
 check("default order: urgent, pending, unconfirmed, confirmed, not started, unreadable",
   sorted, ["Spain", "France", "Italy", "Croatia", "Germany", "Japan", "Broken"]);
+
+// ── XYi received ──────────────────────────────────────────────────────────────
+{
+  const { marketSummary } = await import("../src/lib/orderForms/status.js");
+  const o = (received) => ({ status: "confirmed", deliveryDeadline: "2026-11-01", received });
+  check("received: ticked orders counted", marketSummary({ name: "A", orders: [o(true), o(false), o(true)] }, "2026-10-12").received, 2);
+  check("received: unknown when the form has no such column", marketSummary({ name: "A", orders: [o(null), o(undefined)] }, "2026-10-12").received, null);
+}

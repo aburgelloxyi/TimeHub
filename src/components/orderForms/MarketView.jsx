@@ -46,6 +46,7 @@ export default function MarketView({ market, kind, today, wrikeIndex, wrikeParen
         <span className={`${pillClass} ${STATUS_CLASS[summary.status]}`}>{STATUS_LABEL[summary.status]}</span>
         <p className="ml-auto text-sm text-[#768994]">
           {summary.total} {summary.total === 1 ? "order" : "orders"} · {summary.confirmed} confirmed
+          {summary.received != null && ` · ${summary.received} received`}
           {inWrike > 0 && ` · ${inWrike} in Wrike`}
           {summary.undated > 0 && ` · ${undatedNote(summary.undated)}`}
         </p>

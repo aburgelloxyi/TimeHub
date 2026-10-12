@@ -185,10 +185,12 @@ export const KINDS = {
   review: "Review amend",
   content: "Mech / content amend",
   pdf: "New mech sheet",
-  fix: "Artist's reply",
+  fix: "Reply",
   question: "Question",
 };
 
+const SAYS_DONE = /\b(revised|amended|updated|fixed|adjusted|changed|tweaked|sorted|shifted|moved|swapped|nudged|reduced|increased|darkened|added|removed|matched|tried|rendered|re-?rendered)\b|\b(new|old)\s*:|for (your )?review|renders? (below|attached|here)|ready (for|to)/i;
+const ASKS_FOR = /please|can you|can we|could you|should|needs? to|\bstill\b|wrong|incorrect|missing|doesn.?t|isn.?t|too (big|small|high|low|close|tight|fast|slow)/i;
 const RENDER = /\/Renders\/[^\n]*\.mov|_V\d+(_(DOUBLE|TRIPLE|QUAD)_RES)?\.mov/i;
 
 function kindOf(comment, whole, maxVersion, byMotion) {
@@ -208,8 +210,10 @@ function kindOf(comment, whole, maxVersion, byMotion) {
   else if ((hasRender || /_Delivery|Masters?:/i.test(text)) && /\bx\s?\d+\b/i.test(whole) && !asks.test(whole)) kind = "handoff";
   else if (hasRender && said < 6 && !/amend|fix|please|should|needs?|wrong|incorrect|missing/i.test(whole)) kind = "handoff";
   else kind = "review";
-  // One of the Motion group naming deliverables is answering, not asking.
-  if (kind === "review" && byMotion) kind = "fix";
+  // Somebody in Motion naming deliverables is usually answering an amend, but
+  // the lead reviews too. It is a reply when it says what was DONE, or asks
+  // for nothing; a Motion member asking for a change is reviewing.
+  if (kind === "review" && byMotion && (SAYS_DONE.test(whole) || !ASKS_FOR.test(whole))) kind = "fix";
   if (kind === "review" && /\bmasv\b|uploaded to (ent|puma)|delivery report/i.test(whole) && !/amend|\bfix|please (move|change|nudge|darken|reduce|increase)/i.test(whole)) kind = "handoff";
   return kind;
 }
@@ -290,7 +294,8 @@ export function buildAmends({ jobs = [], subs = {}, comments = {}, people = {}, 
     .sort((a, b) => String(a.at).localeCompare(String(b.at)))
     .forEach((n) => {
       if (n.kind !== "review" && n.kind !== "content") return;
-      const k = `${n.jobId}\n${n.name}\n${n.text.replace(/\s+/g, " ").toLowerCase()}`;
+      // Per job, not per deliverable: a reply often quotes one note for several sizes.
+      const k = `${n.jobId}\n${n.text.replace(/\s+/g, " ").toLowerCase()}`;
       if (said[k] && said[k] !== n.who) n.kind = "fix";
       else if (!said[k]) said[k] = n.who;
     });

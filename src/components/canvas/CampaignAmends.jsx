@@ -3,7 +3,7 @@
 // What counts as an amend, and why some comments are left out, is in
 // lib/amends/amends.js.
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ExternalLink, Loader2, MessageSquareWarning, RefreshCw, Search, X } from "lucide-react";
+import { CornerDownRight, ExternalLink, Loader2, MessageSquareWarning, RefreshCw, Search, X } from "lucide-react";
 import { KINDS, THEMES } from "../../lib/amends/amends";
 import { fetchAmends, readStoredAmends, storedAmendsAreFresh } from "../../lib/amends/fetchAmends";
 import { reportError } from "../../lib/monitoring";
@@ -25,8 +25,12 @@ const THEME_HUE = {
   "Artwork / colour": 95,
 };
 const THEME_SHORT = Object.fromEntries(THEMES.map((t) => [t[0], t[1]]));
-// Notes shown before anybody touches a filter: what was asked for, not the replies.
-const DEFAULT_KINDS = { review: true, content: true, pdf: true, fix: false, question: false };
+// A reply is not a kind to filter by: it is threaded under the amend it
+// answers. The Kind row is what was ASKED.
+const ASKED = ["review", "content", "pdf", "question"];
+const DEFAULT_KINDS = { review: true, content: true, pdf: true, question: false };
+// The Person filter's value for "anybody in the Motion group".
+const MOTION_TEAM = "\u0000motion";
 
 const hueOf = (s) => {
   let h = 0;
@@ -95,6 +99,7 @@ export default function CampaignAmends({ campaign, cached = [], codes = [], onCl
   const [creative, setCreative] = useState("");
   const [kinds, setKinds] = useState(DEFAULT_KINDS);
   const [showPre, setShowPre] = useState(false);
+  const [showReplies, setShowReplies] = useState(true);
   const [who, setWho] = useState("");
   const [market, setMarket] = useState("");
   const [theme, setTheme] = useState("");
@@ -146,16 +151,19 @@ export default function CampaignAmends({ campaign, cached = [], codes = [], onCl
 
   // Each filter's counts are taken with that filter left out, so a chip says
   // what pressing it would show.
+  // With a person picked, everything they wrote is listed, replies included:
+  // that is the way to read what one of the Motion team said.
+  const byPicked = useCallback((n) => (who === MOTION_TEAM ? n.motion : n.who === who), [who]);
   const pass = useCallback(
     (n, skip) =>
       (skip === "pre" || showPre || !n.pre) &&
       (skip === "creative" || !creative || n.creative === creative) &&
-      (skip === "kind" || kinds[n.kind]) &&
-      (skip === "who" || !who || n.who === who) &&
+      (skip === "kind" || skip === "who" || (who ? n.kind === "fix" || kinds[n.kind] : kinds[n.kind])) &&
+      (skip === "who" || !who || byPicked(n)) &&
       (!market || n.market === market) &&
       (skip === "theme" || !theme || n.themes.indexOf(theme) !== -1) &&
       (!words.length || words.every((w) => `${n.text} ${n.name} ${n.who} ${n.job}`.toLowerCase().indexOf(w) !== -1)),
-    [showPre, creative, kinds, who, market, theme, words]
+    [showPre, creative, kinds, who, byPicked, market, theme, words]
   );
   const countBy = useCallback(
     (skip, keyOf) => {
@@ -169,6 +177,18 @@ export default function CampaignAmends({ campaign, cached = [], codes = [], onCl
   const creativeCount = useMemo(() => countBy("creative", (n) => n.creative), [countBy]);
   const kindCount = useMemo(() => countBy("kind", (n) => n.kind), [countBy]);
   const whoCount = useMemo(() => countBy("who", (n) => n.who), [countBy]);
+  const motionPeople = useMemo(() => new Set(notes.filter((n) => n.motion).map((n) => n.who)), [notes]);
+  const motionCount = useMemo(() => notes.filter((n) => n.motion && pass(n, "who")).length, [notes, pass]);
+  // The replies on each deliverable, to thread under what was asked.
+  const repliesFor = useMemo(() => {
+    const out = {};
+    notes.forEach((n) => {
+      if (n.kind !== "fix" || (n.pre && !showPre)) return;
+      const key = `${n.jobId}\n${n.name}`;
+      (out[key] = out[key] || []).push(n);
+    });
+    return out;
+  }, [notes, showPre]);
   const themeCount = useMemo(() => countBy("theme", (n) => n.themes), [countBy]);
   const preCount = useMemo(() => notes.filter((n) => n.pre && pass(n, "pre")).length, [notes, pass]);
   const markets = useMemo(() => [...new Set(notes.map((n) => n.market).filter(Boolean))].sort(), [notes]);
@@ -182,13 +202,18 @@ export default function CampaignAmends({ campaign, cached = [], codes = [], onCl
     });
     return Object.keys(byCreative)
       .map((name) => {
-        const deliverables = Object.values(byCreative[name])
-          .map((list) => list.slice().sort((a, b) => String(a.at).localeCompare(String(b.at))))
+        const deliverables = Object.keys(byCreative[name])
+          .map((key) => {
+            const asked = byCreative[name][key];
+            const replies = !who && showReplies ? repliesFor[key] || [] : [];
+            return asked.concat(replies.filter((r) => asked.indexOf(r) === -1)).sort((a, b) => String(a.at).localeCompare(String(b.at)));
+          })
           .sort((a, b) => b.length - a.length || a[0].name.localeCompare(b[0].name));
-        return { name, deliverables, count: deliverables.reduce((sum, d) => sum + d.length, 0) };
+        // Threaded replies are context, not notes: they are not counted.
+        return { name, deliverables, count: deliverables.reduce((sum, d) => sum + d.filter((n) => who || n.kind !== "fix").length, 0) };
       })
       .sort((a, b) => b.count - a.count);
-  }, [notes, pass]);
+  }, [notes, pass, who, showReplies, repliesFor]);
   const shown = groups.reduce((sum, g) => sum + g.count, 0);
   const shownDeliverables = groups.reduce((sum, g) => sum + g.deliverables.length, 0);
 
@@ -288,7 +313,7 @@ export default function CampaignAmends({ campaign, cached = [], codes = [], onCl
                 <div className="flex gap-3">
                   <span className={LABEL}>Kind</span>
                   <div className="flex flex-wrap gap-1.5">
-                    {Object.keys(KINDS).map((k) => (
+                    {ASKED.map((k) => (
                       <Chip key={k} on={kinds[k]} onClick={() => setKinds((prev) => ({ ...prev, [k]: !prev[k] }))} count={kindCount[k] || 0}>{KINDS[k]}</Chip>
                     ))}
                     <Chip on={showPre} onClick={() => setShowPre((v) => !v)} count={preCount}>Before Motion started</Chip>
@@ -298,10 +323,12 @@ export default function CampaignAmends({ campaign, cached = [], codes = [], onCl
                   <span className={LABEL}>Person</span>
                   <div className="flex flex-wrap gap-1.5">
                     <Chip on={!who} onClick={() => setWho("")}>Everyone</Chip>
+                    <Chip on={who === MOTION_TEAM} onClick={() => setWho(who === MOTION_TEAM ? "" : MOTION_TEAM)} count={motionCount}>Motion team</Chip>
                     {Object.keys(whoCount).sort((a, b) => whoCount[b] - whoCount[a]).map((w) => (
-                      <Chip key={w} on={who === w} onClick={() => setWho(w)} count={whoCount[w]}>
+                      <Chip key={w} on={who === w} onClick={() => setWho(who === w ? "" : w)} count={whoCount[w]}>
                         <Avatar name={w} />
                         {w}
+                        {motionPeople.has(w) && <span className={`text-[9px] font-black uppercase tracking-wider ${who === w ? "text-white/80" : "text-[#c2410d]"}`}>Motion</span>}
                       </Chip>
                     ))}
                   </div>
@@ -338,10 +365,26 @@ export default function CampaignAmends({ campaign, cached = [], codes = [], onCl
                 })}
               </div>
 
-              <p className="mt-5 text-xs font-semibold text-[#768994]">
-                {shown} {shown === 1 ? "note" : "notes"} on {shownDeliverables} {shownDeliverables === 1 ? "deliverable" : "deliverables"}
-                {stored.result.handoffs > 0 && ` · ${stored.result.handoffs} hand-off comments with nothing said are left out`}
-              </p>
+              <div className="mt-5 flex flex-wrap items-center justify-between gap-3">
+                <p className="text-xs font-semibold text-[#768994]">
+                  {shown} {shown === 1 ? "note" : "notes"} on {shownDeliverables} {shownDeliverables === 1 ? "deliverable" : "deliverables"}
+                  {stored.result.handoffs > 0 && ` · ${stored.result.handoffs} hand-off comments with nothing said are left out`}
+                </p>
+                {!who && (
+                  <button
+                    type="button"
+                    role="switch"
+                    aria-checked={showReplies}
+                    onClick={() => setShowReplies((v) => !v)}
+                    className="inline-flex items-center gap-2 text-xs font-bold text-[#122027] focus-visible:ring-2 focus-visible:ring-[#c2410d]/40 focus-visible:outline-none rounded-full"
+                  >
+                    <span className={`relative w-8 h-[18px] rounded-full transition-colors ${showReplies ? "bg-[#c2410d]" : "bg-slate-300"}`}>
+                      <span className={`absolute top-[2px] w-[14px] h-[14px] rounded-full bg-white shadow transition-[left] ${showReplies ? "left-[16px]" : "left-[2px]"}`} />
+                    </span>
+                    Motion’s replies
+                  </button>
+                )}
+              </div>
 
               {!shown && <p className="py-16 text-center text-sm font-bold text-[#768994]">Nothing matches.</p>}
 
@@ -384,7 +427,25 @@ export default function CampaignAmends({ campaign, cached = [], codes = [], onCl
                             )}
                           </div>
                           <p className="mt-1 text-[11px] font-mono text-[#768994] break-all">{first.name}</p>
-                          {list.map((n) => (
+                          {list.map((n) => (!who && n.kind === "fix" ? (
+                            <div key={n.id} className="mt-2 ml-5 flex gap-2 text-[#768994]">
+                              <CornerDownRight className="w-3.5 h-3.5 mt-0.5 shrink-0" />
+                              <div className="min-w-0">
+                                <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[11px]">
+                                  <span className="inline-flex items-center gap-1.5 font-bold text-[#122027]">
+                                    <Avatar name={n.who} />
+                                    {n.who}
+                                  </span>
+                                  <span>replied {day(n.at)}</span>
+                                  {n.version > 0 && <span>with V{String(n.version).padStart(2, "0")}</span>}
+                                </div>
+                                {/* A reply that only quotes the amend back says nothing new. */}
+                                {!list.some((o) => o !== n && o.kind !== "fix" && o.text.trim() === n.text.trim()) && (
+                                  <p className="mt-0.5 text-[13px] whitespace-pre-wrap break-words">{n.text}</p>
+                                )}
+                              </div>
+                            </div>
+                          ) : (
                             <div key={n.id} className="mt-3 pt-3 border-t border-[#dce4ec]">
                               <div className="flex flex-wrap items-center gap-x-2.5 gap-y-1 text-[11px] text-[#768994]">
                                 <span className={`font-black uppercase tracking-wider ${KIND_TEXT[n.kind]}`}>{KINDS[n.kind]}</span>
@@ -411,7 +472,7 @@ export default function CampaignAmends({ campaign, cached = [], codes = [], onCl
                                 </div>
                               )}
                             </div>
-                          ))}
+                          )))}
                         </article>
                       );
                     })}

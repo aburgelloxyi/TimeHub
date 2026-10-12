@@ -39,7 +39,7 @@ import {
   Copy,
   Plus,
   Layers,
-  Database,
+  Settings,
 } from "lucide-react";
 import {
   TERRITORIES,
@@ -77,6 +77,22 @@ import PullDefaultsPopover from "./legacy/PullDefaultsPopover";
 import CommentTrailModal from "./legacy/CommentTrailModal";
 import ReportProblemModal from "./legacy/ReportProblemModal";
 import PullTimesButton from "./legacy/PullTimesButton";
+import { motion } from "framer-motion";
+import { PAGES } from "../lib/departments";
+
+// Bottom-bar tools that are an icon until hovered or focused. The label's
+// width is animated, so the button grows instead of a tooltip appearing; on a
+// touch screen it stays an icon and aria-label names it.
+const quietToolClass =
+  "group/tool flex items-center p-3 bg-white hover:bg-slate-50 text-[#122027] text-sm font-bold border border-[#dce4ec] rounded-xl shadow-sm transition-[background-color,transform] active:scale-95 focus:outline-none focus-visible:ring-4 focus-visible:ring-[#12a0e1]/30";
+// The tongue opening and closing: a spring to the real width of whatever is
+// showing, soft enough to settle without a visible bounce.
+const TONGUE_SPRING = { type: "spring", stiffness: 210, damping: 26, mass: 0.9 };
+// Height as well as width: the cog's sphere is taller than the row of controls.
+const tongueFold = (shown) => ({ width: shown ? "auto" : 0, height: shown ? "auto" : 0, opacity: shown ? 1 : 0 });
+
+const quietToolLabelClass =
+  "max-w-0 overflow-hidden whitespace-nowrap opacity-0 transition-[max-width,opacity,margin] duration-500 ease-in-out [@media(hover:hover)]:group-hover/tool:max-w-[10rem] [@media(hover:hover)]:group-hover/tool:opacity-100 [@media(hover:hover)]:group-hover/tool:ml-2 group-focus-visible/tool:max-w-[10rem] group-focus-visible/tool:opacity-100 group-focus-visible/tool:ml-2";
 import { HoverLabel } from "./shared/FloatingCard";
 import { Rolling, Tick, prefersReducedMotion } from "./shared/motion";
 import { snapshotRows, glideRows, sweepRows, nudge, picturesOf } from "./legacy/rowMotion";
@@ -2308,6 +2324,25 @@ export default function LegacyTimesheet({ wrikeData, isAdmin = false }) {
   // for arriving on a day that happens to be locked already.
   const lockPressed = useRef(false);
   const lockIconRef = useRef(null);
+  // The tongue is open while the mouse is over it, while keyboard focus is
+  // inside it, after a tap on its cog (until a tap elsewhere), and while its
+  // pull defaults panel is up.
+  const [tongueHover, setTongueHover] = useState(false);
+  const [tongueFocus, setTongueFocus] = useState(false);
+  const [tonguePinned, setTonguePinned] = useState(false);
+  const [pullDefaultsOpen, setPullDefaultsOpen] = useState(false);
+  const tongueOpen = tongueHover || tongueFocus || tonguePinned || pullDefaultsOpen;
+  const tongueRef = useRef(null);
+  const tongueLeaveTimer = useRef(null);
+  useEffect(() => () => clearTimeout(tongueLeaveTimer.current), []);
+  useEffect(() => {
+    if (!tonguePinned) return;
+    const onDown = (e) => {
+      if (!tongueRef.current?.contains(e.target)) setTonguePinned(false);
+    };
+    document.addEventListener("mousedown", onDown);
+    return () => document.removeEventListener("mousedown", onDown);
+  }, [tonguePinned]);
   const toggleFreeze = () => {
     lockPressed.current = true;
     nudge(lockIconRef.current);
@@ -3287,7 +3322,7 @@ export default function LegacyTimesheet({ wrikeData, isAdmin = false }) {
       )}
 
       {/* --- HEADER --- */}
-      <PageHeader pageId="legacy" icon={Database} title="Weekly Timesheet" subtitle={weekDateRange}>
+      <PageHeader pageId="legacy" icon={PAGES.legacy.icon} title="Weekly Timesheet" subtitle={weekDateRange}>
         <div className="flex items-center gap-1 text-[13px] text-white/85 font-medium">
           {/* Waves on arrival and again when pointed at. Still with fun mode off. */}
           <span className={`text-base leading-none shrink-0 ${funMode ? "hand-wave" : ""}`} aria-hidden="true">👋</span>
@@ -4046,75 +4081,133 @@ export default function LegacyTimesheet({ wrikeData, isAdmin = false }) {
           </div>
         )}
 
-        {/* Bottom-centre "tongue" — Consolidated + Lock floating above the
-            action bar, so the table's view controls cost no vertical space. */}
-        <div className={`relative z-10 -mb-4 flex justify-center pointer-events-none ${selectedCount > 0 ? "hidden" : ""}`}>
-          <div className="pointer-events-auto flex flex-wrap justify-center items-center gap-1 max-w-full bg-white border border-[#dce4ec] rounded-3xl sm:rounded-full shadow-md px-1.5 py-1">
-            <HoverLabel label="One row per job, with its markets and categories nested underneath">
-              <button
-                onClick={() => switchConsolidated()}
-                className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-bold transition-colors ${
-                  consolidatedView ? "text-[#12a0e1]" : "text-[#768994] hover:text-[#122027]"
-                }`}
-              >
-                <Layers className="w-3.5 h-3.5" />
-                Consolidated
-                <span className={`ml-0.5 text-[10px] font-black px-1.5 py-0.5 rounded ${consolidatedView ? "bg-[#12a0e1] text-white" : "bg-slate-100 text-slate-600"}`}>
-                  {consolidatedView ? "ON" : "OFF"}
-                </span>
-              </button>
-            </HoverLabel>
-            <span className="w-px h-4 bg-[#dce4ec] shrink-0" />
-            <HoverLabel label={isDayFrozen ? "Unlock day to allow edits" : "Lock this day to prevent edits"}>
-              <button
-                onClick={toggleFreeze}
-                className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-bold transition-colors ${
-                  isDayFrozen ? "text-amber-600" : "text-[#768994] hover:text-[#122027]"
-                }`}
-              >
-                <Lock ref={lockIconRef} className="w-3.5 h-3.5" />
-                {isDayFrozen ? `${activeDay} locked` : `Lock ${activeDay}`}
-              </button>
-            </HoverLabel>
-            <span className="w-px h-4 bg-[#dce4ec] shrink-0" />
-            <PullDefaultsPopover
-              defaultCategory={defaultCategory}
-              groupMultiCountry={groupMultiCountry}
-              setPrefs={setPrefs}
-            />
+        {/* Bottom-centre "tongue": the table's view controls, floating above
+            the action bar so they cost no vertical space. A single bubble at
+            rest that opens out to its controls (see tongueOpen for when). */}
+        <div className={`relative z-10 -mb-6 flex justify-center pointer-events-none ${selectedCount > 0 ? "hidden" : ""}`}>
+          <div
+            ref={tongueRef}
+            // Mouse only: a touch fires pointerenter too, and would open the
+            // tongue with nothing to close it. Leaving waits a moment, so a
+            // pointer that clips the edge on its way past doesn't flap it.
+            onPointerEnter={(e) => {
+              if (e.pointerType !== "mouse") return;
+              clearTimeout(tongueLeaveTimer.current);
+              setTongueHover(true);
+            }}
+            onPointerLeave={() => {
+              clearTimeout(tongueLeaveTimer.current);
+              tongueLeaveTimer.current = setTimeout(() => setTongueHover(false), 180);
+            }}
+            // Keyboard focus only, so a mouse click on a control doesn't hold
+            // it open after the pointer has gone.
+            onFocus={(e) => setTongueFocus(e.target.matches(":focus-visible"))}
+            onBlur={(e) => {
+              if (!e.currentTarget.contains(e.relatedTarget)) setTongueFocus(false);
+            }}
+            // As tall as the cog's sphere whatever is showing. The row of
+            // controls is shorter, and if this shrank to fit it the pointer
+            // would fall outside at the top or bottom edge, close it, and be
+            // back inside the sphere: open, close, open. A fixed height also
+            // keeps the table and the action bar still while it moves.
+            className="pointer-events-auto flex items-center justify-center h-12 max-w-full"
+          >
+            <div className="flex justify-center items-center max-w-full bg-white border border-[#dce4ec] rounded-3xl sm:rounded-full shadow-md p-1">
+              {/* The cog folds away as the controls open, so it isn't left
+                  beside them with nothing to do. */}
+              <motion.div initial={false} animate={tongueFold(!tongueOpen)} transition={TONGUE_SPRING} className="overflow-hidden shrink-0">
+                <button
+                  onClick={() => setTonguePinned(true)}
+                  aria-label="Table settings"
+                  aria-expanded={tongueOpen}
+                  tabIndex={tongueOpen ? -1 : 0}
+                  // Tinted when something is switched on that changes what the
+                  // table shows or what a pull produces: a locked day most of all.
+                  className={`flex items-center justify-center w-10 h-10 rounded-full hover:text-[#122027] focus:outline-none ${
+                    isDayFrozen ? "text-amber-600"
+                    : consolidatedView || defaultCategory || groupMultiCountry ? "text-[#12a0e1]"
+                    : "text-[#768994]"
+                  }`}
+                >
+                  <Settings className="w-5 h-5 shrink-0" />
+                </button>
+              </motion.div>
+              <motion.div initial={false} animate={tongueFold(tongueOpen)} transition={TONGUE_SPRING} className="overflow-hidden min-w-0">
+                <div className="flex flex-wrap sm:flex-nowrap justify-center items-center gap-1 whitespace-nowrap">
+                  <HoverLabel label="One row per job, with its markets and categories nested underneath">
+                    <button
+                      onClick={() => switchConsolidated()}
+                      className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-bold transition-colors ${
+                        consolidatedView ? "text-[#12a0e1]" : "text-[#768994] hover:text-[#122027]"
+                      }`}
+                    >
+                      <Layers className="w-3.5 h-3.5" />
+                      Consolidated
+                      <span className={`ml-0.5 text-[10px] font-black px-1.5 py-0.5 rounded ${consolidatedView ? "bg-[#12a0e1] text-white" : "bg-slate-100 text-slate-600"}`}>
+                        {consolidatedView ? "ON" : "OFF"}
+                      </span>
+                    </button>
+                  </HoverLabel>
+                  <span className="w-px h-4 bg-[#dce4ec] shrink-0" />
+                  <HoverLabel label={isDayFrozen ? "Unlock day to allow edits" : "Lock this day to prevent edits"}>
+                    <button
+                      onClick={toggleFreeze}
+                      className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-bold transition-colors ${
+                        isDayFrozen ? "text-amber-600" : "text-[#768994] hover:text-[#122027]"
+                      }`}
+                    >
+                      <Lock ref={lockIconRef} className="w-3.5 h-3.5" />
+                      {isDayFrozen ? `${activeDay} locked` : `Lock ${activeDay}`}
+                    </button>
+                  </HoverLabel>
+                  <span className="w-px h-4 bg-[#dce4ec] shrink-0" />
+                  <PullDefaultsPopover
+                    defaultCategory={defaultCategory}
+                    groupMultiCountry={groupMultiCountry}
+                    setPrefs={setPrefs}
+                    onOpenChange={setPullDefaultsOpen}
+                  />
+                </div>
+              </motion.div>
+            </div>
           </div>
         </div>
 
-        {/* Bottom Action Bar. The tongue above hangs 16px into it, so below
-            2xl, where the buttons can reach the centre, the extra top padding
-            keeps them clear of it. */}
-        <div className="p-4 pt-7 2xl:pt-4 border-t border-[#dce4ec] bg-slate-50 rounded-b-2xl flex flex-wrap gap-3 justify-between items-center">
+        {/* Bottom Action Bar. The tongue sits centred on its top edge: 24px
+            into it as the sphere, 18px opened out. Opened out it reaches over
+            the right-hand buttons at any width, so the top padding always
+            clears that; below 1760px the buttons reach under the sphere too,
+            and it clears the sphere. */}
+        <div className="p-4 pt-10 min-[1760px]:pt-6 border-t border-[#dce4ec] bg-slate-50 rounded-b-2xl flex flex-wrap gap-3 justify-between items-center">
+          {/* The two occasional tools: icons at rest, opening out to their
+              names on hover or keyboard focus. */}
           <div className="flex gap-3 flex-wrap items-center">
-            <HoverLabel label="Wrike Timesheets">
-              <button
-                onClick={handleOpenWrikeModal}
-                aria-label="Wrike Timesheets"
-                className="flex items-center justify-center p-3 bg-white hover:bg-slate-50 text-[#122027] border border-[#dce4ec] rounded-xl shadow-sm transition-[background-color,transform] active:scale-95"
-              >
-                <LayoutList className="w-4 h-4" />
-              </button>
-            </HoverLabel>
-            <HoverLabel label="Report a problem">
-              <button
-                onClick={() => {
-                  if (!wrikeUserId) {
-                    showToast("Please connect Wrike in Profile → Settings first.");
-                    return;
-                  }
-                  setShowReportProblem(true);
-                }}
-                aria-label="Report a problem"
-                className="flex items-center justify-center p-3 bg-white hover:bg-slate-50 text-[#122027] border border-[#dce4ec] rounded-xl shadow-sm transition-[background-color,transform] active:scale-95"
-              >
-                <MessageSquareWarning className="w-4 h-4" />
-              </button>
-            </HoverLabel>
-            <span className="w-px h-6 bg-[#dce4ec] shrink-0" />
+            <button
+              onClick={handleOpenWrikeModal}
+              aria-label="Wrike Timesheets"
+              className={quietToolClass}
+            >
+              <LayoutList className="w-4 h-4 shrink-0" />
+              <span className={quietToolLabelClass}>Wrike Timesheets</span>
+            </button>
+            <button
+              onClick={() => {
+                if (!wrikeUserId) {
+                  showToast("Please connect Wrike in Profile → Settings first.");
+                  return;
+                }
+                setShowReportProblem(true);
+              }}
+              aria-label="Report a problem"
+              className={quietToolClass}
+            >
+              <MessageSquareWarning className="w-4 h-4 shrink-0" />
+              <span className={quietToolLabelClass}>Report a problem</span>
+            </button>
+          </div>
+          {/* Left to right in the order they're used: get rows in (from
+              comments, or from Wrike's own times), then copy them out. */}
+          <div className="flex gap-3 flex-wrap">
             <HoverLabel label="Suggests rows from your Wrike comments">
               <button
                 onClick={() => {
@@ -4130,8 +4223,6 @@ export default function LegacyTimesheet({ wrikeData, isAdmin = false }) {
                 Where Did My Day Go?
               </button>
             </HoverLabel>
-          </div>
-          <div className="flex gap-3 flex-wrap">
             {/* isAdmin stays in the OR so the admin keeps the date picker
                 without waiting on (or depending on) the profile read landing. */}
             <PullTimesButton

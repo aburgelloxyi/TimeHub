@@ -24,8 +24,11 @@ export default function PullDefaultsPopover({
   defaultCategory,
   groupMultiCountry,
   setPrefs,
+  onOpenChange,
 }) {
   const [open, setOpen] = useState(false);
+  // The tongue stays opened out while this panel is up; see LegacyTimesheets.
+  useEffect(() => { onOpenChange?.(open); }, [open, onOpenChange]);
   const [search, setSearch] = useState("");
   const wrapRef = useRef(null);
   const panelRef = useRef(null);

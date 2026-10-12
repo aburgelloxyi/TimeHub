@@ -103,6 +103,13 @@ export function parseAmends(text) {
   return { byKey, general };
 }
 
+// A motion job is one with a motion deliverable under it: a subtask named with
+// a size AND a length ("…_1080x1920px_10s_TR"). Its own title says nothing
+// reliable: one film's are "SF Motion Outdoor CO 4", another's
+// "FID - TR - DOOH - Batch 1", and statics carry a size but never a length.
+export const isMotionJob = (job, subs) =>
+  (job.subTaskIds || []).some((id) => subs[id] && looksDeliverable(String(subs[id].title || "").replace(/\.[A-Za-z0-9]{2,4}$/, "")));
+
 // The CREATIVE is the token left of the artwork type (`SF_INTL_Trio_DOOH_…`
 // is Trio). A legacy name spends that slot on `DGTL` and names none.
 export function creativeOfName(name) {

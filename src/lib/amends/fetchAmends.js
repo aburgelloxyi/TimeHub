@@ -1,9 +1,9 @@
 // Reads a campaign's motion jobs and every comment on them from Wrike, and
 // hands the lot to buildAmends. One call per job for its comments, so a
-// campaign is around a hundred calls: it runs when somebody opens Amends, and
+// campaign is a hundred calls or so: it runs when somebody opens Amends, and
 // the result is kept in this browser until they refresh it.
 import { fetchRetrying } from "../fetchPool";
-import { buildAmends } from "./amends";
+import { buildAmends, isMotionJob } from "./amends";
 
 const FIELDS = encodeURIComponent('["subTaskIds"]');
 const KEEP_MS = 6 * 60 * 60 * 1000;
@@ -15,44 +15,39 @@ async function wrike(path, signal) {
   return (await res.json()).data || [];
 }
 
-const isMotionJob = (t) => /\bmotion\b/i.test(t.title || "") && (t.subTaskIds || []).length > 0;
-
-// "SF Motion Outdoor CO 4" -> "SF Motion": what every motion job of the
-// campaign starts with, so a title search finds the ones the cache is too
-// young to hold.
-function jobPrefix(titles) {
-  const count = {};
-  titles.forEach((t) => {
-    const m = /^(.*?\bmotion)\b/i.exec(t);
-    if (m) count[m[1].trim()] = (count[m[1].trim()] || 0) + 1;
-  });
-  return Object.keys(count).sort((a, b) => count[b] - count[a])[0] || "";
-}
+const hasSubtasks = (t) => (t.subTaskIds || []).length > 0;
 
 /**
- * The campaign's motion jobs: the ones the shared cache files under this film,
- * plus any other job whose title starts the same way. `codes` are the film's
- * codes, tried when the cache holds none of its motion jobs.
+ * Every job that could be one of the campaign's: the ones the shared cache
+ * files under this film, plus any task in Wrike whose title starts with one
+ * of the film's codes ("FID - TR - DOOH - Batch 1"), which reaches the jobs
+ * the cache is too young to hold. Which of them are MOTION jobs is decided
+ * afterwards, from their subtasks.
  */
-async function findJobs({ title, cached, codes, signal }) {
+async function findCandidates({ title, cached, codes, signal }) {
   const byId = {};
   // The Canvas tidies a film's name into a campaign title (underscores, case).
   const same = (a) => String(a || "").replace(/_/g, " ").trim().toLowerCase() === title.trim().toLowerCase();
-  cached.filter((t) => same(t.projectName) && isMotionJob(t)).forEach((t) => { byId[t.id] = t; });
-  const prefixes = [jobPrefix(Object.values(byId).map((t) => t.title))].filter(Boolean);
-  if (!prefixes.length) codes.forEach((c) => prefixes.push(`${c} Motion`));
-  for (const prefix of prefixes) {
+  cached.filter((t) => same(t.projectName) && hasSubtasks(t)).forEach((t) => { byId[t.id] = t; });
+  // A code the film's own cached jobs lead with counts too: not every film is in the code list.
+  const lead = {};
+  Object.values(byId).forEach((t) => {
+    const m = /^([A-Z][A-Z0-9]{1,6})\b/.exec(t.title || "");
+    if (m) lead[m[1]] = (lead[m[1]] || 0) + 1;
+  });
+  const top = Object.keys(lead).sort((a, b) => lead[b] - lead[a])[0];
+  const all = [...new Set([...codes, ...(top && lead[top] >= 3 ? [top] : [])].map((c) => c.toUpperCase()))];
+  for (const code of all) {
+    const starts = new RegExp(`^${code}(?![A-Za-z0-9])`, "i");
     let token = "";
     do {
       const res = await fetchRetrying(
-        `/api/wrike/tasks?title=${encodeURIComponent(prefix)}&pageSize=1000&fields=${FIELDS}${token ? `&nextPageToken=${token}` : ""}`,
+        `/api/wrike/tasks?title=${encodeURIComponent(code + " ")}&pageSize=1000&fields=${FIELDS}${token ? `&nextPageToken=${token}` : ""}`,
         { signal }
       );
       if (!res.ok) break;
       const page = await res.json();
-      (page.data || [])
-        .filter((t) => String(t.title || "").toLowerCase().indexOf(prefix.toLowerCase()) === 0 && isMotionJob(t))
-        .forEach((t) => { if (!byId[t.id]) byId[t.id] = t; });
+      (page.data || []).filter((t) => starts.test(t.title || "") && hasSubtasks(t)).forEach((t) => { if (!byId[t.id]) byId[t.id] = t; });
       token = page.nextPageToken || "";
     } while (token);
   }
@@ -72,15 +67,18 @@ export function readStoredAmends(campaignId) {
   }
 }
 
-export const storedAmendsAreFresh = (stored) => !!stored && Date.now() - new Date(stored.at).getTime() < KEEP_MS;
+// A read that found no jobs is never kept as the answer: it is asked again.
+export const storedAmendsAreFresh = (stored) =>
+  !!stored && stored.result.jobs > 0 && Date.now() - new Date(stored.at).getTime() < KEEP_MS;
 
 /**
  * `onProgress(done, total)` counts jobs read. Throws when Wrike can't be
  * read; a campaign with no motion jobs resolves with `jobs: 0`.
  */
 export async function fetchAmends({ campaignId, title, cached = [], codes = [], signal, onProgress }) {
-  const jobs = await findJobs({ title, cached, codes, signal });
-  if (!jobs.length) return { at: new Date().toISOString(), result: { notes: [], handoffs: 0, jobs: 0 } };
+  const candidates = await findCandidates({ title, cached, codes, signal });
+  const none = { at: new Date().toISOString(), result: { notes: [], handoffs: 0, jobs: 0 } };
+  if (!candidates.length) return none;
 
   const [contacts, workflows] = await Promise.all([wrike("/contacts", signal), wrike("/workflows", signal)]);
   const people = {};
@@ -92,13 +90,15 @@ export async function fetchAmends({ campaignId, title, cached = [], codes = [], 
   const statusName = {};
   workflows.forEach((w) => (w.customStatuses || []).forEach((s) => { statusName[s.id] = s.name; }));
 
-  const subIds = jobs.reduce((all, j) => all.concat(j.subTaskIds || []), []);
+  const subIds = candidates.reduce((all, j) => all.concat(j.subTaskIds || []), []);
   const subs = {};
   for (let i = 0; i < subIds.length; i += 100) {
     (await wrike(`/tasks/${subIds.slice(i, i + 100).join(",")}`, signal)).forEach((t) => {
       subs[t.id] = { title: t.title, statusName: statusName[t.customStatusId] || t.status };
     });
   }
+  const jobs = candidates.filter((j) => isMotionJob(j, subs));
+  if (!jobs.length) return none;
 
   const comments = {};
   let done = 0;

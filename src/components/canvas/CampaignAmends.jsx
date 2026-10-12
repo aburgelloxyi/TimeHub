@@ -253,7 +253,7 @@ export default function CampaignAmends({ campaign, cached = [], codes = [], onCl
               </p>
               {!stored.result.jobs && (
                 <p className="text-xs text-[#768994] max-w-md">
-                  Jobs are found by the film they are filed under and a title containing “Motion”.
+                  A motion job is one filed under this film, or titled with its code, that has a deliverable with a size and a length under it.
                 </p>
               )}
             </div>

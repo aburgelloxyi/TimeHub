@@ -9,6 +9,7 @@ import { formatDay, undatedNote, pillClass, STATUS_CLASS, STATUS_LABEL, URGENCY_
 // confirmed and what's due without opening a tab per country.
 
 const FILTERS = [
+  { id: "requested", label: "Request received", test: (m) => m.status === "requested", on: "bg-sky-600 text-white border-sky-600" },
   { id: "confirmed", label: "Confirmed", test: (m) => m.status === "confirmed", on: "bg-[#1cc1a5] text-white border-[#1cc1a5]" },
   { id: "pending", label: "Pending", test: (m) => m.status === "pending", on: "bg-amber-500 text-white border-amber-500" },
   { id: "unconfirmed", label: "Unconfirmed", test: (m) => m.status === "unconfirmed", on: "bg-violet-600 text-white border-violet-600" },
@@ -16,7 +17,7 @@ const FILTERS = [
   { id: "notStarted", label: "Not started", test: (m) => m.status === "notStarted", on: "bg-slate-600 text-white border-slate-600" },
 ];
 
-const STATUS_ORDER = { pending: 0, unconfirmed: 1, confirmed: 2, notStarted: 3, unreadable: 4 };
+const STATUS_ORDER = { requested: 0, pending: 1, unconfirmed: 2, confirmed: 3, notStarted: 4, unreadable: 5 };
 const COMPARE = {
   name: (a, b) => a.name.localeCompare(b.name),
   status: (a, b) => STATUS_ORDER[a.status] - STATUS_ORDER[b.status] || a.name.localeCompare(b.name),
@@ -24,7 +25,7 @@ const COMPARE = {
   deadline: (a, b) => (a.nextDeadline || "9999").localeCompare(b.nextDeadline || "9999"),
 };
 
-const GRID = "grid grid-cols-[minmax(0,1.4fr)_120px_minmax(0,1fr)_120px_90px_90px_90px_20px] gap-4 items-center px-5";
+const GRID = "grid grid-cols-[minmax(0,1.4fr)_120px_minmax(0,1fr)_120px_90px_90px_20px] gap-4 items-center px-5";
 
 function MarketName({ name, undated = 0 }) {
   return (
@@ -83,7 +84,7 @@ export default function MarketList({ file, today, wrikeIndex, onOpen, arriving =
   const active = rows.filter((m) => m.status !== "notStarted");
   const idle = rows.filter((m) => m.status === "notStarted");
 
-  const counts = { confirmed: totals.confirmed, pending: totals.pending, unconfirmed: totals.unconfirmed, due: totals.due, notStarted: totals.notStarted };
+  const counts = { requested: totals.requested, confirmed: totals.confirmed, pending: totals.pending, unconfirmed: totals.unconfirmed, due: totals.due, notStarted: totals.notStarted };
 
   return (
     <div className="space-y-4">
@@ -113,7 +114,6 @@ export default function MarketList({ file, today, wrikeIndex, onOpen, arriving =
           <span>Orders confirmed</span>
           <SortHeader id="deadline" sort={sort} onSort={onSort}>Next deadline</SortHeader>
           <span>Media ok</span>
-          <span title="Orders ticked in the sheet's XYi Received column.">XYi received</span>
           <span title="Orders whose task name matches a Wrike task TimeHub has loaded. A task it hasn't loaded doesn't show.">In Wrike</span>
           <span />
         </div>}
@@ -128,7 +128,7 @@ export default function MarketList({ file, today, wrikeIndex, onOpen, arriving =
               <div key={m.name} className={`${GRID} py-3 border-b border-slate-100 last:border-b-0 text-sm ${arriving ? "list-row-in" : ""}`}>
                 <MarketName name={m.name} />
                 <span><span className={`${pillClass} ${STATUS_CLASS.unreadable}`}>{STATUS_LABEL.unreadable}</span></span>
-                <span className="col-span-6 text-[#768994] truncate">{m.unreadable}</span>
+                <span className="col-span-5 text-[#768994] truncate">{m.unreadable}</span>
               </div>
             );
           }
@@ -154,9 +154,6 @@ export default function MarketList({ file, today, wrikeIndex, onOpen, arriving =
               </span>
               <span className={`tabular-nums ${m.total ? "text-[#122027]" : "text-[#b6c3cc]"}`}>
                 {m.total ? `${m.mediaApproved} of ${m.total}` : "—"}
-              </span>
-              <span className={`tabular-nums ${m.received ? "text-[#122027]" : "text-[#b6c3cc]"}`}>
-                {m.received != null && m.total ? `${m.received} of ${m.total}` : "—"}
               </span>
               <span className={`tabular-nums ${inWrike.get(m.name) ? "text-[#122027]" : "text-[#b6c3cc]"}`}>
                 {inWrike.get(m.name) ? `${inWrike.get(m.name)} of ${m.total}` : "—"}

@@ -40,6 +40,7 @@ export function loadedAgo(loadedAt, now = new Date()) {
 export const STATUS_LABEL = {
   confirmed: "Confirmed",
   pending: "Pending",
+  requested: "Request received",
   unanswered: "Unanswered",
   unconfirmed: "Unconfirmed",
   notStarted: "Not started",
@@ -49,6 +50,7 @@ export const STATUS_LABEL = {
 export const STATUS_CLASS = {
   confirmed: "bg-emerald-100 text-emerald-700",
   pending: "bg-amber-100 text-amber-800",
+  requested: "bg-sky-100 text-sky-700",
   unanswered: "bg-slate-100 text-slate-500",
   unconfirmed: "bg-violet-100 text-violet-700",
   notStarted: "bg-slate-100 text-slate-500",

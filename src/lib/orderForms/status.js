@@ -9,8 +9,7 @@ const addDays = (iso, days) => {
   return new Date(Date.UTC(y, m - 1, d + days)).toISOString().slice(0, 10);
 };
 
-// A confirmed order is done as far as the market is concerned, so only the
-// others can be late.
+// A confirmed order is settled, so only the others can be late.
 export function orderUrgency(order, todayIso) {
   if (order.status === "confirmed" || !order.deliveryDeadline) return null;
   if (order.deliveryDeadline < todayIso) return "overdue";
@@ -28,16 +27,21 @@ export function marketSummary(market, todayIso) {
   const confirmed = count("confirmed");
   const pending = count("pending");
   const unanswered = count("unanswered");
+  const requested = count("requested");
 
   let status;
   if (market.unreadable) status = "unreadable";
   else if (orders.length === 0) status = "notStarted";
+  // Confirmed means all of them.
+  else if (confirmed === orders.length) status = "confirmed";
+  // Requests are in that XYi hasn't ticked as received yet.
+  else if (requested > 0) status = "requested";
   // Orders are in but the confirmation column was never answered: the market
   // has done the work, and a PM needs to chase the answer.
   else if (confirmed + pending === 0) status = "unconfirmed";
-  // Confirmed means all of them. Some confirmed and some unanswered is still
-  // open, the same as an order marked pending.
-  else status = confirmed === orders.length ? "confirmed" : "pending";
+  // Some confirmed and some unanswered is still open, the same as an order
+  // marked pending.
+  else status = "pending";
 
   const urgencies = orders.map((o) => orderUrgency(o, todayIso));
   const urgency = urgencies.includes("overdue") ? "overdue" : urgencies.includes("dueSoon") ? "dueSoon" : null;
@@ -52,10 +56,9 @@ export function marketSummary(market, todayIso) {
     confirmed,
     pending,
     unanswered,
+    requested,
     undated: market.undated || 0,
     mediaApproved: orders.filter((o) => isApproved(o.mediaApproved)).length,
-    // null when the form has no XYi Received column, or was loaded before it was read.
-    received: orders.some((o) => o.received != null) ? orders.filter((o) => o.received).length : null,
     nextDeadline: earliest(open) || earliest(orders),
     urgency,
   };
@@ -68,6 +71,7 @@ export function fileTotals(file, todayIso) {
     markets: summaries.length,
     orders: summaries.reduce((n, m) => n + m.total, 0),
     confirmed: count((m) => m.status === "confirmed"),
+    requested: count((m) => m.status === "requested"),
     pending: count((m) => m.status === "pending"),
     unconfirmed: count((m) => m.status === "unconfirmed"),
     due: count((m) => m.urgency),
@@ -75,13 +79,14 @@ export function fileTotals(file, todayIso) {
   };
 }
 
-// The order a PM needs to read them in: what's late or nearly due, then what's
-// still open or unanswered, then what's settled, then markets that haven't begun.
+// The order a PM needs to read them in: what's late or nearly due, then
+// requests waiting on XYi, then what's still open or unanswered, then what's
+// settled, then markets that haven't begun.
 const rank = (m) => {
   if (m.status === "unreadable") return 6;
   if (m.urgency === "overdue") return 0;
   if (m.urgency === "dueSoon") return 1;
-  return { pending: 2, unconfirmed: 3, confirmed: 4, notStarted: 5 }[m.status];
+  return { requested: 2, pending: 2.5, unconfirmed: 3, confirmed: 4, notStarted: 5 }[m.status];
 };
 
 export function sortMarkets(summaries) {

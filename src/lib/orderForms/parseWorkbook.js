@@ -69,11 +69,19 @@ export function toDeadline(value) {
   return uk ? `${uk[3]}-${pad(uk[2])}-${pad(uk[1])}` : "";
 }
 
-export function orderStatus(confirmedCell) {
+// Where an order has got to. `received` is the form's XYi Received tick box,
+// or null on a form without one.
+//
+// With the tick box, the order is XYi's to call: ticked is confirmed, and
+// until then it is a request that has come in, unless the market itself has
+// marked the row pending (not ready to be actioned). Without it, the market's
+// own answer is all there is to go on.
+export function orderStatus(confirmedCell, received = null) {
   const v = norm(cleanCell(confirmedCell));
+  const pending = v.startsWith("pending") || v === "n" || v === "no";
+  if (received != null) return received ? "confirmed" : pending ? "pending" : "requested";
   if (v.startsWith("confirmed") || v === "y" || v === "yes") return "confirmed";
-  if (v.startsWith("pending") || v === "n" || v === "no") return "pending";
-  return "unanswered";
+  return pending ? "pending" : "unanswered";
 }
 
 export const isMarketTab = (name) => !name.startsWith("_") && name !== "AA_Test_Market";
@@ -191,9 +199,11 @@ function readOrder(row, rowNumber, cols, xyiCols) {
   }
   // A tick box: true once XYi has the order, null on a form with no such column.
   order.received = "received" in cols ? /^(true|y|yes)$/.test(norm(order.received)) : null;
-  order.status = orderStatus(order.confirmed);
+  order.status = orderStatus(order.confirmed, order.received);
   if (!order.deliveryDeadline) {
-    return order.status !== "unanswered" || MARKET_TYPED.some((f) => order[f]) ? "undated" : null;
+    // The market's own answer, not the status: an untouched template row has
+    // an empty tick box too, and that isn't someone starting an order.
+    return orderStatus(order.confirmed) !== "unanswered" || MARKET_TYPED.some((f) => order[f]) ? "undated" : null;
   }
 
   order.xyi = {};

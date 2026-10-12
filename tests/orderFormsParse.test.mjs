@@ -68,6 +68,9 @@ check("status: Pending", orderStatus("Pending - awaiting media"), "pending");
 check("status: No", orderStatus("No"), "pending");
 check("status: placeholder", orderStatus("Please Update"), "unanswered");
 check("status: empty", orderStatus(""), "unanswered");
+check("status: XYi's tick confirms, whatever the market answered", [orderStatus("", true), orderStatus("Pending", true)], ["confirmed", "confirmed"]);
+check("status: not ticked yet is a request received", [orderStatus("Confirmed", false), orderStatus("", false)], ["requested", "requested"]);
+check("status: not ticked and the market says pending", orderStatus("Pending - awaiting media", false), "pending");
 
 check("tab: market", isMarketTab("Germany (GER)"), true);
 check("tab: helper", isMarketTab("_StandardSizes"), false);
@@ -92,7 +95,7 @@ check("only rows with a delivery deadline are orders", germany.orders.length, 2)
 check("a pre-filled size with no deadline is a template row, not an order", germany.orders.some((o) => o.width === "1080"), false);
 check("rows the market started but gave no deadline are counted", germany.undated, 2);
 check("order keeps its sheet row", germany.orders.map((o) => o.row), [4, 6]);
-check("order status", germany.orders.map((o) => o.status), ["confirmed", "pending"]);
+check("order status: XYi hasn't ticked either, so the market's Confirmed is a request received", germany.orders.map((o) => o.status), ["requested", "pending"]);
 check("order fields", [germany.orders[0].siteName, germany.orders[0].width, germany.orders[0].height, germany.orders[0].unit, germany.orders[0].duration],
   ["Cinema foyer", "1920", "1080", "px", "15"]);
 check("serial deadline", germany.orders[0].deliveryDeadline, "2026-10-14");
@@ -134,7 +137,7 @@ check("print kind", spain.kind, "print");
 check("print columns", [spain.orders[0].type, spain.orders[0].colourMode, spain.orders[0].specs, spain.orders[0].placement, spain.orders[0].siteName, spain.orders[0].artwork, spain.orders[0].translations, spain.orders[0].notes],
   ["Billboard", "CMYK", "10mm bleed", "OOH", "Gran Via 48-sheet", "Main one-sheet", "ES title", "Rush"]);
 check("print: motion-only fields are empty", [spain.orders[0].duration, spain.orders[0].videoFormat], ["", ""]);
-check("print: Yes is confirmed", spain.orders[0].status, "confirmed");
+check("print: the market's Yes with no XYi tick is a request received", spain.orders[0].status, "requested");
 check("print xyi", [spain.orders[0].xyi.title, spain.orders[0].xyi.customStatus], ["SCRY_INTL_ES", "Backlog"]);
 
 // ── Unreadable tabs and whole workbooks ───────────────────────────────────────

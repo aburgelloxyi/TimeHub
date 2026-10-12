@@ -1,5 +1,7 @@
 import React, { useEffect, useState } from "react";
-import { CloudDownload, Film, Loader2, Link2 } from "lucide-react";
+import { ArrowRight, CloudDownload, Film, Loader2, Link2 } from "lucide-react";
+import { motion } from "framer-motion";
+import { PAGE_GRADIENTS } from "../../lib/pageGradients";
 import SearchableSelect from "../shared/SearchableSelect";
 import { connectGoogle, disconnectGoogle, googleConnected } from "../../lib/orderForms/googleApi";
 import { CLIENTS, clientFor } from "../../lib/orderForms/driveTree";
@@ -24,8 +26,23 @@ export const GOOGLE_MESSAGES = {
 };
 export const googleMessage = (err) => GOOGLE_MESSAGES[err?.reason] || "Something went wrong reading from Google.";
 
+const GRADIENT = PAGE_GRADIENTS.orderforms;
 const buttonClass =
-  "press flex items-center gap-2 px-4 py-2 bg-[#122027] hover:bg-[#25373c] text-white text-sm font-bold rounded-xl transition-colors disabled:opacity-50 shrink-0";
+  `press flex items-center gap-2 px-5 py-2.5 bg-gradient-to-r ${GRADIENT} text-white text-sm font-bold rounded-xl shadow-md shadow-indigo-600/20 hover:shadow-lg hover:shadow-indigo-600/30 transition-shadow disabled:opacity-40 disabled:shadow-none shrink-0`;
+const labelClass = "flex items-center gap-1.5 mb-1.5 text-[10px] font-black uppercase tracking-widest text-[#768994]";
+
+// The three choices read left to right as steps; the number goes solid once
+// its step has an answer.
+function Step({ n, done, children }) {
+  return (
+    <span className={labelClass}>
+      <span className={`flex items-center justify-center w-4 h-4 rounded-full text-[10px] leading-none ${done ? `bg-gradient-to-br ${GRADIENT} text-white` : "bg-slate-200 text-[#768994]"}`}>
+        {n}
+      </span>
+      {children}
+    </span>
+  );
+}
 
 // `onPartial` gets the markets read so far while a film loads, then null.
 export default function GoogleSource({ onLoaded, onBusy, onPartial, signedInTick }) {
@@ -125,14 +142,17 @@ export default function GoogleSource({ onLoaded, onBusy, onPartial, signedInTick
 
   const busy = !!working || !!progress;
 
+  // The card isn't overflow-hidden: the film list drops out below it.
   return (
-    <div className="bg-white border border-[#dce4ec] rounded-2xl shadow-sm px-5 py-4">
-      <div className="flex flex-wrap items-center gap-3">
-        <div className="flex items-center gap-2.5 mr-auto min-w-0">
-          <CloudDownload className="w-5 h-5 text-[#12a0e1] shrink-0" />
+    <div className="bg-white border border-[#dce4ec] rounded-2xl shadow-sm">
+      <div className="flex flex-wrap items-center gap-x-6 gap-y-4 px-5 py-4">
+        <div className="flex items-center gap-3.5 mr-auto min-w-0">
+          <div className={`w-11 h-11 shrink-0 rounded-2xl bg-gradient-to-br ${GRADIENT} text-white flex items-center justify-center shadow-md shadow-indigo-600/20`}>
+            {busy ? <Loader2 className="w-5 h-5 animate-spin" /> : <CloudDownload className="w-5 h-5" />}
+          </div>
           <div className="min-w-0">
-            <p className="text-sm font-bold text-[#122027]">Load a film from Google</p>
-            <p className="text-xs text-[#768994] truncate">
+            <p className="font-display text-xl font-bold tracking-tight leading-none text-[#122027]">Load a film from Google</p>
+            <p className="text-xs text-[#768994] mt-1.5 truncate">
               {!connected ? "Reads every market's order sheet with your own Google access. Read-only."
                 : working ? working
                 : film ? `${film.markets.length} ${film.markets.length === 1 ? "market has" : "markets have"} a sheet for this film`
@@ -150,9 +170,9 @@ export default function GoogleSource({ onLoaded, onBusy, onPartial, signedInTick
         )}
 
         {connected && (
-          <div className="flex flex-wrap items-end gap-2">
-            <div className="text-[11px] font-bold text-[#768994]">
-              <span className="block mb-1">Client</span>
+          <div className="flex flex-wrap items-end gap-3">
+            <div>
+              <Step n={1} done>Client</Step>
               <div role="group" aria-label="Client" className="flex p-1 rounded-xl border border-[#dce4ec] bg-slate-50">
                 {CLIENTS.map((c) => (
                   <button
@@ -160,17 +180,31 @@ export default function GoogleSource({ onLoaded, onBusy, onPartial, signedInTick
                     onClick={() => c.id !== clientId && openClient(c.id)}
                     disabled={busy}
                     aria-pressed={c.id === clientId}
-                    className={`px-3 py-1.5 rounded-lg text-sm font-bold transition-colors disabled:opacity-60 ${
-                      c.id === clientId ? "bg-[#122027] text-white" : "text-[#122027] hover:bg-white"
+                    className={`relative isolate px-4 py-1.5 rounded-lg text-sm font-bold transition-colors disabled:opacity-60 ${
+                      c.id === clientId ? "text-white" : "text-[#768994] hover:text-[#122027]"
                     }`}
                   >
+                    {/* One highlight shared by both (layoutId), so it slides
+                        across to the other client. */}
+                    {c.id === clientId && (
+                      <motion.span
+                        layoutId="orders-client"
+                        aria-hidden
+                        className={`absolute inset-0 -z-10 rounded-lg bg-gradient-to-r ${GRADIENT} shadow-sm`}
+                        transition={{ type: "tween", duration: 0.22, ease: [0.16, 1, 0.3, 1] }}
+                      />
+                    )}
                     {c.label}
                   </button>
                 ))}
               </div>
             </div>
-            <div className="text-[11px] font-bold text-[#768994] w-72">
-              <span className="block mb-1">Film</span>
+            <ArrowRight aria-hidden className="hidden sm:block w-4 h-4 mb-3 text-[#c5d2dc] shrink-0" />
+            <div className="w-72">
+              <Step n={2} done={!!film}>
+                Film
+                {films?.length > 0 && <span className="px-1.5 py-0.5 rounded-full bg-indigo-50 text-indigo-600 tracking-normal">{films.length}</span>}
+              </Step>
               {/* Typing filters the list; anything that isn't one of the films
                   clears the choice rather than loading a film that doesn't exist. */}
               <SearchableSelect
@@ -183,7 +217,8 @@ export default function GoogleSource({ onLoaded, onBusy, onPartial, signedInTick
                 disabled={busy || !films?.length}
               />
             </div>
-            <button onClick={load} disabled={busy || !film} className={`${buttonClass} py-2.5`}>
+            <ArrowRight aria-hidden className="hidden sm:block w-4 h-4 mb-3 text-[#c5d2dc] shrink-0" />
+            <button onClick={load} disabled={busy || !film} className={buttonClass}>
               {progress ? <Loader2 className="w-4 h-4 animate-spin" /> : <CloudDownload className="w-4 h-4" />}
               {progress ? `Reading ${progress.done} of ${progress.total || "…"}` : "Load markets"}
             </button>
@@ -203,12 +238,12 @@ export default function GoogleSource({ onLoaded, onBusy, onPartial, signedInTick
         )}
       </div>
 
+      {error && <p role="alert" className="px-5 pb-4 -mt-1 text-sm font-medium text-rose-600">{error}</p>}
       {progress && progress.total > 0 && (
-        <div className="mt-3 h-1.5 rounded-full bg-slate-100 overflow-hidden">
-          <div className="h-full bg-[#12a0e1] transition-[width] duration-300" style={{ width: `${Math.round((progress.done / progress.total) * 100)}%` }} />
+        <div className="h-1.5 bg-slate-100 rounded-b-2xl overflow-hidden">
+          <div className={`h-full bg-gradient-to-r ${GRADIENT} transition-[width] duration-300`} style={{ width: `${Math.round((progress.done / progress.total) * 100)}%` }} />
         </div>
       )}
-      {error && <p role="alert" className="mt-3 text-sm font-medium text-rose-600">{error}</p>}
     </div>
   );
 }

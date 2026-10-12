@@ -10,7 +10,7 @@ import { readXlsx } from "../lib/orderForms/readXlsx";
 import { parseWorkbook } from "../lib/orderForms/parseWorkbook";
 import { listFiles, saveFile, removeFile } from "../lib/orderForms/store";
 import { connectGoogle, googleConfigured, googleConnected } from "../lib/orderForms/googleApi";
-import { loadFilm } from "../lib/orderForms/loadFilm";
+import { loadFilm, loadMarketOf } from "../lib/orderForms/loadFilm";
 import { indexTasks, indexParents } from "../lib/orderForms/wrikeMatch";
 import { confirmAction } from "../lib/confirm";
 import { notify } from "../lib/toast";
@@ -123,14 +123,30 @@ export default function OrderForms({ wrikeData }) {
 
   // Read a Google-loaded film again from the client's folders. Asking to refresh
   // is the confirmation, so the old read is replaced without a second prompt.
+  // With a market open only that market's sheet is read, and it is put back
+  // into the film where it was.
   const refresh = async () => {
     const current = file;
     setError("");
-    setRefreshing({ done: 0, total: 0 });
+    setRefreshing({ done: 0, total: market ? 1 : 0 });
     try {
       if (!googleConnected()) {
         await connectGoogle();
         setSignedInTick((n) => n + 1);
+      }
+      if (market) {
+        const fresh = await loadMarketOf(current.source, market.name);
+        if (!fresh) {
+          setError(`${market.name}'s folder no longer holds a sheet for this film.`);
+          return;
+        }
+        const updated = { ...current, markets: current.markets.map((m) => (m.name === market.name ? fresh : m)) };
+        const kept = await saveFile(updated);
+        setFiles((prev) => prev.map((f) => (f.id === updated.id ? updated : f)));
+        if (fresh.unreadable) setError(`${market.name}: ${fresh.unreadable}`);
+        else if (kept) notify(`${market.name} read again`, "success");
+        else notify("Read for now. This browser couldn't store it, so it won't be here after a reload.", "error");
+        return;
       }
       const loaded = await loadFilm({
         ...current.source,
@@ -181,6 +197,8 @@ export default function OrderForms({ wrikeData }) {
   };
 
   const working = busy || googleBusy || !!refreshing;
+  // A market refreshed on its own was read later than the rest of its film.
+  const lastRead = market?.loadedAt || file?.loadedAt;
   const empty = files && files.length === 0;
 
   return (
@@ -224,11 +242,13 @@ export default function OrderForms({ wrikeData }) {
                 <button
                   onClick={refresh}
                   disabled={working}
-                  title={`Read from Google at ${readAt(file.loadedAt)}`}
+                  title={`Read from Google at ${readAt(lastRead)}`}
                   className="press ml-auto flex items-center gap-2 px-4 rounded-xl bg-white border border-[#dce4ec] hover:border-[#12a0e1] text-sm font-bold text-[#122027] transition-colors disabled:opacity-60 min-h-[52px]"
                 >
                   {refreshing ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />}
-                  {refreshing ? `Reading ${refreshing.done} of ${refreshing.total || "…"}` : `Refresh · read at ${readAt(file.loadedAt)}`}
+                  {refreshing
+                    ? (market ? `Reading ${market.name}…` : `Reading ${refreshing.done} of ${refreshing.total || "…"}`)
+                    : `Refresh${market ? ` ${market.name}` : ""} · read at ${readAt(lastRead)}`}
                 </button>
               )}
             </div>

@@ -40,6 +40,17 @@ async function loadMarket({ name, sheet }) {
   }
 }
 
+// One market of a film, read again. The folders are still listed first, so a
+// sheet the market has replaced is the one read. null when the market's folder
+// no longer holds a sheet for the film. `loadedAt` is set because the film it
+// goes back into was read at another time.
+export async function loadMarketOf({ clientId, filmKey }, marketName, now = new Date()) {
+  const film = (await listFilms(clientId)).find((f) => f.key === filmKey);
+  const row = film?.markets.find((m) => m.name === marketName);
+  if (!row) return null;
+  return { ...(await loadMarket(row)), loadedAt: now.toISOString() };
+}
+
 // Returns an OrderFile whose `source` is what Refresh needs to read it again,
 // or null when the client's folders no longer hold a sheet for the film. The
 // folders are listed afresh each time, so a market added since shows up.

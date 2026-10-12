@@ -493,7 +493,13 @@ export default function App() {
       {/* ── Admin modal ───────────────────────────────────────────────────── */}
       {showAdmin && isAdmin && (
         <Suspense fallback={null}>
-          <AdminModal onClose={() => setShowAdmin(false)} />
+          <AdminModal
+            onClose={() => setShowAdmin(false)}
+            syncNow={syncNow}
+            isSyncing={isSyncing}
+            lastSynced={lastSynced}
+            syncError={syncError}
+          />
         </Suspense>
       )}
 

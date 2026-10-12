@@ -1,11 +1,13 @@
 import React, { useState, useEffect } from "react";
-import { X, Shield, CheckCircle, AlertCircle, Zap, Eye } from "lucide-react";
+import { X, Shield, CheckCircle, AlertCircle, Zap, Eye, RefreshCw } from "lucide-react";
 import { supabase } from "../lib/supabaseClient";
 import { useDepartmentPreviewState, setDepartmentPreview } from "../hooks/useDepartment";
 import { isServiceAccount, hasLeft } from "../lib/people";
 import { SystemStatusCard } from "./management/SystemStatusCard";
 
-export default function AdminModal({ onClose }) {
+const syncedAt = (when) => new Date(when).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+
+export default function AdminModal({ onClose, syncNow, isSyncing = false, lastSynced, syncError }) {
   const [profiles, setProfiles] = useState([]);
   const [loading, setLoading] = useState(true);
   const [webhookState, setWebhookState] = useState({ status: "idle", message: "" });
@@ -93,7 +95,29 @@ export default function AdminModal({ onClose }) {
         </div>
 
         {/* Live sync setup */}
-        <div className="flex items-center gap-3 px-6 py-3 border-b border-[#dce4ec] bg-slate-50/50">
+        <div className="flex flex-wrap items-center gap-3 px-6 py-3 border-b border-[#dce4ec] bg-slate-50/50">
+          {/* A full refresh: everything Wrike changed in the last two months,
+              for everyone. The fifteen-minute sync only asks for what changed
+              since the one before. */}
+          {syncNow && (
+            <button
+              onClick={syncNow}
+              disabled={isSyncing}
+              title="Re-reads every task changed in Wrike in the last two months and updates the shared cache for everyone."
+              className="flex items-center gap-1.5 text-[11px] font-black text-[#122027] bg-white border border-[#dce4ec] hover:border-[#12a0e1] rounded-full px-3 py-1.5 transition-colors disabled:opacity-50"
+            >
+              <RefreshCw className={`w-3 h-3 text-[#12a0e1] ${isSyncing ? "animate-spin" : ""}`} />
+              {isSyncing ? "Syncing Wrike…" : "Sync Wrike now"}
+            </button>
+          )}
+          {syncNow && !isSyncing && syncError && (
+            <span className="flex items-center gap-1 text-[10px] font-bold text-red-500">
+              <AlertCircle className="w-3 h-3" /> {String(syncError.message || syncError)}
+            </span>
+          )}
+          {syncNow && !isSyncing && !syncError && lastSynced && (
+            <span className="text-[10px] font-bold text-[#768994]">Last synced {syncedAt(lastSynced)}</span>
+          )}
           <button
             onClick={registerWebhook}
             disabled={webhookState.status === "loading"}

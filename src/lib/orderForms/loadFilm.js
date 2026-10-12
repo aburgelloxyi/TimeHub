@@ -1,10 +1,11 @@
-// One film's orders, read live from Google: the index tab lists the markets,
-// each market's Drive folder holds that film's order sheet, and each sheet is
-// parsed the same way a dropped workbook is.
+// One film's orders, read live from Google: the client's Drive folder lists
+// the markets, each market folder holds that film's order sheet, and each
+// sheet is parsed the same way a dropped workbook is.
 
 import { mapPool } from "../fetchPool";
-import { readIndexColumns, listMarketSheets, downloadSheet, GoogleError } from "./googleApi";
-import { driveIdFromLink, columnLetter, filmFromTab, pickFilmSheet } from "./googleIndex";
+import { FILM_MAPPINGS } from "../../constants";
+import { listFolders, listSheetsIn, downloadSheet, GoogleError } from "./googleApi";
+import { clientFor, filmsIn } from "./driveTree";
 import { sheetsFromBuffer } from "./readXlsx";
 import { marketFromSheets } from "./parseWorkbook";
 
@@ -13,61 +14,56 @@ import { marketFromSheets } from "./parseWorkbook";
 const IN_FLIGHT = 4;
 
 const REASONS = {
-  "not-found": "The Drive link in the index doesn't open",
-  "no-access": "Your Google account can't open this market's folder",
+  "not-found": "The sheet is no longer in this market's folder",
+  "no-access": "Your Google account can't open this market's sheet",
   failed: "Google couldn't be reached for this market",
 };
 
-const missing = (name, reason, extra = {}) => ({ name, code: "", kind: null, unreadable: reason, orders: [], undated: 0, ...extra });
+const missing = (name, reason) => ({ name, code: "", kind: null, unreadable: reason, orders: [], undated: 0 });
 
-async function loadMarket({ name, link }, contains, medium) {
-  const driveId = driveIdFromLink(link);
-  if (!driveId) return missing(name, "No Drive link in the index");
+// The films a client has order sheets for, each with its markets.
+export async function listFilms(clientId) {
+  const client = clientFor(clientId);
+  if (!client) return [];
+  const folders = await listFolders(client.folderId);
+  return filmsIn(folders, await listSheetsIn(folders.map((f) => f.id)), FILM_MAPPINGS);
+}
+
+async function loadMarket({ name, sheet }) {
+  const from = { sheetName: sheet.name, sheetUrl: sheet.webViewLink || "" };
   try {
-    const sheets = await listMarketSheets(driveId);
-    const sheet = pickFilmSheet(sheets, contains, medium);
-    if (!sheet) {
-      return missing(name, sheets.length
-        ? `No sheet named like "${contains}" among the ${sheets.length} in its folder`
-        : "No spreadsheets in its folder");
-    }
-    const market = marketFromSheets(await sheetsFromBuffer(await downloadSheet(sheet)), name);
-    return { ...market, sheetName: sheet.name, sheetUrl: sheet.webViewLink || "" };
+    return { ...marketFromSheets(await sheetsFromBuffer(await downloadSheet(sheet)), name), ...from };
   } catch (err) {
     // Signed out part-way: stop the whole load rather than mark 60 markets unreadable.
     if (err instanceof GoogleError && err.reason === "signed-out") throw err;
-    return missing(name, REASONS[err.reason] || "This market's sheet couldn't be read");
+    return { ...missing(name, REASONS[err.reason] || "This market's sheet couldn't be read"), ...from };
   }
 }
 
-// `columns` is indexColumns() of the tab's header. Returns an OrderFile whose
-// `source` is what Refresh needs to read it again.
+// Returns an OrderFile whose `source` is what Refresh needs to read it again,
+// or null when the client's folders no longer hold a sheet for the film. The
+// folders are listed afresh each time, so a market added since shows up.
 // `onMarket` is told about each market as its sheet is read, in the order
 // they finish, so the page can show them arriving instead of a counter.
-export async function loadFilm({ indexId, tab, columns, contains, onProgress, onMarket }, now = new Date()) {
-  const [names, links] = await readIndexColumns(indexId, tab, [columnLetter(columns.market), columnLetter(columns.link)]);
-  const rows = names
-    .map((name, i) => ({ name: String(name || "").trim(), link: links[i] || "" }))
-    .filter((r) => r.name);
-  if (!rows.length) return null;
+export async function loadFilm({ clientId, filmKey, onProgress, onMarket }, now = new Date()) {
+  const film = (await listFilms(clientId)).find((f) => f.key === filmKey);
+  if (!film) return null;
 
-  const { film, medium } = filmFromTab(tab);
-  const wanted = (contains || film).trim();
   let done = 0;
-  onProgress?.(0, rows.length);
-  const markets = await mapPool(rows, IN_FLIGHT, async (row) => {
-    const market = await loadMarket(row, wanted, medium);
-    onProgress?.(++done, rows.length);
+  onProgress?.(0, film.markets.length);
+  const markets = await mapPool(film.markets, IN_FLIGHT, async (row) => {
+    const market = await loadMarket(row);
+    onProgress?.(++done, film.markets.length);
     onMarket?.(market);
     return market;
   });
 
   return {
     id: `${now.getTime().toString(36)}-${Math.random().toString(36).slice(2, 8)}`,
-    name: tab,
-    kind: markets.find((m) => m.kind)?.kind || (/dooh|motion/i.test(medium) ? "motion" : "print"),
+    name: `${clientFor(clientId).label} · ${film.label}`,
+    kind: film.medium,
     loadedAt: now.toISOString(),
-    source: { indexId, tab, columns, contains: wanted },
+    source: { clientId, filmKey },
     markets,
   };
 }

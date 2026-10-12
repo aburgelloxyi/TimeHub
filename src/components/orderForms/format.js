@@ -6,7 +6,7 @@ import { resolveCountryCode } from "../../utils/countryCodes";
 // Spellings the order sheets use that the app's territory list and aliases don't.
 const SHEET_NAMES = { Turkey: "Türkiye", "United Kingdom": "UK", "United States": "USA", "South Korea": "Korea" };
 
-// A market's flag from its name as the index or a tab gives it: "Croatia",
+// A market's flag from its name as a Drive folder or a tab gives it: "Croatia",
 // "Germany (GER)", "Czechia". The name is tried as written, then as a known
 // sheet spelling, then through the same aliases task names resolve with, then
 // by the code in its brackets. "" when nothing matches, so an unknown market

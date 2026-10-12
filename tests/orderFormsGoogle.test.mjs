@@ -1,41 +1,47 @@
-import { driveIdFromLink, indexColumns, columnLetter, filmFromTab, pickFilmSheet } from "../src/lib/orderForms/googleIndex.js";
+import { sheetFilm, marketName, filmsIn, clientFor } from "../src/lib/orderForms/driveTree.js";
 import { marketFromSheets } from "../src/lib/orderForms/parseWorkbook.js";
 
-// ── Links ─────────────────────────────────────────────────────────────────────
-check("open?id= link", driveIdFromLink("https://drive.google.com/open?id=1AbC_dEf-123456"), "1AbC_dEf-123456");
-check("folder link", driveIdFromLink("https://drive.google.com/drive/folders/1AbC_dEf-123456?usp=sharing"), "1AbC_dEf-123456");
-check("folder link with a user segment", driveIdFromLink("https://drive.google.com/drive/u/0/folders/1AbC_dEf-123456"), "1AbC_dEf-123456");
-check("spreadsheet link", driveIdFromLink("https://docs.google.com/spreadsheets/d/1AbC_dEf-123456/edit?gid=5#gid=5"), "1AbC_dEf-123456");
-check("not a link", driveIdFromLink("see email"), "");
-check("empty", driveIdFromLink(""), "");
+// ── A sheet's film and medium ─────────────────────────────────────────────────
+check("Universal naming: motion", sheetFilm("FID_Motion_Outdoor"), { film: "FID", medium: "motion" });
+check("Universal naming: print", sheetFilm("FID_Print_Outdoor"), { film: "FID", medium: "print" });
+check("Paramount naming: print", sheetFilm("Street Fighter - Print and Digital Outdoor"), { film: "Street Fighter", medium: "print" });
+check("Paramount naming: motion", sheetFilm("Street Fighter - Motion Outdoor"), { film: "Street Fighter", medium: "motion" });
+check("a film code with an underscore in it", sheetFilm("FF_X_Motion_Outdoor"), { film: "FF_X", medium: "motion" });
+check("a hyphenated film", sheetFilm("Spider-Man - Motion Outdoor"), { film: "Spider-Man", medium: "motion" });
+check("a copy is the same film", sheetFilm("Copy of Ebenezer - Print and Digital Outdoor"), { film: "Ebenezer", medium: "print" });
+check("an uploaded .xlsx", sheetFilm("FID_DOOH.xlsx"), { film: "FID", medium: "motion" });
+check("not an order form", [sheetFilm("_StandardSizes"), sheetFilm("Cleaning data calc_01"), sheetFilm("Printers list"), sheetFilm("")], [null, null, null, null]);
 
-// ── The index ─────────────────────────────────────────────────────────────────
-check("index columns", indexColumns(["Email", "First Name", "CC", "Market", "Link", "Merge status"]), { market: 3, link: 4 });
-check("index columns move with the sheet", indexColumns(["Market ", "Email", " LINK"]), { market: 0, link: 2 });
-check("an email-template tab is not a market list", indexColumns(["Subject", "Body"]), null);
-check("empty tab", indexColumns(undefined), null);
+// ── A market's name from its folder ───────────────────────────────────────────
+check("capitals are eased, the code kept", marketName("BULGARIA (BG)"), "Bulgaria (BG)");
+check("two words", marketName("NEW ZEALAND (NZ)"), "New Zealand (NZ)");
+check("no code", marketName("BANGLADESH"), "Bangladesh");
+check("already mixed case", [marketName("Croatia (HRV)"), marketName("CIS - Markets")], ["Croatia (HRV)", "CIS - Markets"]);
 
-check("column letters", [0, 3, 25, 26, 27].map(columnLetter), ["A", "D", "Z", "AA", "AB"]);
-
-check("film and medium", filmFromTab("Street Fighter (DOOH)"), { film: "Street Fighter", medium: "DOOH" });
-check("film with a number", filmFromTab("Paw Patrol 3 (OOH) "), { film: "Paw Patrol 3", medium: "OOH" });
-check("tab with no medium", filmFromTab("Christmas Email"), { film: "Christmas Email", medium: "" });
-
-// ── Choosing the film's sheet in a market folder ──────────────────────────────
-const folder = [
-  { id: "a", name: "Street Fighter - Print and Digital Outdoor", modifiedTime: "2026-09-01T10:00:00Z" },
-  { id: "b", name: "Street Fighter - Motion Outdoor", modifiedTime: "2026-08-01T10:00:00Z" },
-  { id: "c", name: "Ebenezer - Print and Digital Outdoor", modifiedTime: "2026-10-01T10:00:00Z" },
-  { id: "d", name: "Copy of Ebenezer - Print and Digital Outdoor", modifiedTime: "2026-10-05T10:00:00Z" },
+// ── Films across a client's market folders ────────────────────────────────────
+const folders = [
+  { id: "bg", name: "BULGARIA (BG)" },
+  { id: "at", name: "AUSTRIA (AT)" },
+  { id: "clean", name: "Cleaning Data" },
 ];
-check("film and medium: print", pickFilmSheet(folder, "Street Fighter", "OOH")?.id, "a");
-check("film and medium: motion", pickFilmSheet(folder, "Street Fighter", "DOOH")?.id, "b");
-check("case and spacing don't matter", pickFilmSheet(folder, "  street   FIGHTER ", "DOOH")?.id, "b");
-check("several matches: most recently changed", pickFilmSheet(folder, "Ebenezer", "OOH")?.id, "d");
-check("unknown medium: still the film", pickFilmSheet(folder, "Street Fighter", "Pubity")?.id, "a");
-check("no sheet for the film: nothing, not a guess", pickFilmSheet(folder, "Fockers", "OOH"), null);
-check("nothing to match on", pickFilmSheet(folder, "", "OOH"), null);
-check("empty folder", pickFilmSheet([], "Ebenezer", "OOH"), null);
+const sheets = [
+  { id: "1", name: "FID_Motion_Outdoor", parents: ["bg"], modifiedTime: "2026-09-01T10:00:00Z" },
+  { id: "2", name: "FID_Print_Outdoor", parents: ["bg"], modifiedTime: "2026-09-01T10:00:00Z" },
+  { id: "3", name: "FID_Motion_Outdoor", parents: ["at"], modifiedTime: "2026-09-01T10:00:00Z" },
+  { id: "4", name: "Copy of FID_Motion_Outdoor", parents: ["at"], modifiedTime: "2026-10-01T10:00:00Z" },
+  { id: "5", name: "ZZZ_Motion_Outdoor", parents: ["at"], modifiedTime: "2026-09-01T10:00:00Z" },
+  { id: "6", name: "Sizes", parents: ["clean"], modifiedTime: "2026-09-01T10:00:00Z" },
+  { id: "7", name: "FID_Motion_Outdoor", parents: ["elsewhere"], modifiedTime: "2026-09-01T10:00:00Z" },
+];
+const films = filmsIn(folders, sheets, { FID: "Forgotten Island" });
+check("one film per title and medium, known codes spelt out", films.map((f) => f.label), ["Forgotten Island · Motion", "Forgotten Island · Print", "ZZZ · Motion"]);
+check("a film's markets, by name", films[0].markets.map((m) => m.name), ["Austria (AT)", "Bulgaria (BG)"]);
+check("two sheets in one market: the most recently changed", films[0].markets[0].sheet.id, "4");
+check("only the markets that have the sheet", films[1].markets.map((m) => m.name), ["Bulgaria (BG)"]);
+check("the key Refresh finds the film by", films.map((f) => f.key), ["forgotten island|motion", "forgotten island|print", "zzz|motion"]);
+check("nothing to list", filmsIn([], []), []);
+
+check("clients", [clientFor("universal")?.label, clientFor("paramount")?.label, clientFor("index")], ["Universal", "Paramount", null]);
 
 // ── A market's own workbook ───────────────────────────────────────────────────
 const HEAD = ["MARKET", "Are your orders confirmed?", "MEDIA SITE NAME", "WIDTH", "HEIGHT", "DURATION", "DELIVERY DEADLINE"];
@@ -46,7 +52,7 @@ const croatia = marketFromSheets({
   AA_Test_Market: sheet("MARKET - [MOTION] - ORDER FORM", [["OV", "Y", "ignore", 1, 1, 5, "01/11/2026"]]),
   "Croatia (HRV)": sheet("CROATIA - [MOTION] - ORDER FORM", [["HR", "CONFIRMED", "Foyer", 1920, 1080, 15, "01/11/2026"], ["HR", "", "Lobby", 10, 20, 5, ""]]),
 }, "Croatia");
-check("named as the index names it", croatia.name, "Croatia");
+check("named after its folder", croatia.name, "Croatia");
 check("code from the sheet's tab", croatia.code, "HRV");
 check("orders from the market tab only", croatia.orders.map((o) => o.siteName), ["Foyer"]);
 check("kind", croatia.kind, "motion");
@@ -67,12 +73,13 @@ check("a workbook with only helper tabs", marketFromSheets({ _Control: [["x"]] }
 import { marketFlag } from "../src/components/orderForms/format.js";
 import { TERRITORY_FLAGS } from "../src/constants.js";
 
-check("flag: a market as the index names it", marketFlag("Croatia"), TERRITORY_FLAGS.Croatia);
+check("flag: a market by its plain name", marketFlag("Croatia"), TERRITORY_FLAGS.Croatia);
 check("flag: two words", marketFlag("New Zealand"), TERRITORY_FLAGS["New Zealand"]);
 check("flag: a tab name with its code", marketFlag("Germany (GER)"), TERRITORY_FLAGS.Germany);
 check("flag: surrounding spaces", marketFlag("  Spain  "), TERRITORY_FLAGS.Spain);
 check("flag: unknown market shows none", marketFlag("Atlantis"), "");
 check("flag: empty", marketFlag(""), "");
+check("flag: Universal's folder names", ["Bulgaria (BG)", "Austria (AT)"].map(marketFlag), [TERRITORY_FLAGS.Bulgaria, TERRITORY_FLAGS.Austria]);
 check("flag: sheet spellings the app names differently",
   ["Czechia (CZE)", "Turkey", "United Kingdom", "Korea (KOR)", "Georgia (CIS)"].map(marketFlag),
   [TERRITORY_FLAGS["Czech Republic"], TERRITORY_FLAGS["Türkiye"], TERRITORY_FLAGS.UK, TERRITORY_FLAGS.Korea, TERRITORY_FLAGS.Georgia]);

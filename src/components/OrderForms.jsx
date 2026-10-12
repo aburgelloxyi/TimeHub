@@ -16,9 +16,9 @@ import { confirmAction } from "../lib/confirm";
 import { notify } from "../lib/toast";
 import { isoToday } from "../utils/dates";
 
-// The PMs' readable view of the Paramount order forms. Orders come in two
-// ways: a film read live from Google (every market's sheet, found through the
-// index workbook), or a workbook dropped onto the page. Either way they are
+// The PMs' readable view of the clients' order forms. Orders come in two
+// ways: a film read live from Google (every market's sheet, found in the
+// client's Drive folders), or a workbook dropped onto the page. Either way they are
 // parsed in the browser and kept in this browser only (see lib/orderForms/
 // store.js for why they never go to Supabase). Read-only: nothing here writes
 // to Google or Wrike.
@@ -121,7 +121,7 @@ export default function OrderForms({ wrikeData }) {
     await adopt(loaded, existing);
   }, [files, adopt]);
 
-  // Read a Google-loaded film again from the same index tab. Asking to refresh
+  // Read a Google-loaded film again from the client's folders. Asking to refresh
   // is the confirmation, so the old read is replaced without a second prompt.
   const refresh = async () => {
     const current = file;
@@ -137,7 +137,7 @@ export default function OrderForms({ wrikeData }) {
         onProgress: (done, total) => setRefreshing({ done, total }),
       });
       if (loaded) await adopt(loaded, current, market?.name);
-      else setError("That tab of the index no longer lists any markets.");
+      else setError("That film's order sheets are no longer in the market folders.");
     } catch (err) {
       setError(googleMessage(err));
     } finally {
@@ -218,7 +218,9 @@ export default function OrderForms({ wrikeData }) {
                 onFile={addFile}
                 busy={working}
               />
-              {file?.source && (
+              {/* A film loaded before the page read Drive folders has no client to
+                  read again from; it is loaded afresh from the picker instead. */}
+              {file?.source?.clientId && (
                 <button
                   onClick={refresh}
                   disabled={working}

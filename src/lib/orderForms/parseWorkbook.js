@@ -1,4 +1,4 @@
-// Paramount order-form workbooks → the Order Forms page's data. Pure: takes the
+// The clients' order-form workbooks → the Order Forms page's data. Pure: takes the
 // sheets as arrays of rows (see readXlsx.js) and never touches the network.
 //
 // Columns are found by header text, not position, so the Motion and Print
@@ -220,7 +220,7 @@ export function parseMarket(name, rows) {
 }
 
 // One market from that market's own workbook (the per-film sheet in its Drive
-// folder), named as the index names it. Usually one order tab beside the
+// folder), named after that folder. Usually one order tab beside the
 // helper tabs; if a market has split its orders over several, they are read
 // together and each order says which tab it came from.
 export function marketFromSheets(sheets, marketName) {

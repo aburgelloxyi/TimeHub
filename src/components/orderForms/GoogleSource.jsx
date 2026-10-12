@@ -1,16 +1,15 @@
 import React, { useEffect, useState } from "react";
 import { CloudDownload, Film, Loader2, Link2 } from "lucide-react";
 import SearchableSelect from "../shared/SearchableSelect";
-import { connectGoogle, disconnectGoogle, googleConnected, readIndexTabs } from "../../lib/orderForms/googleApi";
-import { driveIdFromLink, indexColumns, filmFromTab } from "../../lib/orderForms/googleIndex";
-import { loadFilm } from "../../lib/orderForms/loadFilm";
+import { connectGoogle, disconnectGoogle, googleConnected } from "../../lib/orderForms/googleApi";
+import { CLIENTS, clientFor } from "../../lib/orderForms/driveTree";
+import { listFilms, loadFilm } from "../../lib/orderForms/loadFilm";
 
-// Loading a film straight from Google: connect, point at the index workbook
-// once, pick a film. The sign-in lasts for this tab; nothing is written to
-// Google.
+// Loading a film straight from Google: connect, pick a client, pick a film.
+// The films are whatever has an order sheet in the client's market folders.
+// The sign-in lasts for this tab; nothing is written to Google.
 
-// Only the index's id is remembered, so the link isn't pasted every visit.
-const INDEX_KEY = "xyi_orders_index_id";
+const CLIENT_KEY = "xyi_orders_client";
 
 export const GOOGLE_MESSAGES = {
   "not-configured": "Google sign-in isn't set up for this copy of TimeHub.",
@@ -19,51 +18,44 @@ export const GOOGLE_MESSAGES = {
   cancelled: "Sign-in was closed before it finished.",
   popup: "The Google sign-in window was blocked. Allow pop-ups for this site and retry.",
   "signed-out": "Your Google sign-in has lapsed. Connect again.",
-  "not-found": "That spreadsheet couldn't be found. Check the link.",
-  "no-access": "Your Google account can't open that spreadsheet.",
+  "not-found": "That client's Drive folder couldn't be found.",
+  "no-access": "Your Google account can't open that client's Drive folder.",
   failed: "Google couldn't be reached. Try again in a moment.",
 };
 export const googleMessage = (err) => GOOGLE_MESSAGES[err?.reason] || "Something went wrong reading from Google.";
 
-const inputClass =
-  "px-3 py-2 text-sm border border-[#dce4ec] rounded-xl outline-none focus:border-[#12a0e1] bg-white min-w-0";
 const buttonClass =
   "press flex items-center gap-2 px-4 py-2 bg-[#122027] hover:bg-[#25373c] text-white text-sm font-bold rounded-xl transition-colors disabled:opacity-50 shrink-0";
 
 // `onPartial` gets the markets read so far while a film loads, then null.
 export default function GoogleSource({ onLoaded, onBusy, onPartial, signedInTick }) {
   const [connected, setConnected] = useState(googleConnected);
-  const [indexId, setIndexId] = useState(() => localStorage.getItem(INDEX_KEY) || "");
-  const [linkDraft, setLinkDraft] = useState("");
-  const [index, setIndex] = useState(null); // { title, films: [{ title, columns }] }
-  const [tab, setTab] = useState("");
-  const [contains, setContains] = useState("");
+  const [clientId, setClientId] = useState(() => clientFor(localStorage.getItem(CLIENT_KEY))?.id || CLIENTS[0].id);
+  const [films, setFilms] = useState(null); // the picked client's, null until listed
+  const [filmKey, setFilmKey] = useState("");
   const [working, setWorking] = useState("");
   const [progress, setProgress] = useState(null);
   const [error, setError] = useState("");
+
+  const client = clientFor(clientId);
+  const film = films?.find((f) => f.key === filmKey) || null;
 
   const fail = (err) => {
     if (err?.reason === "signed-out") setConnected(false);
     setError(googleMessage(err));
   };
 
-  const openIndex = async (id) => {
+  const openClient = async (id) => {
     setError("");
-    setWorking("Reading the index…");
+    setClientId(id);
+    setFilms(null);
+    setFilmKey("");
+    localStorage.setItem(CLIENT_KEY, id);
+    setWorking(`Reading ${clientFor(id).label}'s folders…`);
     try {
-      const found = await readIndexTabs(id);
-      const films = found.tabs
-        .map((t) => ({ title: t.title, columns: indexColumns(t.header) }))
-        .filter((t) => t.columns);
-      if (!films.length) {
-        setError("No tab in that spreadsheet has Market and Link columns, so it isn't the index.");
-        return;
-      }
-      localStorage.setItem(INDEX_KEY, id);
-      setIndexId(id);
-      setIndex({ title: found.title, films });
-      setTab(films[0].title);
-      setContains(filmFromTab(films[0].title).film);
+      const found = await listFilms(id);
+      setFilms(found);
+      if (!found.length) setError(`No order sheets were found in ${clientFor(id).label}'s market folders.`);
     } catch (err) {
       fail(err);
     } finally {
@@ -77,8 +69,7 @@ export default function GoogleSource({ onLoaded, onBusy, onPartial, signedInTick
     try {
       await connectGoogle();
       setConnected(true);
-      setWorking("");
-      if (indexId) await openIndex(indexId);
+      await openClient(clientId);
     } catch (err) {
       setWorking("");
       fail(err);
@@ -87,8 +78,8 @@ export default function GoogleSource({ onLoaded, onBusy, onPartial, signedInTick
 
   // Back after a reload, still signed in: list the films again without a click.
   useEffect(() => {
-    if (googleConnected() && indexId) openIndex(indexId);
-    // Once, on arrival. openIndex is recreated every render.
+    if (googleConnected()) openClient(clientId);
+    // Once, on arrival. openClient is recreated every render.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -97,8 +88,8 @@ export default function GoogleSource({ onLoaded, onBusy, onPartial, signedInTick
   useEffect(() => {
     if (!signedInTick || !googleConnected()) return;
     setConnected(true);
-    if (!index && indexId) openIndex(indexId);
-    // Runs when the page reports a sign-in, not when the index changes.
+    if (!films) openClient(clientId);
+    // Runs when the page reports a sign-in, not when the films change.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [signedInTick]);
 
@@ -106,7 +97,7 @@ export default function GoogleSource({ onLoaded, onBusy, onPartial, signedInTick
   useEffect(() => { onBusy?.(!!progress); }, [progress, onBusy]);
 
   const load = async () => {
-    const film = index.films.find((f) => f.title === tab);
+    const name = `${client.label} · ${film.label}`;
     setError("");
     setProgress({ done: 0, total: 0 });
     const arrived = [];
@@ -115,14 +106,14 @@ export default function GoogleSource({ onLoaded, onBusy, onPartial, signedInTick
       // inside the click, so the browser lets Google's window open.
       if (!googleConnected()) await connectGoogle();
       const file = await loadFilm({
-        indexId, tab, columns: film.columns, contains,
+        clientId, filmKey,
         onProgress: (done, total) => setProgress({ done, total }),
         onMarket: (market) => {
           arrived.push(market);
-          onPartial?.({ name: tab, markets: [...arrived] });
+          onPartial?.({ name, markets: [...arrived] });
         },
       });
-      if (!file) setError("That tab has no markets listed.");
+      if (!file) setError("That film's order sheets are no longer in the market folders.");
       else await onLoaded(file);
     } catch (err) {
       fail(err);
@@ -143,8 +134,10 @@ export default function GoogleSource({ onLoaded, onBusy, onPartial, signedInTick
             <p className="text-sm font-bold text-[#122027]">Load a film from Google</p>
             <p className="text-xs text-[#768994] truncate">
               {!connected ? "Reads every market's order sheet with your own Google access. Read-only."
-                : index ? `${index.title} · the film's sheet is found by name in each market's Drive folder`
-                : "Paste the link to the index spreadsheet that lists every market's Drive folder."}
+                : working ? working
+                : film ? `${film.markets.length} ${film.markets.length === 1 ? "market has" : "markets have"} a sheet for this film`
+                : films ? `${films.length} ${films.length === 1 ? "film" : "films"} with order sheets in ${client.label}'s market folders`
+                : "Pick a client to list its films."}
             </p>
           </div>
         </div>
@@ -156,72 +149,51 @@ export default function GoogleSource({ onLoaded, onBusy, onPartial, signedInTick
           </button>
         )}
 
-        {connected && !index && (
-          <form
-            className="flex items-center gap-2 flex-1 min-w-[280px] max-w-xl"
-            onSubmit={(e) => {
-              e.preventDefault();
-              const id = driveIdFromLink(linkDraft);
-              if (id) openIndex(id);
-              else setError("That doesn't look like a Google Sheets link.");
-            }}
-          >
-            <input
-              value={linkDraft}
-              onChange={(e) => { setLinkDraft(e.target.value); setError(""); }}
-              placeholder="https://docs.google.com/spreadsheets/d/…"
-              aria-label="Index spreadsheet link"
-              className={`${inputClass} flex-1`}
-            />
-            <button type="submit" disabled={busy || !linkDraft.trim()} className={buttonClass}>
-              {working ? <Loader2 className="w-4 h-4 animate-spin" /> : null}
-              {working || "Open index"}
-            </button>
-          </form>
-        )}
-
-        {connected && index && (
+        {connected && (
           <div className="flex flex-wrap items-end gap-2">
-            <div className="text-[11px] font-bold text-[#768994] w-64">
+            <div className="text-[11px] font-bold text-[#768994]">
+              <span className="block mb-1">Client</span>
+              <div role="group" aria-label="Client" className="flex p-1 rounded-xl border border-[#dce4ec] bg-slate-50">
+                {CLIENTS.map((c) => (
+                  <button
+                    key={c.id}
+                    onClick={() => c.id !== clientId && openClient(c.id)}
+                    disabled={busy}
+                    aria-pressed={c.id === clientId}
+                    className={`px-3 py-1.5 rounded-lg text-sm font-bold transition-colors disabled:opacity-60 ${
+                      c.id === clientId ? "bg-[#122027] text-white" : "text-[#122027] hover:bg-white"
+                    }`}
+                  >
+                    {c.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <div className="text-[11px] font-bold text-[#768994] w-72">
               <span className="block mb-1">Film</span>
-              {/* Typing filters the list; anything that isn't a tab of the index
+              {/* Typing filters the list; anything that isn't one of the films
                   clears the choice rather than loading a film that doesn't exist. */}
               <SearchableSelect
-                options={index.films.map((f) => f.title)}
-                value={tab}
-                onChange={(picked) => {
-                  const known = index.films.some((f) => f.title === picked);
-                  setTab(known ? picked : "");
-                  if (known) setContains(filmFromTab(picked).film);
-                }}
-                placeholder="Pick a film"
+                options={(films || []).map((f) => f.label)}
+                value={film?.label || ""}
+                onChange={(picked) => setFilmKey(films?.find((f) => f.label === picked)?.key || "")}
+                placeholder={working ? "Listing films…" : "Pick a film"}
                 showAllOnOpen
                 icon={Film}
-                disabled={busy}
+                disabled={busy || !films?.length}
               />
             </div>
-            <label className="text-[11px] font-bold text-[#768994]">
-              Sheet name in the market's folder contains
-              <input
-                value={contains}
-                onChange={(e) => setContains(e.target.value)}
-                disabled={busy}
-                className={`${inputClass} block mt-1 w-64 py-2.5 shadow-sm`}
-              />
-            </label>
-            <button onClick={load} disabled={busy || !tab || !contains.trim()} className={`${buttonClass} py-2.5`}>
+            <button onClick={load} disabled={busy || !film} className={`${buttonClass} py-2.5`}>
               {progress ? <Loader2 className="w-4 h-4 animate-spin" /> : <CloudDownload className="w-4 h-4" />}
               {progress ? `Reading ${progress.done} of ${progress.total || "…"}` : "Load markets"}
             </button>
+            {!films && !working && (
+              <button onClick={() => openClient(clientId)} className="px-2 py-2 text-xs font-bold text-[#768994] hover:text-[#122027]">
+                Retry
+              </button>
+            )}
             <button
-              onClick={() => { localStorage.removeItem(INDEX_KEY); setIndexId(""); setIndex(null); setLinkDraft(""); }}
-              disabled={busy}
-              className="px-2 py-2 text-xs font-bold text-[#768994] hover:text-[#122027] disabled:opacity-50"
-            >
-              Change index
-            </button>
-            <button
-              onClick={() => { disconnectGoogle(); setConnected(false); setIndex(null); setError(""); }}
+              onClick={() => { disconnectGoogle(); setConnected(false); setFilms(null); setFilmKey(""); setError(""); }}
               disabled={busy}
               className="px-2 py-2 text-xs font-bold text-[#768994] hover:text-[#122027] disabled:opacity-50"
             >

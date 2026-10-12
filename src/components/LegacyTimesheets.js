@@ -4088,8 +4088,9 @@ export default function LegacyTimesheet({ wrikeData, isAdmin = false }) {
           <div
             ref={tongueRef}
             // Mouse only: a touch fires pointerenter too, and would open the
-            // tongue with nothing to close it. Leaving waits a moment, so a
-            // pointer that clips the edge on its way past doesn't flap it.
+            // tongue with nothing to close it. It stays open a little after the
+            // pointer leaves, so drifting off it on the way to a control, or
+            // clipping its edge on the way past, doesn't shut it.
             onPointerEnter={(e) => {
               if (e.pointerType !== "mouse") return;
               clearTimeout(tongueLeaveTimer.current);
@@ -4097,7 +4098,7 @@ export default function LegacyTimesheet({ wrikeData, isAdmin = false }) {
             }}
             onPointerLeave={() => {
               clearTimeout(tongueLeaveTimer.current);
-              tongueLeaveTimer.current = setTimeout(() => setTongueHover(false), 180);
+              tongueLeaveTimer.current = setTimeout(() => setTongueHover(false), 1200);
             }}
             // Keyboard focus only, so a mouse click on a control doesn't hold
             // it open after the pointer has gone.

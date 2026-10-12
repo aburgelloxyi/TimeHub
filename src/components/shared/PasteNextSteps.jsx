@@ -1,5 +1,7 @@
 import React, { useEffect, useRef } from "react";
-import { Star, ClipboardPaste, MousePointerClick, Check } from "lucide-react";
+import { Star, ClipboardPaste, MousePointerClick, Check, ExternalLink } from "lucide-react";
+
+const TIMESHEET_URL = "https://timesheet.xyi.com";
 
 // "You've copied it — here's where it goes."
 //
@@ -28,6 +30,7 @@ const STEPS = [
     icon: MousePointerClick,
     title: "Open your timesheet website",
     body: "Go to the day you're filling in. The bookmark fills whichever Day tab is showing.",
+    link: true,
   },
   {
     icon: Star,
@@ -114,6 +117,20 @@ export default function PasteNextSteps({
                 <p className="text-[11px] text-[#768994] leading-relaxed mt-0.5">
                   {step.body}
                 </p>
+
+                {/* A new tab, so this card and the day they copied from are
+                    still here when they come back. */}
+                {step.link && (
+                  <a
+                    href={TIMESHEET_URL}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="mt-2 inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-[#12a0e1] hover:bg-[#0e8bc4] text-white text-[11px] font-bold transition-colors focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-[#12a0e1]/30"
+                  >
+                    Open timesheet.xyi.com
+                    <ExternalLink className="w-3 h-3" strokeWidth={2.5} />
+                  </a>
+                )}
 
                 {/* A miniature of the browser's own bookmarks bar. This is the
                     step people get stuck on, and it's the one that can't be

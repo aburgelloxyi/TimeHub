@@ -102,7 +102,7 @@ const TEAM_DEFAULTS = {
 };
 
 export const DEPARTMENTS = {
-  Motion: { features: ["doohSpecs"], countedStatus: "Motion" },
+  Motion: { features: ["doohSpecs", "amends"], countedStatus: "Motion" },
   Print: { features: ["launchTracker"], quickFilter: "LAUNCH" },
   AM: {},
   Digital: {},

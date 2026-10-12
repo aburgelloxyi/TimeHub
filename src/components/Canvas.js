@@ -9,6 +9,7 @@ import PresenceStack from "./shared/PresenceStack";
 // Lazy — Excalidraw is a sizeable bundle + its own CSS; only a sketch page
 // being opened should pay for it, not every Notes Canvas visit.
 const ExcalidrawPageEditor = lazy(() => import("./shared/ExcalidrawPageEditor"));
+const CampaignAmends = lazy(() => import("./canvas/CampaignAmends"));
 import PageHeader, { pageHeaderActionClass } from "./shared/PageHeader";
 import HubRow from "./shared/HubRow";
 import { useDepartment } from "../hooks/useDepartment";
@@ -54,6 +55,7 @@ import {
   Minimize2,
   SwatchBook,
   PenTool,
+  MessageSquareWarning,
 } from "lucide-react";
 
 // --- DOOH country → region grouping ---
@@ -2717,6 +2719,7 @@ function CampaignCanvasForDepartment({ department, wrikeData = [], folderCampaig
   const [campaigns, setCampaigns] = useState(INITIAL_CAMPAIGNS);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [selectedMatrix, setSelectedMatrix] = useState(null);
+  const [amendsCamp, setAmendsCamp] = useState(null);
   const [showMappingsPanel, setShowMappingsPanel] = useState(false);
 
 
@@ -5136,14 +5139,36 @@ function CampaignCanvasForDepartment({ department, wrikeData = [], folderCampaig
                     >
                       <FileText className="w-5 h-5" /> View Asset Matrix
                     </button>
-                    <a
-                      href={activeCamp.wrikeLink}
-                      target="_blank"
-                      rel="noreferrer"
-                      className="flex-1 flex items-center justify-center gap-2 bg-[#122027] hover:bg-[#1a2d37] text-white py-4 rounded-2xl text-sm font-black uppercase tracking-widest transition-[background-color,box-shadow,transform] shadow-md active:scale-95 focus-visible:ring-2 focus-visible:ring-[#c2410d]/40 focus-visible:outline-none"
-                    >
-                      <ExternalLink className="w-5 h-5" /> Open in Wrike
-                    </a>
+                    {/* Motion gets the campaign's amends where the Wrike link was;
+                        the link stays, as an icon. */}
+                    {hasFeature(department, "amends") ? (
+                      <>
+                        <button
+                          onClick={() => setAmendsCamp({ id: activeCamp.id, title: activeCamp.title })}
+                          className="flex-1 flex items-center justify-center gap-2 bg-[#122027] hover:bg-[#1a2d37] text-white py-4 rounded-2xl text-sm font-black uppercase tracking-widest transition-[background-color,box-shadow,transform] shadow-md active:scale-95 focus-visible:ring-2 focus-visible:ring-[#c2410d]/40 focus-visible:outline-none"
+                        >
+                          <MessageSquareWarning className="w-5 h-5" /> Amends
+                        </button>
+                        <a
+                          href={activeCamp.wrikeLink}
+                          target="_blank"
+                          rel="noreferrer"
+                          title="Open in Wrike"
+                          className="flex items-center justify-center px-5 bg-[#122027] hover:bg-[#1a2d37] text-white rounded-2xl transition-[background-color,box-shadow,transform] shadow-md active:scale-95 focus-visible:ring-2 focus-visible:ring-[#c2410d]/40 focus-visible:outline-none"
+                        >
+                          <ExternalLink className="w-5 h-5" />
+                        </a>
+                      </>
+                    ) : (
+                      <a
+                        href={activeCamp.wrikeLink}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="flex-1 flex items-center justify-center gap-2 bg-[#122027] hover:bg-[#1a2d37] text-white py-4 rounded-2xl text-sm font-black uppercase tracking-widest transition-[background-color,box-shadow,transform] shadow-md active:scale-95 focus-visible:ring-2 focus-visible:ring-[#c2410d]/40 focus-visible:outline-none"
+                      >
+                        <ExternalLink className="w-5 h-5" /> Open in Wrike
+                      </a>
+                    )}
                     {/* Delete — only for manually-created campaigns */}
                     {activeCamp.isManual && (
                       deletingCampId === activeCamp.id ? (
@@ -5444,6 +5469,19 @@ function CampaignCanvasForDepartment({ department, wrikeData = [], folderCampaig
         </AnimatePresence>
 
         {/* SPREADSHEET TABLE MODAL OVERLAY */}
+        {amendsCamp && (
+          <Suspense fallback={null}>
+            <CampaignAmends
+              campaign={amendsCamp}
+              cached={wrikeData}
+              codes={Object.entries({ ...FILM_MAPPINGS, ...filmCodeMappings })
+                .filter(([, film]) => String(film).toLowerCase() === amendsCamp.title.toLowerCase())
+                .map(([code]) => code)}
+              onClose={() => setAmendsCamp(null)}
+            />
+          </Suspense>
+        )}
+
         {selectedMatrix && (
           <div className="fixed inset-0 z-[9999] flex items-center justify-center p-4 bg-[#122027]/90 backdrop-blur-md animate-in fade-in duration-200">
             <div className="bg-white rounded-3xl w-full max-w-6xl h-[85vh] overflow-hidden shadow-2xl flex flex-col border border-white/20">

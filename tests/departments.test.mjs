@@ -27,6 +27,7 @@ check("labels: canvas", [canvasLabelFor("Motion"), canvasLabelFor(null)], ["Moti
 
 check("features: DOOH Specs is Motion's", [hasFeature("Motion", "doohSpecs"), hasFeature("Print", "doohSpecs")], [true, false]);
 check("features: Launch Tracker is Print's", [hasFeature("Print", "launchTracker"), hasFeature("Motion", "launchTracker")], [true, false]);
+check("features: Amends is Motion's", [hasFeature("Motion", "amends"), hasFeature("Print", "amends")], [true, false]);
 check("features: none without a department", hasFeature(null, "doohSpecs"), false);
 check("header count: Motion counts its status, others overdue", [countedStatusFor("Motion"), countedStatusFor("Print")], ["Motion", null]);
 check("quick filters: Print leads with LAUNCH", jobQuickFiltersFor("Print")[0], "LAUNCH");

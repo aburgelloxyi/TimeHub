@@ -1,0 +1,77 @@
+import React, { useEffect, useState } from "react";
+import { ExternalLink, FolderPlus, Loader2 } from "lucide-react";
+import { confirmAction } from "../../lib/confirm";
+import { notify } from "../../lib/toast";
+import { planMarketFolderLive, createMarketFolder } from "../../lib/orderForms/wrikeMarketFolder";
+
+// Adds this market's country folder to the film's Markets folder in Wrike, with
+// its Google Drive link. It reads Wrike first and says exactly what it would
+// create; nothing is written until that is confirmed. Once the folder exists,
+// made here or found already there, the button is a link to it.
+
+const buttonClass =
+  "flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-[#dce4ec] hover:border-[#12a0e1] text-sm font-bold text-[#122027] transition-colors disabled:opacity-60";
+
+export default function WrikeFolderButton({ filmTitle, kind, marketName, driveUrl }) {
+  const [busy, setBusy] = useState(false);
+  const [folder, setFolder] = useState(null); // { title, permalink }
+
+  useEffect(() => setFolder(null), [filmTitle, kind, marketName]);
+
+  const add = async () => {
+    if (!driveUrl) {
+      notify("Refresh this market first, so its Google Drive folder is known.");
+      return;
+    }
+    setBusy(true);
+    try {
+      const plan = await planMarketFolderLive({ filmTitle, kind, marketName });
+      if (!plan.ok) {
+        notify(plan.reason);
+        return;
+      }
+      if (plan.existing) {
+        setFolder(plan.existing);
+        notify(`${plan.existing.title} is already in ${plan.parent.title}.`, "success");
+        return;
+      }
+      const ok = await confirmAction({
+        title: `Add "${plan.title}" to Wrike?`,
+        message: `A new folder in ${plan.film} › ${plan.parent.title}. ${
+          plan.field
+            ? `Its "${plan.field.title}" field will be set to this market's Google Drive folder.`
+            : "No \"Order Form\" custom field was found in Wrike, so the folder will be created without its Google Drive link."
+        }`,
+        confirmLabel: "Add folder",
+      });
+      if (!ok) return;
+      const made = await createMarketFolder(plan, driveUrl);
+      setFolder({ title: plan.title, permalink: made.permalink });
+      notify(
+        plan.field && !made.linked
+          ? `${plan.title} added, but Wrike refused the "${plan.field.title}" field here, so it has no Drive link.`
+          : `${plan.title} added to Wrike.`,
+        plan.field && !made.linked ? "error" : "success"
+      );
+    } catch (err) {
+      notify(/\(401\)|not_connected/.test(err.message) ? "Connect Wrike in Profile first." : "Wrike couldn't be reached, so nothing was added.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  if (folder?.permalink) {
+    return (
+      <a href={folder.permalink} target="_blank" rel="noreferrer" title={folder.title} className={buttonClass}>
+        <ExternalLink className="w-3.5 h-3.5" />
+        Wrike folder
+      </a>
+    );
+  }
+  return (
+    <button onClick={add} disabled={busy} className={buttonClass}>
+      {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <FolderPlus className="w-3.5 h-3.5" />}
+      {busy ? "Checking Wrike…" : "Add folder to Wrike"}
+    </button>
+  );
+}

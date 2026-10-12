@@ -1,14 +1,18 @@
 // Google sign-in and the Drive and Sheets reads behind Client Orders.
 //
-// Read-only by scope: drive.readonly lets the signed-in person's own access be
-// used to read files, and nothing else. The access token goes to googleapis.com
-// and nowhere else, so the Worker and Supabase never see it or anything it
-// reads.
+// Reading is by drive.readonly: the signed-in person's own access, used to
+// read files and nothing else. Writing (the Corrections section) is a second,
+// separate sign-in that asks for spreadsheet edit access only when someone
+// applies a correction, so nobody who only reads is asked for it. Both tokens
+// go to googleapis.com and nowhere else, so the Worker and Supabase never see
+// them or anything they read.
 //
 // The token is kept in sessionStorage so a reload doesn't sign the PM out. It
 // lasts an hour at most and goes when the tab closes. After that, the next
 // click that needs Google asks again without the account or consent screens,
 // because Google remembers the grant.
+
+import { cellRange } from "./cells";
 
 // Public by design, like the Supabase anon key: it names the app to Google and
 // only works from the origins registered for it in Google Cloud.
@@ -17,10 +21,12 @@ export const CLIENT_ID =
   "1047837005704-h04jm219u2mm5rojhpv1vo797rei5v3a.apps.googleusercontent.com";
 const SCOPE = "https://www.googleapis.com/auth/drive.readonly";
 const GSI_SRC = "https://accounts.google.com/gsi/client";
+const WRITE_SCOPE = "https://www.googleapis.com/auth/spreadsheets";
 const DRIVE = "https://www.googleapis.com/drive/v3";
+const SHEETS = "https://sheets.googleapis.com/v4/spreadsheets";
 
 const FOLDER = "application/vnd.google-apps.folder";
-const GOOGLE_SHEET = "application/vnd.google-apps.spreadsheet";
+export const GOOGLE_SHEET = "application/vnd.google-apps.spreadsheet";
 const SHORTCUT = "application/vnd.google-apps.shortcut";
 const XLSX_FILE = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
 
@@ -197,4 +203,95 @@ export async function downloadSheet(file) {
     ? `${DRIVE}/files/${file.id}/export?${query({ mimeType: XLSX_FILE })}`
     : `${DRIVE}/files/${file.id}?${query({ alt: "media", supportsAllDrives: "true" })}`;
   return (await gfetch(url)).arrayBuffer();
+}
+
+// ── A cell's dropdown ─────────────────────────────────────────────────────────
+
+// The choices each of these cells offers in the sheet, from its data
+// validation: { cell: [options] }, with no entry for a cell that is free text.
+// A list typed into the rule is read from it; a list kept on another tab (the
+// artwork names) is read from that range. Read-only, with the reading sign-in.
+export async function readCellChoices(spreadsheetId, tab, cells) {
+  if (!cells.length) return {};
+  const ranges = cells.map((c) => `ranges=${encodeURIComponent(cellRange(tab, c))}`).join("&");
+  const fields = encodeURIComponent("sheets(data(rowData(values(dataValidation))))");
+  const meta = await (await gfetch(`${SHEETS}/${spreadsheetId}?${ranges}&fields=${fields}`)).json();
+  const rules = cells.map((_, i) => meta.sheets?.[0]?.data?.[i]?.rowData?.[0]?.values?.[0]?.dataValidation?.condition);
+
+  const choices = {};
+  const fromRange = []; // [cell, range]
+  rules.forEach((rule, i) => {
+    const values = (rule?.values || []).map((v) => v.userEnteredValue).filter((v) => v != null);
+    if (rule?.type === "ONE_OF_LIST" && values.length) choices[cells[i]] = values;
+    else if (rule?.type === "ONE_OF_RANGE" && values[0]) fromRange.push([cells[i], values[0].replace(/^=/, "")]);
+  });
+
+  if (fromRange.length) {
+    const wanted = [...new Set(fromRange.map(([, range]) => range))];
+    const query = wanted.map((r) => `ranges=${encodeURIComponent(r)}`).join("&");
+    const data = await (await gfetch(`${SHEETS}/${spreadsheetId}/values:batchGet?${query}`)).json();
+    const lists = new Map(wanted.map((range, i) => [
+      range,
+      [...new Set((data.valueRanges?.[i]?.values || []).flat().map((v) => String(v).trim()).filter(Boolean))],
+    ]));
+    for (const [cell, range] of fromRange) if (lists.get(range)?.length) choices[cell] = lists.get(range);
+  }
+  return choices;
+}
+
+// ── Writing a correction ──────────────────────────────────────────────────────
+
+// Kept in memory only: an hour at most, and gone on reload.
+let writeToken = null;
+let writeExpiresAt = 0;
+
+export const googleCanWrite = () => !!writeToken && Date.now() < writeExpiresAt;
+
+// Asks Google for edit access to spreadsheets. Must be called from a click.
+export async function connectGoogleForWriting() {
+  if (!CLIENT_ID) throw new GoogleError("not-configured");
+  await loadGsi();
+  return new Promise((resolve, reject) => {
+    const client = window.google.accounts.oauth2.initTokenClient({
+      client_id: CLIENT_ID,
+      scope: WRITE_SCOPE,
+      callback: (res) => {
+        // Granted the sign-in but not the scope: Google returns a token that can't write.
+        const granted = window.google.accounts.oauth2.hasGrantedAllScopes(res, WRITE_SCOPE);
+        if (res.error || !res.access_token || !granted) return reject(new GoogleError("denied"));
+        writeToken = res.access_token;
+        writeExpiresAt = Date.now() + (Number(res.expires_in) - 60) * 1000;
+        resolve();
+      },
+      error_callback: (err) => reject(new GoogleError(err?.type === "popup_closed" ? "cancelled" : "popup")),
+    });
+    client.requestAccessToken();
+  });
+}
+
+async function wfetch(url, init) {
+  if (!googleCanWrite()) throw new GoogleError("signed-out");
+  const res = await fetch(url, { ...init, headers: { Authorization: `Bearer ${writeToken}`, "Content-Type": "application/json" } });
+  if (res.ok) return res.json();
+  if (res.status === 401) { writeToken = null; throw new GoogleError("signed-out", 401); }
+  throw new GoogleError(res.status === 404 ? "not-found" : res.status === 403 ? "no-access" : "failed", res.status);
+}
+
+// Writes `changes` ({ range, from, to }) to one spreadsheet. Each cell is read
+// again first and written only if it still holds `from`, so an edit someone
+// made since the preview is never overwritten. Returns how many were written
+// and how many were left because they had changed.
+export async function applyCellChanges(spreadsheetId, changes) {
+  if (!changes.length) return { written: 0, changed: 0 };
+  const ranges = changes.map((c) => `ranges=${encodeURIComponent(c.range)}`).join("&");
+  const now = await wfetch(`${SHEETS}/${spreadsheetId}/values:batchGet?${ranges}&valueRenderOption=UNFORMATTED_VALUE`);
+  const still = changes.filter((c, i) => String(now.valueRanges?.[i]?.values?.[0]?.[0] ?? "") === c.from);
+  if (still.length) {
+    await wfetch(`${SHEETS}/${spreadsheetId}/values:batchUpdate`, {
+      method: "POST",
+      // RAW: the text as typed, never read as a formula or a date.
+      body: JSON.stringify({ valueInputOption: "RAW", data: still.map((c) => ({ range: c.range, values: [[c.to]] })) }),
+    });
+  }
+  return { written: still.length, changed: changes.length - still.length };
 }

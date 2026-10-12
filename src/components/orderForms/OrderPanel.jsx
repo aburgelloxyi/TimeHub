@@ -26,11 +26,68 @@ function Group({ title, fields }) {
   );
 }
 
+const EDIT_LABEL = {
+  confirmed: "Are your orders confirmed?",
+  placement: "Placement",
+  siteName: "Media site name",
+  artwork: "Artwork",
+  translations: "Translations",
+  notes: "Notes",
+  specs: "Written specifications",
+};
+const LONG_FIELDS = new Set(["translations", "notes", "specs"]);
+const editInputClass =
+  "w-full px-3 py-2 text-sm text-[#122027] border rounded-lg outline-none focus:border-[#12a0e1] bg-white";
+
+// The cells of this order the page can write back to its sheet, holding what
+// each cell holds now. A cell that is a dropdown in the sheet is one here, with
+// the sheet's own choices (edit.choices), so nothing can be typed into it that
+// the sheet wouldn't offer. A changed field is outlined until applied.
+function EditFields({ order, edit }) {
+  const fields = Object.keys(order.cells || {});
+  if (!fields.length) {
+    return <p className="mt-4 text-sm text-[#768994]">Refresh this market to edit its orders here.</p>;
+  }
+  return (
+    <section className="mt-4 rounded-xl bg-slate-50 border border-[#dce4ec] p-4 space-y-3">
+      <h3 className="text-[10px] font-black uppercase tracking-widest text-indigo-600">Edit in the sheet</h3>
+      {fields.map((field) => {
+        const was = order.cells[field].was;
+        const value = edit.values[field] ?? was;
+        const changed = value !== was;
+        const options = edit.choices?.[order.cells[field].at];
+        const props = {
+          value,
+          onChange: (e) => edit.set(field, e.target.value),
+          className: `${editInputClass} ${changed ? "border-indigo-500 ring-2 ring-indigo-500/15" : "border-[#dce4ec]"}`,
+        };
+        return (
+          <label key={field} className="block">
+            <span className="flex items-baseline justify-between gap-2 text-xs text-[#768994] mb-1">
+              {EDIT_LABEL[field]}
+              <span className="font-mono text-[10px]">{order.cells[field].at}</span>
+            </span>
+            {options ? (
+              <select {...props}>
+                {/* What the cell holds now stays selectable even if the sheet's
+                    list no longer includes it. */}
+                {!options.includes(value) && <option value={value}>{value || "—"}</option>}
+                {options.map((o) => <option key={o} value={o}>{o}</option>)}
+              </select>
+            ) : LONG_FIELDS.has(field) ? <textarea rows={3} {...props} /> : <input {...props} />}
+          </label>
+        );
+      })}
+    </section>
+  );
+}
+
 const size = (o) => (o.width && o.height ? `${o.width} × ${o.height}${o.unit ? ` ${o.unit}` : ""}` : "");
 
 // `task` is the Wrike task with this order's name, when TimeHub has it loaded,
-// and `parent` the task it is a subtask of.
-export default function OrderPanel({ order, task, parent, today }) {
+// and `parent` the task it is a subtask of. `edit` is set in the market's edit
+// mode: { values, set } for this order's pending edits.
+export default function OrderPanel({ order, task, parent, today, edit }) {
   const wrike = task ? taskSummary(task, parent) : null;
   const urgency = orderUrgency(order, today);
   const x = order.xyi;
@@ -49,6 +106,8 @@ export default function OrderPanel({ order, task, parent, today }) {
         </div>
         <span className={`${pillClass} ${STATUS_CLASS[order.status]} shrink-0`}>{STATUS_LABEL[order.status]}</span>
       </div>
+
+      {edit && <EditFields order={order} edit={edit} />}
 
       <div className="mt-2">
         <Group

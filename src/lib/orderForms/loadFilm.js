@@ -4,7 +4,7 @@
 
 import { mapPool } from "../fetchPool";
 import { FILM_MAPPINGS } from "../../constants";
-import { listFolders, listSheetsIn, downloadSheet, GoogleError } from "./googleApi";
+import { listFolders, listSheetsIn, downloadSheet, GoogleError, GOOGLE_SHEET } from "./googleApi";
 import { clientFor, filmsIn } from "./driveTree";
 import { sheetsFromBuffer } from "./readXlsx";
 import { marketFromSheets } from "./parseWorkbook";
@@ -29,8 +29,15 @@ export async function listFilms(clientId) {
   return filmsIn(folders, await listSheetsIn(folders.map((f) => f.id)), FILM_MAPPINGS);
 }
 
-async function loadMarket({ name, sheet }) {
-  const from = { sheetName: sheet.name, sheetUrl: sheet.webViewLink || "" };
+async function loadMarket({ name, folderId, sheet }) {
+  const from = {
+    sheetName: sheet.name,
+    sheetUrl: sheet.webViewLink || "",
+    sheetId: sheet.id,
+    // An uploaded Excel file can be read but has no cells Google can write to.
+    sheetNative: sheet.mimeType === GOOGLE_SHEET,
+    folderUrl: folderId ? `https://drive.google.com/drive/folders/${folderId}` : "",
+  };
   try {
     return { ...marketFromSheets(await sheetsFromBuffer(await downloadSheet(sheet)), name), ...from };
   } catch (err) {
@@ -73,6 +80,7 @@ export async function loadFilm({ clientId, filmKey, onProgress, onMarket }, now 
     id: `${now.getTime().toString(36)}-${Math.random().toString(36).slice(2, 8)}`,
     name: `${clientFor(clientId).label} · ${film.label}`,
     kind: film.medium,
+    film: film.title,
     loadedAt: now.toISOString(),
     source: { clientId, filmKey },
     markets,

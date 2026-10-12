@@ -6,6 +6,8 @@
 // Paramount's and Universal's forms word some headers differently; where they
 // do, a field lists both.
 
+import { a1 } from "./cells";
+
 const norm = (v) => String(v ?? "").replace(/\s+/g, " ").trim().toLowerCase();
 
 // What an untouched template cell says. They read as empty everywhere.
@@ -88,7 +90,11 @@ export const isMarketTab = (name) => !name.startsWith("_") && name !== "AA_Test_
 
 // The header of the column that says which market a row is for. Finding it is
 // how the header row itself is found.
-const MARKET_HEADERS = ["market", "territory code"];
+const MARKET_HEADERS = ["market", "territory code", "country"];
+
+// The index of a tab's header row, or -1.
+export const findHeaderRow = (rows) =>
+  rows.findIndex((row) => (row || []).some((cell) => MARKET_HEADERS.includes(norm(cell))));
 
 // field → the header it sits under. A string matches the start of the header;
 // { is } matches the whole header, for words that also start other headers.
@@ -140,6 +146,11 @@ const XYI_COLUMNS = [
   ["xyiFormat", "format"],
   ["quote", "quote"],
 ];
+
+// Fields the page can edit in the sheet: plain text, where what is typed is
+// what the cell should hold. Dates and sizes are left out; written as text
+// they would stop being dates and numbers to the sheet's own formulas.
+export const EDITABLE_FIELDS = ["confirmed", "placement", "siteName", "artwork", "translations", "notes", "specs"];
 
 const REQUIRED = [["confirmed", "Confirmed"], ["width", "Width"], ["height", "Height"], ["deliveryDeadline", "Delivery deadline"]];
 const DATE_FIELDS = new Set(["deliveryDeadline", "liveDate"]);
@@ -217,7 +228,7 @@ function readOrder(row, rowNumber, cols, xyiCols) {
 }
 
 export function parseMarket(name, rows) {
-  const headerAt = rows.findIndex((row) => (row || []).some((cell) => MARKET_HEADERS.includes(norm(cell))));
+  const headerAt = findHeaderRow(rows);
   if (headerAt === -1) return unreadable(name, "No header row found");
 
   const cols = mapColumns(rows[headerAt]);
@@ -230,12 +241,24 @@ export function parseMarket(name, rows) {
   const above = mapXyiColumns(rows[headerAt - 1], marketEnd);
   const xyiCols = "title" in above ? above : mapXyiColumns(rows[headerAt], marketEnd);
 
+  // Rows start at the sheet's first used cell (see readXlsx.js).
+  const origin = rows.origin || { r: 0, c: 0 };
   const orders = [];
   let undated = 0;
   for (let i = headerAt + 1; i < rows.length; i++) {
     const order = readOrder(rows[i] || [], i + 1, cols, xyiCols);
     if (order === "undated") undated++;
-    else if (order) orders.push(order);
+    else if (order) {
+      // Where each editable field sits and what the cell holds, uncleaned: an
+      // edit is written to that cell only if it still holds this.
+      order.cells = {};
+      for (const field of EDITABLE_FIELDS) {
+        if (!(field in cols)) continue;
+        const raw = rows[i]?.[cols[field]];
+        order.cells[field] = { at: a1(i + origin.r, cols[field] + origin.c), was: raw == null ? "" : String(raw) };
+      }
+      orders.push(order);
+    }
   }
   return { name, code: codeFromTab(name), kind: kindOf(rows, headerAt, cols), unreadable: null, orders, undated };
 }

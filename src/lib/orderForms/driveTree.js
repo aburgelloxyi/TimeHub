@@ -61,7 +61,7 @@ export function filmsIn(folders, sheets, names = {}) {
     .map(({ byFolder, ...film }) => ({
       ...film,
       markets: [...byFolder]
-        .map(([folderId, sheet]) => ({ name: marketName(folderById.get(folderId).name), sheet }))
+        .map(([folderId, sheet]) => ({ name: marketName(folderById.get(folderId).name), folderId, sheet }))
         .sort((a, b) => a.name.localeCompare(b.name)),
     }))
     .sort((a, b) => a.label.localeCompare(b.label));

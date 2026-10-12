@@ -20,8 +20,9 @@ import { isoToday } from "../utils/dates";
 // ways: a film read live from Google (every market's sheet, found in the
 // client's Drive folders), or a workbook dropped onto the page. Either way they are
 // parsed in the browser and kept in this browser only (see lib/orderForms/
-// store.js for why they never go to Supabase). Read-only: nothing here writes
-// to Google or Wrike.
+// store.js for why they never go to Supabase). A market's page is where the
+// writes are: its edit mode writes to Google Sheets, and its Wrike button
+// creates the market's folder.
 
 // `#orderforms/<fileId>/<market>` — the open file and market live in the hash,
 // so a reload stays put and Back returns from a market to the overview.
@@ -32,6 +33,11 @@ const readHash = () => {
 };
 const hashFor = (fileId, market) =>
   `#orderforms${fileId ? `/${fileId}` : ""}${fileId && market ? `/${encodeURIComponent(market)}` : ""}`;
+
+// The film a Google-loaded file is for, as its sheets name it. Films loaded
+// before the title was kept still have it in the key Refresh finds them by.
+const filmTitleOf = (file) =>
+  file?.source?.clientId ? file.film || String(file.source.filmKey || "").split("|")[0] : "";
 
 const hasFiles = (e) => Array.from(e.dataTransfer?.types || []).includes("Files");
 
@@ -254,7 +260,7 @@ export default function OrderForms({ wrikeData }) {
             </div>
             {error && <p role="alert" className="text-sm font-medium text-rose-600">{error}</p>}
             {market
-              ? <MarketView market={market} kind={market.kind || file.kind} today={today} wrikeIndex={wrikeIndex} wrikeParents={wrikeParents} onBack={() => go(file.id, null)} />
+              ? <MarketView market={market} kind={market.kind || file.kind} filmTitle={filmTitleOf(file)} clientId={file.source?.clientId} onChanged={refresh} today={today} wrikeIndex={wrikeIndex} wrikeParents={wrikeParents} onBack={() => go(file.id, null)} />
               : <MarketList file={file} today={today} wrikeIndex={wrikeIndex} onOpen={(name) => go(file.id, name)} />}
           </>
         )}

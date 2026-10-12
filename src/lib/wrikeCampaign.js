@@ -61,6 +61,22 @@ export async function discoverJobNumberField() {
   return field ? { id: field.id, title: field.title } : null;
 }
 
+// The field a market's Wrike folder keeps its Google Drive link in, found by
+// title: "Order Form" first, then anything named for a Google Drive link.
+// null when the account has no such field: nothing here creates one.
+export async function discoverDriveLinkField() {
+  const fields = await wrikeGet("/customfields");
+  const norm = (s) => (s || "").toLowerCase().replace(/[^a-z0-9]/g, "");
+  const field =
+    fields.find((f) => /^orderforms?(link|url|folder)?$/.test(norm(f.title))) ||
+    fields.find((f) => /orderform/.test(norm(f.title))) ||
+    fields.find((f) => /^(gdoc|gdrive|googledrive|googledoc|drive)(link|url|folder)?$/.test(norm(f.title))) ||
+    fields.find((f) => /gdoc|gdrive|googledrive|googledoc/.test(norm(f.title))) ||
+    fields.find((f) => /drive/.test(norm(f.title)) && /(link|url)/.test(norm(f.title))) ||
+    null;
+  return field ? { id: field.id, title: field.title } : null;
+}
+
 // The per-slot price on each JOBNUMBER template folder, found by title like Job
 // Number. Only project managers can see it in Wrike, so "not found" means "leave
 // the cost empty", never an error.
@@ -662,8 +678,8 @@ export async function applyPropagate(willSet, fieldId, jobNumber, onProgress) {
   return { ok, failed };
 }
 
-// Set the Job Number field on a folder itself (renaming only changes the title).
-export async function setFolderJobNumber(folderId, fieldId, value) {
+// Set one custom field on a folder itself (renaming only changes the title).
+export async function setFolderField(folderId, fieldId, value) {
   const cf = encodeURIComponent(JSON.stringify([{ id: fieldId, value: String(value) }]));
   const res = await fetch(`${WRIKE}/folders/${folderId}?customFields=${cf}`, { method: "PUT" });
   if (!res.ok) {
@@ -671,6 +687,8 @@ export async function setFolderJobNumber(folderId, fieldId, value) {
     throw new Error(`set field on folder ${folderId} (${res.status})${body ? `: ${body}` : ""}`);
   }
 }
+
+export const setFolderJobNumber = setFolderField;
 
 // Turn on Wrike's field cascading for one field on a folder, so the folder's
 // current value is pushed to every subitem, now and in future (the UI's "Apply
@@ -713,16 +731,24 @@ export async function copyTemplateFolder({ sourceFolderId, parentId, title }) {
   return json.data?.[0]?.id || null;
 }
 
-// Create an empty folder under a parent. Used by the split copier to rebuild a
-// too-big folder's shell before copying its children in separately.
-async function createFolder(parentId, title) {
+// Create an empty folder under a parent. Returns { id, permalink }.
+export async function createFolderIn(parentId, title) {
   const res = await fetch(`${WRIKE}/folders/${parentId}/folders?title=${encodeURIComponent(title)}`, { method: "POST" });
   if (!res.ok) {
     const body = await res.text().catch(() => "");
     throw new Error(`create folder (${res.status})${body ? `: ${body}` : ""}`);
   }
-  const json = await res.json();
-  return json.data?.[0]?.id || null;
+  const folder = (await res.json()).data?.[0];
+  return { id: folder?.id || null, permalink: folder?.permalink || "" };
+}
+
+// Used by the split copier to rebuild a too-big folder's shell before copying
+// its children in separately.
+const createFolder = async (parentId, title) => (await createFolderIn(parentId, title)).id;
+
+// One folder's link in Wrike, or "".
+export async function fetchFolderPermalink(folderId) {
+  return (await wrikeGet(`/folders/${folderId}`))[0]?.permalink || "";
 }
 
 // Tasks directly in a folder (not its subfolders). A split copy rebuilds the

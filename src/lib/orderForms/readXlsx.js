@@ -21,8 +21,27 @@ export async function sheetsFromBuffer(buffer) {
       e: { r: e.r - origin.r, c: e.c - origin.c },
     }));
     sheets[name] = fillMergedDown(rows, merges);
+    // For parseWorkbook, which records the address of cells the page can edit.
+    sheets[name].origin = origin;
   }
   return sheets;
+}
+
+// Each tab's cells as they are, with where the first one sits on the sheet.
+// For corrections, which need a cell's real address and must not see a merged
+// value copied into cells that don't hold it.
+export async function gridsFromBuffer(buffer) {
+  const XLSX = await import("xlsx");
+  const workbook = XLSX.read(buffer);
+  const grids = {};
+  for (const name of workbook.SheetNames) {
+    const sheet = workbook.Sheets[name];
+    grids[name] = {
+      rows: XLSX.utils.sheet_to_json(sheet, { header: 1, raw: true, defval: "" }),
+      origin: sheet["!ref"] ? XLSX.utils.decode_range(sheet["!ref"]).s : { r: 0, c: 0 },
+    };
+  }
+  return grids;
 }
 
 export async function readXlsx(file) {

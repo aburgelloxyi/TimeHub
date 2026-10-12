@@ -22,7 +22,7 @@ import {
 } from "../lib/sharedTaskSync";
 import {
   enrichTasks,
-  filterToTeams,
+  keepForCache,
   hydrateMissingFolders,
   parseWrikeData,
   getStudioName,
@@ -39,7 +39,7 @@ import { usesTeamBoard } from "../lib/departments";
 import { hasLeft } from "../lib/people";
 
 const FIELDS_FILTER = encodeURIComponent(
-  "[customFields,parentIds,responsibleIds,subTaskIds,description]"
+  "[customFields,parentIds,responsibleIds,subTaskIds,superTaskIds,description]"
 );
 const SYNC_INTERVAL_MS  = 15 * 60 * 1000;   // re-sync if data is >15 min old
 const META_MAX_AGE_MS   = 24 * 60 * 60 * 1000; // refresh folder/contact dicts daily
@@ -672,21 +672,11 @@ export function useWrikeCache() {
         }
       }
 
-      // Keep only tasks some team needs (the filter uses fields every page has).
-      // Launch-hub subtasks are relevant by membership, not title (digital waves'
-      // subtasks have no "_Print_" marker), so anything under a known hub is kept.
-      const hubSubIds = new Set(
-        [...tasksRef.current, ...rawTasks]
-          .filter((t) => t.title && PRINT_HUB_RE.test(t.title))
-          .flatMap((t) => t.subTaskIds || [])
-      );
+      // Keep only tasks some team needs, and the subtasks of those (see
+      // keepForCache). That is also what keeps a launch hub's per-market
+      // subtasks, which nothing in their own titles marks out.
       const teamIds = await loadTeamIds();
-      const relevantMap = new Map(
-        filterToTeams(rawTasks, folderDictionary, teamIds).map((t) => [t.id, t])
-      );
-      for (const t of rawTasks) {
-        if (hubSubIds.has(t.id)) relevantMap.set(t.id, t);
-      }
+      const relevantMap = keepForCache(rawTasks, tasksRef.current, folderDictionary, teamIds);
       const relevant = [...relevantMap.values()];
 
       // Tasks that changed and no longer pass the filter (e.g. reassigned) are purged,
@@ -940,15 +930,10 @@ export function useWrikeCache() {
     if (!raw.length) return;
 
     // Same relevance check sync() applies — a webhook-changed task that no
-    // longer (or never did) pass filterToTeams must not be added to the
-    // shared cache, and must be purged if it's there from before. Launch-hub
-    // subtasks are relevant by membership (see sync()) — a status change on a
-    // digital wave's per-market subtask must update it, not purge it.
-    const hubSubIds = new Set(
-      [...tasksRef.current, ...raw]
-        .filter((t) => t.title && PRINT_HUB_RE.test(t.title))
-        .flatMap((t) => t.subTaskIds || [])
-    );
+    // longer (or never did) qualify must not be added to the shared cache,
+    // and must be purged if it's there from before. A subtask of a kept task
+    // qualifies by membership (see keepForCache), so a status change on one
+    // updates it, not purges it.
     let teamIds;
     try {
       teamIds = await loadTeamIds();
@@ -957,12 +942,7 @@ export function useWrikeCache() {
       console.warn("[WrikeCache] webhook update skipped:", e.message);
       return;
     }
-    const relevantMap = new Map(
-      filterToTeams(raw, ctx.folderDictionary, teamIds).map((t) => [t.id, t])
-    );
-    for (const t of raw) {
-      if (hubSubIds.has(t.id)) relevantMap.set(t.id, t);
-    }
+    const relevantMap = keepForCache(raw, tasksRef.current, ctx.folderDictionary, teamIds);
     const relevant = [...relevantMap.values()];
     const droppedIds = raw.filter((t) => !relevantMap.has(t.id)).map((t) => t.id);
 

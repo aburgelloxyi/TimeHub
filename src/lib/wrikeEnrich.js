@@ -410,6 +410,43 @@ export function filterToTeams(tasks, folderDictionary, teamIds) {
   });
 }
 
+// What the shared cache keeps out of a batch from Wrike: whatever filterToTeams
+// keeps, plus every subtask of a kept task, however deep. People are usually
+// assigned to a parent task and its per-size or per-market subtasks left bare,
+// so without this a team's own subtasks were missing.
+//
+// `cached` is what the cache already holds. A cached task that is also in the
+// batch is judged afresh, so a parent that has just stopped qualifying doesn't
+// keep its subtasks in. A subtask is recognised from either side: the parent's
+// subTaskIds, or its own superTaskIds (the list endpoint drops optional fields
+// after its first page, so one of the two can be missing).
+export function keepForCache(batch, cached, folderDictionary, teamIds) {
+  const kept = new Map(filterToTeams(batch, folderDictionary, teamIds).map((t) => [t.id, t]));
+  const inBatch = new Set(batch.map((t) => t.id));
+  const keptIds = new Set();
+  const childIds = new Set();
+  const keep = (t) => {
+    keptIds.add(t.id);
+    for (const id of t.subTaskIds || []) childIds.add(id);
+  };
+  for (const t of cached || []) if (!inBatch.has(t.id)) keep(t);
+  for (const t of kept.values()) keep(t);
+
+  let grew = true;
+  while (grew) {
+    grew = false;
+    for (const t of batch) {
+      if (!t.title || kept.has(t.id)) continue;
+      if (childIds.has(t.id) || t.superTaskIds?.some((id) => keptIds.has(id))) {
+        kept.set(t.id, t);
+        keep(t);
+        grew = true;
+      }
+    }
+  }
+  return kept;
+}
+
 // ---------------------------------------------------------------------------
 // Enrich raw Wrike tasks with computed fields (film name, paths, status, etc.)
 // ---------------------------------------------------------------------------

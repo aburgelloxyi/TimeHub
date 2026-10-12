@@ -84,7 +84,11 @@ A task is kept if it's assigned to anyone in a department that has a team board
 (Motion, Print, AM and Digital today; PM and Operations don't use the board or
 Canvas, so their tasks aren't kept), if its title matches certain keywords
 (DOOH, DINTH, MATRIX, Print launch hubs), if it sits in a digital folder, or if
-it has a subtask that meets one of those. Team membership comes from each
+it has a subtask that meets one of those. Every subtask of a kept task is kept
+too, however deep, because people are usually assigned to the parent and the
+per-size or per-market subtasks under it are left unassigned (`keepForCache` in
+`src/lib/wrikeEnrich.js`). The title keywords predate that rule and are not the
+way to bring a new department's tasks in: tag its people and give it a board. Team membership comes from each
 person's department in their profile, matched by Wrike id. When a task stops
 qualifying, for example because it's reassigned to someone in PM, it is
 removed from the cache so a stale copy doesn't linger.

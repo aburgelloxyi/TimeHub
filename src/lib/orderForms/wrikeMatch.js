@@ -2,10 +2,10 @@
 // sheet builds for an order with the titles of the Wrike tasks TimeHub has
 // already loaded. Nothing is sent anywhere and nothing in Wrike changes.
 //
-// It can only say yes. The shared cache keeps Motion's DOOH/DINTH tasks and
-// whatever is assigned to a team with a board (see filterToTeams), so a task
-// that exists but isn't in the cache, such as an unassigned Print order, finds
-// no match. The screens show "In Wrike" for a match and stay silent otherwise.
+// It can only say yes. The shared cache keeps what is assigned to a team with
+// a board and the subtasks under those (see keepForCache), so a task that
+// exists but isn't in the cache, such as one nobody on a team is assigned to
+// at any level, finds no match. The screens show "In Wrike" for a match and stay silent otherwise.
 
 // A PM tidies the name when making the task: the sheet leaves a doubled
 // underscore where a market gave no site name, and spaces become underscores.

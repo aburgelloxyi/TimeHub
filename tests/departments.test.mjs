@@ -12,7 +12,7 @@ import {
   countedStatusFor,
   jobQuickFiltersFor,
 } from "../src/lib/departments.js";
-import { filterToTeams } from "../src/lib/wrikeEnrich.js";
+import { filterToTeams, keepForCache } from "../src/lib/wrikeEnrich.js";
 
 const NOBODY = "NOT_A_MANAGER";
 
@@ -59,4 +59,24 @@ check(
     filterToTeams(tasks, folders, team).map((t) => t.id),
     ["a", "c", "d", "e", "f", "g"]
   );
+}
+
+// What a batch adds to the cache: the filter's picks and the subtasks under
+// anything kept.
+{
+  const team = new Set(["U_PRINT"]);
+  const ids = (batch, cached = []) => [...keepForCache(batch, cached, {}, team).keys()];
+  const parent = { id: "p", title: "EBZR_Batch1_HU", responsibleIds: ["U_PRINT"], subTaskIds: ["s1", "s2"] };
+  const s1 = { id: "s1", title: "EBZR_INTL_OOH_CLP_HU", responsibleIds: [] };
+  const s2 = { id: "s2", title: "EBZR_INTL_INTH_Panaflex_HU", responsibleIds: [], subTaskIds: ["g"] };
+  const grandchild = { id: "g", title: "Resize", responsibleIds: [] };
+  const stranger = { id: "x", title: "Somebody else's", responsibleIds: ["U_PM"] };
+
+  check("cache: unassigned subtasks of a kept task are kept, however deep", ids([parent, s1, s2, grandchild, stranger]), ["p", "s1", "s2", "g"]);
+  check("cache: a subtask arriving alone is kept when its parent is cached", ids([s1, stranger], [parent]), ["s1"]);
+  check("cache: known by its own superTaskIds when the parent's list is missing",
+    ids([{ ...s1, superTaskIds: ["p"] }], [{ ...parent, subTaskIds: undefined }]), ["s1"]);
+  check("cache: a parent that stops qualifying no longer keeps its subtasks in",
+    ids([{ ...parent, responsibleIds: ["U_PM"] }, s1], [parent]), []);
+  check("cache: a subtask with no title is still left out", ids([parent, { ...s1, title: "" }]), ["p"]);
 }

@@ -1,4 +1,4 @@
-import { parseAmends, amendKey, buildAmends, creativeOfName, marketOfName, isMotionJob } from "../src/lib/amends/amends.js";
+import { parseAmends, amendKey, buildAmends, creativeOfName, marketOfName, assignedToMotion, namesMotionDeliverable, motionCommented } from "../src/lib/amends/amends.js";
 
 const review = [
   "SF_INTL_Trio_DOOH_RealPlazaChiclayo_1920x1080px_20s_PE_V01.mov",
@@ -36,10 +36,15 @@ check("a Motion member naming deliverables is replying", mine.filter((n) => n.ki
 check("a note carries its deliverable's status and parts", [mine[1].status, mine[1].site, mine[1].size, mine[1].length, mine[1].market], ["Delivered", "RealPlazaCusco", "1920x1080", "20s", "PE"]);
 check("'please' is not an animation note", buildAmends({ jobs: [job], subs, people, motionIds: ["MO"], comments: { J1: [comments.J1[1], { id: "c9", authorId: "REV", at: "2026-10-01T09:00:00Z", text: `${cusco}_V02.mov\nPlease darken behind the bugs` }] } }).notes[0].themes, ["Artwork / colour"]);
 
-const titled = (t) => ({ S: { title: t } });
-check("a job is a motion job by its deliverables, whatever it is called", [
-  isMotionJob({ subTaskIds: ["S"] }, titled("FID_INTL_PortalToParadise_DOOH_1080x1920px_10s_TR")),
-  isMotionJob({ subTaskIds: ["S"] }, titled("FID_ACTIVITY_BOOKLET_12x8in_INTL_P1_UK")),
-  isMotionJob({ subTaskIds: ["S"] }, titled("FID_INTL_DOOH_Bespoke_DIAGONAL_Lower_Ring1_2753x384_ES")),
-  isMotionJob({ subTaskIds: [] }, {}),
-], [true, false, false, false]);
+const sub = (title, responsibleIds = []) => ({ S: { title, responsibleIds } });
+check("a motion job is one Motion is assigned to, on the job or a subtask", [
+  assignedToMotion({ responsibleIds: ["MO"], subTaskIds: [] }, {}, ["MO"]),
+  assignedToMotion({ responsibleIds: ["PM"], subTaskIds: ["S"] }, sub("anything", ["MO"]), ["MO"]),
+  assignedToMotion({ responsibleIds: ["PM"], subTaskIds: ["S"] }, sub("anything", ["PM"]), ["MO"]),
+], [true, true, false]);
+check("with nobody from Motion assigned, only a motion-named deliverable earns a look", [
+  namesMotionDeliverable({ subTaskIds: ["S"] }, sub("FID_INTL_PortalToParadise_DOOH_1080x1920px_10s_TR")),
+  namesMotionDeliverable({ subTaskIds: ["S"] }, sub("FID_ACTIVITY_BOOKLET_12x8in_INTL_P1_UK")),
+  namesMotionDeliverable({ subTaskIds: ["S"] }, sub("FID_INTL_DOOH_Bespoke_DIAGONAL_Lower_Ring1_2753x384_ES")),
+], [true, false, false]);
+check("and it stays only if Motion commented", [motionCommented([{ authorId: "PM" }, { authorId: "MO" }], ["MO"]), motionCommented([{ authorId: "PM" }], ["MO"])], [true, false]);

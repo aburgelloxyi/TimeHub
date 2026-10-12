@@ -3,9 +3,9 @@
 // campaign is a hundred calls or so: it runs when somebody opens Amends, and
 // the result is kept in this browser until they refresh it.
 import { fetchRetrying } from "../fetchPool";
-import { buildAmends, isMotionJob } from "./amends";
+import { assignedToMotion, buildAmends, motionCommented, namesMotionDeliverable } from "./amends";
 
-const FIELDS = encodeURIComponent('["subTaskIds"]');
+const FIELDS = encodeURIComponent('["subTaskIds","responsibleIds"]');
 const KEEP_MS = 6 * 60 * 60 * 1000;
 const storeKey = (campaignId) => `xyi.amends.v1.${campaignId}`;
 
@@ -22,7 +22,7 @@ const hasSubtasks = (t) => (t.subTaskIds || []).length > 0;
  * files under this film, plus any task in Wrike whose title starts with one
  * of the film's codes ("FID - TR - DOOH - Batch 1"), which reaches the jobs
  * the cache is too young to hold. Which of them are MOTION jobs is decided
- * afterwards, from their subtasks.
+ * afterwards, from who is assigned and who commented.
  */
 async function findCandidates({ title, cached, codes, signal }) {
   const byId = {};
@@ -94,23 +94,29 @@ export async function fetchAmends({ campaignId, title, cached = [], codes = [], 
   const subs = {};
   for (let i = 0; i < subIds.length; i += 100) {
     (await wrike(`/tasks/${subIds.slice(i, i + 100).join(",")}`, signal)).forEach((t) => {
-      subs[t.id] = { title: t.title, statusName: statusName[t.customStatusId] || t.status };
+      subs[t.id] = { title: t.title, statusName: statusName[t.customStatusId] || t.status, responsibleIds: t.responsibleIds || [] };
     });
   }
-  const jobs = candidates.filter((j) => isMotionJob(j, subs));
-  if (!jobs.length) return none;
+  // Comments are read for the jobs Motion is assigned to, and for the ones
+  // that only LOOK like motion jobs; those stay only if Motion commented.
+  const assigned = {};
+  candidates.forEach((j) => { if (assignedToMotion(j, subs, motionIds)) assigned[j.id] = true; });
+  const toRead = candidates.filter((j) => assigned[j.id] || namesMotionDeliverable(j, subs));
+  if (!toRead.length) return none;
 
   const comments = {};
   let done = 0;
-  await inBatches(jobs, 4, async (job) => {
+  await inBatches(toRead, 4, async (job) => {
     comments[job.id] = (await wrike(`/tasks/${job.id}/comments?plainText=true`, signal)).map((c) => ({
       id: c.id,
       authorId: c.authorId,
       text: c.text,
       at: c.createdDate || c.updatedDate,
     }));
-    onProgress?.(++done, jobs.length);
+    onProgress?.(++done, toRead.length);
   });
+  const jobs = toRead.filter((j) => assigned[j.id] || motionCommented(comments[j.id], motionIds));
+  if (!jobs.length) return none;
 
   const stored = { at: new Date().toISOString(), result: buildAmends({ jobs, subs, comments, people, motionIds }) };
   // Too big for this browser's storage is not a failure: it is read again next time.

@@ -103,12 +103,23 @@ export function parseAmends(text) {
   return { byKey, general };
 }
 
-// A motion job is one with a motion deliverable under it: a subtask named with
-// a size AND a length ("…_1080x1920px_10s_TR"). Its own title says nothing
-// reliable: one film's are "SF Motion Outdoor CO 4", another's
-// "FID - TR - DOOH - Batch 1", and statics carry a size but never a length.
-export const isMotionJob = (job, subs) =>
+// A MOTION JOB IS ONE THE MOTION TEAM WORKED ON: somebody in Wrike's Motion
+// group is assigned to it or to one of its subtasks, or commented on it. Its
+// title says nothing reliable (one film's are "SF Motion Outdoor CO 4",
+// another's "FID - TR - DOOH - Batch 1"), and its status reads Delivered once
+// it is finished, with no history to say it was ever in Motion.
+export const assignedToMotion = (job, subs, motionIds) => {
+  const has = (ids) => (ids || []).some((id) => motionIds.indexOf(id) !== -1);
+  return has(job.responsibleIds) || (job.subTaskIds || []).some((id) => subs[id] && has(subs[id].responsibleIds));
+};
+
+// Worth reading the comments of, to see whether Motion commented: nobody from
+// Motion is assigned now, but a subtask is named like a motion deliverable, a
+// size AND a length ("…_1080x1920px_10s_TR"). Statics carry no length.
+export const namesMotionDeliverable = (job, subs) =>
   (job.subTaskIds || []).some((id) => subs[id] && looksDeliverable(String(subs[id].title || "").replace(/\.[A-Za-z0-9]{2,4}$/, "")));
+
+export const motionCommented = (comments, motionIds) => (comments || []).some((c) => motionIds.indexOf(c.authorId) !== -1);
 
 // The CREATIVE is the token left of the artwork type (`SF_INTL_Trio_DOOH_…`
 // is Trio). A legacy name spends that slot on `DGTL` and names none.

@@ -79,15 +79,25 @@ const stripForStorage = ({ permalink, ...rest }) => rest;
 // ---------------------------------------------------------------------------
 async function fetchWrikeTasks(sinceIso) {
   const dateFilter = encodeURIComponent(`{"start":"${sinceIso}"}`);
+  const query = `fields=${FIELDS_FILTER}&updatedDate=${dateFilter}&pageSize=1000`;
   let rawTasks = [];
   let nextPageToken = null;
 
   while (true) {
-    const url = nextPageToken
-      ? `/api/wrike/tasks?nextPageToken=${nextPageToken}`
-      : `/api/wrike/tasks?fields=${FIELDS_FILTER}&updatedDate=${dateFilter}&pageSize=1000`;
+    // The query is restated with the token. A token on its own returns the
+    // next page without the optional fields, and the filter needs them:
+    // without responsibleIds nobody looks assigned.
+    let url = nextPageToken
+      ? `/api/wrike/tasks?${query}&nextPageToken=${nextPageToken}`
+      : `/api/wrike/tasks?${query}`;
     console.log("[WrikeCache] fetching:", url);
-    const res = await fetch(url);
+    let res = await fetch(url);
+    if (res.status === 400 && nextPageToken) {
+      // Should Wrike refuse the restated query, a bare page is better than no sync.
+      console.warn("[WrikeCache] restated query refused, fetching the page without fields");
+      url = `/api/wrike/tasks?nextPageToken=${nextPageToken}`;
+      res = await fetch(url);
+    }
     if (!res.ok) {
       const body = await res.text().catch(() => "");
       console.error("[WrikeCache] 400 body:", body);
@@ -97,6 +107,16 @@ async function fetchWrikeTasks(sinceIso) {
     rawTasks = [...rawTasks, ...(json.data || [])];
     nextPageToken = json.nextPageToken;
     if (!nextPageToken) break;
+  }
+
+  // Any task that still came back bare is fetched again by id, which always
+  // returns the fields. Wrike sends responsibleIds even when it is empty, so
+  // its absence marks a bare task.
+  const bare = rawTasks.filter((t) => !("responsibleIds" in t)).map((t) => t.id);
+  if (bare.length > 0) {
+    console.warn(`[WrikeCache] ${bare.length} task(s) listed without their fields, fetching them by id`);
+    const full = new Map((await fetchBatched(bare)).map((t) => [t.id, t]));
+    rawTasks = rawTasks.map((t) => full.get(t.id) || t);
   }
 
   return rawTasks;

@@ -1,4 +1,4 @@
-import { sheetFilm, marketName, filmsIn, clientFor } from "../src/lib/orderForms/driveTree.js";
+import { sheetFilm, marketName, filmsIn, clientFor, driveStaleness } from "../src/lib/orderForms/driveTree.js";
 import { marketFromSheets } from "../src/lib/orderForms/parseWorkbook.js";
 
 // ── A sheet's film and medium ─────────────────────────────────────────────────
@@ -83,3 +83,18 @@ check("flag: Universal's folder names", ["Bulgaria (BG)", "Austria (AT)"].map(ma
 check("flag: sheet spellings the app names differently",
   ["Czechia (CZE)", "Turkey", "United Kingdom", "Korea (KOR)", "Georgia (CIS)"].map(marketFlag),
   [TERRITORY_FLAGS["Czech Republic"], TERRITORY_FLAGS["Türkiye"], TERRITORY_FLAGS.UK, TERRITORY_FLAGS.Korea, TERRITORY_FLAGS.Georgia]);
+
+// ── Is a loaded film still in Drive? ──────────────────────────────────────────
+{
+  const loaded = (n) => ({ source: { clientId: "universal", filmKey: "disclosure day|motion" }, markets: Array.from({ length: n }, (_, i) => ({ name: `M${i}` })) });
+  const drive = (n) => [{ key: "disclosure day|motion", markets: Array.from({ length: n }, () => ({})) }];
+  check("its sheets are all gone", driveStaleness(loaded(40), []), { gone: true });
+  check("most of its markets are gone", driveStaleness(loaded(40), drive(3)), { left: 3, had: 40 });
+  check("still there", driveStaleness(loaded(40), drive(38)), null);
+  check("a small film losing a market isn't flagged", driveStaleness(loaded(2), drive(1)), null);
+  check("a dropped workbook has nothing to compare with", driveStaleness({ markets: [] }, drive(1)), null);
+  check("Drive not listed yet: nothing claimed", driveStaleness(loaded(40), undefined), null);
+  const studio = [{ key: "disclosure day|motion", markets: [{}] }, { key: "forgotten island|motion", markets: Array.from({ length: 44 }, () => ({})) }];
+  check("already down to one market when it was loaded, beside a full film", driveStaleness(loaded(1), studio), { left: 1, typical: 44 });
+  check("a studio whose films are all small isn't flagged", driveStaleness(loaded(1), [{ key: "disclosure day|motion", markets: [{}] }, { key: "x|motion", markets: [{}, {}] }]), null);
+}

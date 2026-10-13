@@ -11,7 +11,8 @@ import { readXlsx } from "../lib/orderForms/readXlsx";
 import { parseWorkbook } from "../lib/orderForms/parseWorkbook";
 import { listFiles, saveFile, saveDecisions, saveSeen, removeFile, fileKey, storeReach } from "../lib/orderForms/store";
 import { connectGoogle, googleConfigured, googleConnected } from "../lib/orderForms/googleApi";
-import { loadFilm, loadMarketOf } from "../lib/orderForms/loadFilm";
+import { loadFilm, loadMarketOf, listFilms } from "../lib/orderForms/loadFilm";
+import { clientFor, driveStaleness } from "../lib/orderForms/driveTree";
 import { makeMatcher, indexParents, orderKey } from "../lib/orderForms/wrikeMatch";
 import { applySetAside, fileChanges, marketChanges, mergeChanges } from "../lib/orderForms/status";
 import { confirmAction } from "../lib/confirm";
@@ -84,6 +85,23 @@ export default function OrderForms({ wrikeData }) {
   }, []);
 
   useEffect(() => { reload(); }, [reload]);
+
+  // What each studio's Drive folders hold now, to notice a loaded film whose
+  // sheets have been cleared out: { clientId: films }. Listed once the films
+  // are known and Google is signed in; a failure just means nothing is flagged.
+  const [drive, setDrive] = useState({});
+  const studios = useMemo(() => [...new Set((files || []).map((f) => f.source?.clientId).filter(Boolean))].sort().join(","), [files]);
+  useEffect(() => {
+    if (!studios || !googleConfigured() || !googleConnected()) return;
+    let live = true;
+    for (const clientId of studios.split(",")) {
+      listFilms(clientId)
+        .then((found) => { if (live) setDrive((prev) => ({ ...prev, [clientId]: found })); })
+        .catch(() => {});
+    }
+    return () => { live = false; };
+  }, [studios, signedInTick]);
+  const stalenessOf = useCallback((f) => driveStaleness(f, drive[f?.source?.clientId]), [drive]);
 
   // Someone else may have refreshed a film or set a row aside. Coming back to
   // the tab picks that up, at most once a minute and never mid-load.
@@ -352,7 +370,7 @@ export default function OrderForms({ wrikeData }) {
 
         {files && files.length > 0 && !partial && (
           <>
-            <FilmBar files={files} selectedId={file?.id} onSelect={(id) => { setEditingSheets(false); go(id, null); }} onRemove={dropFile}>
+            <FilmBar files={files} selectedId={file?.id} onSelect={(id) => { setEditingSheets(false); go(id, null); }} onRemove={dropFile} staleness={stalenessOf}>
               {/* A film loaded before the page read Drive folders has no client to
                   read again from; it is loaded afresh from Add film instead. */}
               {file?.source?.clientId && (
@@ -370,6 +388,20 @@ export default function OrderForms({ wrikeData }) {
               )}
             </FilmBar>
             {error && <p role="alert" className="text-sm font-medium text-rose-600">{error}</p>}
+            {stalenessOf(file) && (
+              <div role="status" className="flex flex-wrap items-center gap-3 px-4 py-2.5 rounded-xl bg-amber-50 border border-amber-200 text-sm text-amber-700">
+                <p className="mr-auto">
+                  {stalenessOf(file).gone
+                    ? `This film's order sheets are no longer in ${clientFor(file.source.clientId)?.label || "the studio"}'s Drive folders, so it has probably run its course. What's here is the last read.`
+                    : stalenessOf(file).had
+                      ? `Only ${stalenessOf(file).left} of this film's ${stalenessOf(file).had} markets still have a sheet in Drive, so it looks like it's being wound down.`
+                      : `Only ${stalenessOf(file).left} ${stalenessOf(file).left === 1 ? "market has" : "markets have"} a sheet for this film in Drive, where the studio's fullest film has ${stalenessOf(file).typical}. Its folders look to have been cleared out.`}
+                </p>
+                <button onClick={() => dropFile(file)} className="px-3 py-1 rounded-lg bg-white border border-amber-200 hover:border-amber-600 text-xs font-bold text-amber-700 transition-colors">
+                  Remove it
+                </button>
+              </div>
+            )}
             {market
               ? <MarketView market={market} kind={market.kind || file.kind} filmTitle={filmTitleOf(file)} clientId={file.source?.clientId} filmKey={file.source?.filmKey} onChanged={refresh} today={today} matcher={matcher} wrikeParents={wrikeParents} decide={decideFor(file, market.name)} onBack={() => go(file.id, null)} />
               : (

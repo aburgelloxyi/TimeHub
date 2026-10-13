@@ -8,12 +8,15 @@ import { HoverLabel } from "../shared/FloatingCard";
 // group headings. Used for picking a film to load and for switching between
 // the films loaded, and for the dropdowns in a market's table.
 //
-// `items` are { id, label, tag, tagClass, note, group }. `trigger` replaces the
+// `items` are { id, label, tag, tagClass, note, alert, group }; `alert` is a
+// note that needs noticing, shown in place of `note`. `trigger` replaces the
 // default button with the caller's own, given ({ open, toggle }). `onRemove`
 // adds a remove button to each row. `compact` is the default button sized for
 // a table cell, and `changed` outlines it. `onOpen` is told when it opens.
 // `autoOpen` opens it by itself once it has something to offer, for a step the
-// page has just led someone to.
+// page has just led someone to. `sideBySide` sets the groups next to each
+// other as columns, so a long first group doesn't push the second off the
+// bottom of the list.
 //
 // The list is drawn on <body> and placed by measurement, above the button when
 // there is no room below. Inside the table it would be cut off by the table's
@@ -32,7 +35,7 @@ const tagClass = (item) => `${TAG} ${item.tagClass || "bg-slate-100 text-slate-6
 
 export default function PickerMenu({
   items, value, onChange, placeholder = "Pick one", icon: Icon, disabled = false,
-  searchable = false, onRemove, trigger, compact = false, changed = false, onOpen, ariaLabel, autoOpen = false,
+  searchable = false, onRemove, trigger, compact = false, changed = false, onOpen, ariaLabel, autoOpen = false, sideBySide = false,
 }) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
@@ -46,13 +49,16 @@ export default function PickerMenu({
       return;
     }
     const r = wrapRef.current.getBoundingClientRect();
-    const width = Math.min(Math.max(r.width, compact ? 220 : 320), window.innerWidth - 16);
+    const across = sideBySide ? Math.max(1, new Set(items.map((item) => item.group || "")).size) : 1;
+    const width = Math.min(Math.max(r.width, (compact ? 220 : 320) * across), window.innerWidth - 16);
     const left = Math.max(8, Math.min(window.innerWidth - width - 8, r.left));
     const below = window.innerHeight - r.bottom;
     setPlace(below < 280 && r.top > below
       ? { left, width, bottom: window.innerHeight - r.top + 6, maxHeight: Math.min(384, r.top - 16) }
       : { left, width, top: r.bottom + 6, maxHeight: Math.min(384, below - 16) });
-  }, [open, compact]);
+    // Measured when it opens; the items don't change while it is.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, compact, sideBySide]);
   const current = items.find((item) => item.id === value) || null;
 
   useEffect(() => {
@@ -136,10 +142,14 @@ export default function PickerMenu({
               />
             </label>
           )}
-          <div role="listbox" className="flex-1 min-h-0 overflow-y-auto py-2">
+          <div
+            role="listbox"
+            className={`flex-1 min-h-0 overflow-y-auto py-2 ${sideBySide && groups.size > 1 ? "grid divide-x divide-[#dce4ec]" : ""}`}
+            style={sideBySide && groups.size > 1 ? { gridTemplateColumns: `repeat(${groups.size}, minmax(0, 1fr))` } : undefined}
+          >
             {shown.length === 0 && <p className="px-4 py-3 text-sm text-[#768994]">Nothing matches.</p>}
             {[...groups].map(([group, list]) => (
-              <div key={group}>
+              <div key={group} className="min-w-0">
                 {group && <p className="px-4 pt-2 pb-1 text-[10px] font-black uppercase tracking-widest text-[#768994]">{group}</p>}
                 {list.map((item) => {
                   const active = item.id === value;
@@ -154,14 +164,16 @@ export default function PickerMenu({
                       >
                         <span className={`text-sm truncate ${compact ? "" : "font-bold"} ${active ? "text-sky-600" : "text-[#122027]"}`}>{item.label}</span>
                         {item.tag && <span className={tagClass(item)}>{item.tag}</span>}
-                        {item.note && <span className="ml-auto text-[11px] text-[#768994] shrink-0">{item.note}</span>}
+                        {item.alert
+                          ? <span className="ml-auto text-[11px] font-bold text-rose-600 shrink-0">{item.alert}</span>
+                          : item.note && <span className="ml-auto text-[11px] text-[#768994] shrink-0">{item.note}</span>}
                       </button>
                       </FullName>
                       {onRemove && (
                         <button
                           onClick={() => onRemove(item.id)}
                           aria-label={`Remove ${item.label}`}
-                          className="mr-2 p-1.5 rounded-lg text-[#9aabb5] hover:text-rose-600 hover:bg-rose-50 transition-colors"
+                          className="mr-2 p-1.5 rounded-lg text-[#9aabb5] hover:text-rose-600 hover:bg-rose-600/10 transition-colors"
                         >
                           <Trash2 className="w-3.5 h-3.5" />
                         </button>

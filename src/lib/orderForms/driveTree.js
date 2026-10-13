@@ -66,3 +66,24 @@ export function filmsIn(folders, sheets, names = {}) {
     }))
     .sort((a, b) => a.label.localeCompare(b.label));
 }
+
+// Whether a loaded film is still what the studio's Drive folders hold. Films
+// that have run their course are cleared out of the market folders, so a film
+// with no sheets left is finished, and one with most of them gone is on its
+// way. `driveFilms` is that studio's films as listed now (filmsIn).
+//   null                                   still there, or not a Drive film
+//   { gone: true }                         no sheet for it anywhere
+//   { left, had }                          fewer than half its markets remain
+//   { left, typical }                      it was already down to a handful
+//                                          when it was loaded, against the
+//                                          studio's fullest film
+export function driveStaleness(file, driveFilms) {
+  if (!file?.source?.clientId || !driveFilms) return null;
+  const now = driveFilms.find((f) => f.key === file.source.filmKey);
+  if (!now) return { gone: true };
+  const had = file.markets.length;
+  const left = now.markets.length;
+  if (had >= 4 && left < had / 2) return { left, had };
+  const typical = Math.max(...driveFilms.map((f) => f.markets.length));
+  return left <= 3 && typical >= 12 ? { left, typical } : null;
+}

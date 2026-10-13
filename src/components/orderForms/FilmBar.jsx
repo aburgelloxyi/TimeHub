@@ -1,7 +1,7 @@
 import React from "react";
 import { ChevronDown, ChevronRight, Film } from "lucide-react";
 import PickerMenu from "./PickerMenu";
-import { clientFor } from "../../lib/orderForms/driveTree";
+import { CLIENTS, clientFor } from "../../lib/orderForms/driveTree";
 import { loadedAgo, MEDIUM_LABEL as MEDIUM, MEDIUM_CLASS, MEDIUM_SOLID } from "./format";
 
 // Which loaded film the page is showing, as one line: a switcher that opens a
@@ -10,6 +10,14 @@ import { loadedAgo, MEDIUM_LABEL as MEDIUM, MEDIUM_CLASS, MEDIUM_SOLID } from ".
 // (Refresh).
 
 const norm = (s) => String(s || "").trim().toLowerCase();
+const staleNote = (stale) =>
+  !stale ? "" : stale.gone ? "gone from Drive" : stale.had ? `${stale.left} of ${stale.had} markets left` : `only ${stale.left} ${stale.left === 1 ? "market" : "markets"} left`;
+// Studios keep one order, left to right, whatever was loaded most recently;
+// dropped workbooks come last.
+const studioRank = (label) => {
+  const at = CLIENTS.findIndex((c) => c.label === label);
+  return at === -1 ? CLIENTS.length : at;
+};
 
 // A Google-loaded file knows its client and film; a dropped workbook is just
 // its file name.
@@ -19,16 +27,22 @@ const describe = (file) => {
   return { client: client || "Dropped files", film };
 };
 
-export default function FilmBar({ files, selectedId, onSelect, onRemove, children }) {
+// `staleness(file)` says whether a film's sheets have left Drive (see
+// driveStaleness); those are marked in the list.
+export default function FilmBar({ files, selectedId, onSelect, onRemove, staleness, children }) {
   const current = files.find((f) => f.id === selectedId) || files[0];
   const now = describe(current);
   const twin = files.find((f) => f.id !== current.id && f.source?.clientId && f.source.clientId === current.source?.clientId
     && norm(describe(f).film) === norm(now.film) && f.kind !== current.kind);
 
-  const items = files.map((file) => {
-    const { client, film } = describe(file);
-    return { id: file.id, label: film, tag: MEDIUM[file.kind] || "Motion", tagClass: MEDIUM_CLASS[file.kind] || MEDIUM_CLASS.motion, note: loadedAgo(file.loadedAt), group: client };
-  });
+  // By film, Motion before Print, so a film's two sit together whenever each
+  // was loaded.
+  const items = files
+    .map((file) => {
+      const { client, film } = describe(file);
+      return { id: file.id, label: film, kind: file.kind, tag: MEDIUM[file.kind] || "Motion", tagClass: MEDIUM_CLASS[file.kind] || MEDIUM_CLASS.motion, note: loadedAgo(file.loadedAt), alert: staleNote(staleness?.(file)), group: client };
+    })
+    .sort((a, b) => studioRank(a.group) - studioRank(b.group) || a.label.localeCompare(b.label) || (a.kind === "motion" ? -1 : 1) - (b.kind === "motion" ? -1 : 1));
 
   return (
     <div className="flex flex-wrap items-center gap-3">
@@ -37,6 +51,7 @@ export default function FilmBar({ files, selectedId, onSelect, onRemove, childre
         value={current.id}
         onChange={onSelect}
         onRemove={(id) => onRemove(files.find((f) => f.id === id))}
+        sideBySide
         trigger={({ open, toggle }) => (
           <button
             onClick={toggle}

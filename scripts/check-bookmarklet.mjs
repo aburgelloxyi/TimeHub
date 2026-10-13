@@ -21,9 +21,12 @@ const expected = new TextDecoder()
   .split("\n")
   .map((l, i, all) => (i === all.length - 1 && l === "" ? l : "javascript:" + l))
   .join("\n");
-const actual = readFileSync("bookmarklet.txt", "utf8");
+// Line endings aside: a Windows checkout has CRLF in both files, which says
+// nothing about whether one was built from the other.
+const sameLines = (s) => s.replace(/\r\n/g, "\n");
+const actual = sameLines(readFileSync("bookmarklet.txt", "utf8"));
 
-if (actual !== expected) {
+if (actual !== sameLines(expected)) {
   console.error("bookmarklet.txt is out of date with bookmarklet.src.js.");
   console.error("Regenerate it with the command at the top of bookmarklet.src.js, then commit both.");
   process.exit(1);

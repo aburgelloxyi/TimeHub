@@ -117,6 +117,10 @@
    own rows follow with .list-row-in. */
 @keyframes viewIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: none; } }
 .view-in { animation: viewIn 320ms var(--ease-app) both; }
+/* Coming back to a list, or swapping what it lists: a short fade and no
+   movement, so it doesn't read as the list arriving all over again. */
+@keyframes viewFade { from { opacity: 0; } to { opacity: 1; } }
+.view-fade { animation: viewFade 200ms ease-out both; }
 
 /* Client Orders: a market's row arriving, and its bar filling. --i staggers
    the first few rows of a list; past eight they come together, since a long
@@ -143,7 +147,7 @@ html.theme-revealing::view-transition-new(root) { animation: themeReveal 480ms v
 
 @media (prefers-reduced-motion: reduce) {
   .roll-up, .roll-down, .row-enter, .row-enter > td, .day-in-right, .day-in-left,
-  .tick-draw path, .tick-pop, .pop-in, .list-row-in, .view-in, .bar-fill { animation: none; }
+  .tick-draw path, .tick-pop, .pop-in, .list-row-in, .view-in, .view-fade, .bar-fill { animation: none; }
   .press, .press:active:not(:disabled) { transition: none; scale: 1; }
 }
 

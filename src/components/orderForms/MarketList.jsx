@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from "react";
+import React, { useMemo, useRef, useState } from "react";
 import { HoverLabel } from "../shared/FloatingCard";
 import { ArrowDown, ArrowUp, ChevronRight } from "lucide-react";
 import { marketSummary, fileTotals, sortMarkets, changesNote } from "../../lib/orderForms/status";
@@ -62,8 +62,12 @@ function SortHeader({ id, sort, onSort, children }) {
 // for what acts on the whole film (editing its sheets).
 // `arriving` is a film still loading: rows ease in as each market is read,
 // their bars fill, and they don't open yet. A finished list is shown still,
-// since it is returned to from every market and shouldn't replay each time.
-export default function MarketList({ file, today, matcher, onOpen, arriving = false, actions, panel }) {
+// since it is returned to from every market and shouldn't replay each time:
+// it only fades in, as a whole, when it is come back to or the film changes.
+// `still` is the list a load ends on, which the arriving one already showed.
+export default function MarketList({ file, today, matcher, onOpen, arriving = false, still = false, actions, panel }) {
+  const skipFade = useRef(still ? file.id : null);
+  if (skipFade.current !== file.id) skipFade.current = null;
   const [filter, setFilter] = useState(null);
   // null = the default order (what needs attention first).
   const [sort, setSort] = useState(null);
@@ -106,7 +110,8 @@ export default function MarketList({ file, today, matcher, onOpen, arriving = fa
   const counts = { changed: Object.keys(file.changes || {}).length, requested: totals.requested, confirmed: totals.confirmed, pending: totals.pending, unconfirmed: totals.unconfirmed, due: totals.due, notStarted: totals.notStarted };
 
   return (
-    <div className="space-y-4">
+    // Keyed by film so the fade plays again when another one is picked.
+    <div key={file.id} className={`space-y-4 ${arriving || skipFade.current ? "" : "view-fade"}`}>
       <div className="bg-white border border-[#dce4ec] rounded-2xl shadow-sm overflow-hidden">
         <div className="flex flex-wrap items-center gap-2 px-5 py-4 border-b border-[#dce4ec]">
           {/* A status nobody is in isn't worth a button. */}

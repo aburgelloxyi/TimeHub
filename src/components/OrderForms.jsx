@@ -332,6 +332,12 @@ export default function OrderForms({ wrikeData }) {
 
   const working = busy || googleBusy || !!refreshing;
   workingRef.current = working || !!partial;
+
+  // True for the one render in which a finished load swaps the arriving list
+  // for the real one, so that list doesn't fade in over itself.
+  const justLoaded = useRef(false);
+  if (partial) justLoaded.current = true;
+  useEffect(() => { if (!partial) justLoaded.current = false; });
   // A market refreshed on its own was read later than the rest of its film.
   const lastRead = market?.loadedAt || file?.loadedAt;
   const empty = files && files.length === 0;
@@ -428,6 +434,7 @@ export default function OrderForms({ wrikeData }) {
               : (
                 <MarketList
                   file={shown}
+                  still={justLoaded.current}
                   today={today}
                   matcher={matcher}
                   onOpen={(name) => go(file.id, name)}

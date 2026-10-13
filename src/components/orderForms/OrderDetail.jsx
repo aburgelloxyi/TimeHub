@@ -1,6 +1,6 @@
 import React from "react";
 import { HoverLabel } from "../shared/FloatingCard";
-import { ExternalLink } from "lucide-react";
+import { ExternalLink, Link2 } from "lucide-react";
 import { taskSummary, taskLink } from "../../lib/orderForms/wrikeMatch";
 import { formatDay } from "./format";
 import PickerMenu from "./PickerMenu";
@@ -30,10 +30,11 @@ const headingClass = "text-[10px] font-black uppercase tracking-widest text-[#76
 // `task` is the Wrike task matched to this order, `how` the way it was matched
 // ("exact", "close", "chosen"), `parent` the task it is a subtask of.
 // `matching` lets the PM overrule the match: { link, candidates, onLink }.
+// `deliveryLink` is the link on that task's File Path field, read live.
 // `onSetAside` takes the order off the list. `edit` is set in the market's
 // edit mode, for the long text that has no column: { fields, value(f),
 // changed(f), set(f, text) }.
-export default function OrderDetail({ order, task, how, parent, today, matching, onSetAside, edit }) {
+export default function OrderDetail({ order, task, deliveryLink, how, parent, today, matching, onSetAside, edit }) {
   const wrike = task ? taskSummary(task, parent) : null;
   const x = order.xyi || {};
   const wrikeTitle = x.title || order.deliveryName;
@@ -107,6 +108,15 @@ export default function OrderDetail({ order, task, how, parent, today, matching,
                 note={wrike.dueFromParent ? "On the parent task" : wrike.parentDue && `Parent task is due ${formatDay(wrike.parentDue, today)}`}
               />
             </dl>
+            {deliveryLink && (
+              <div className="mt-3 min-w-0">
+                <span className="block text-[11px] text-[#768994]">Delivery link</span>
+                <a href={deliveryLink} target="_blank" rel="noreferrer" className="inline-flex items-start gap-1.5 text-sm text-sky-600 hover:underline break-all">
+                  <Link2 className="w-3.5 h-3.5 mt-0.5 shrink-0" />
+                  {deliveryLink}
+                </a>
+              </div>
+            )}
             {parent && (
               <p className="text-[11px] text-[#768994] mt-3 break-words">
                 Subtask of{" "}

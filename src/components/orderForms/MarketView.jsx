@@ -1,9 +1,10 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { Check, ChevronRight, ExternalLink, FileSpreadsheet, Loader2, PencilLine, Send } from "lucide-react";
+import { Check, ChevronRight, ExternalLink, FileSpreadsheet, Link2, Loader2, PencilLine, Send } from "lucide-react";
 import { AnimatePresence, motion } from "framer-motion";
 import { checkMarketFolder } from "../../lib/orderForms/wrikeMarketFolder";
 import { marketSummary, orderUrgency, changeKeys, changesNote } from "../../lib/orderForms/status";
 import { orderKey, taskLink } from "../../lib/orderForms/wrikeMatch";
+import { readDeliveryLinks } from "../../lib/orderForms/deliveryLinks";
 import OrderDetail from "./OrderDetail";
 import PickerMenu from "./PickerMenu";
 import DateField from "../shared/DateField";
@@ -153,6 +154,20 @@ export default function MarketView({ market, kind, filmTitle, clientId, filmKey,
   );
   const tasks = matches.map((m) => m?.task || null);
   const inWrike = tasks.filter(Boolean).length;
+
+  // The delivery link on each matched task, read from Wrike as the market
+  // opens and again after a Refresh. A failed read shows no links; it is not
+  // worth an error on a page that works without them.
+  const [delivery, setDelivery] = useState({});
+  const taskIds = tasks.map((t) => t?.id || "").join(",");
+  useEffect(() => {
+    const ids = taskIds.split(",").filter(Boolean);
+    if (!ids.length) { setDelivery({}); return undefined; }
+    let live = true;
+    readDeliveryLinks(ids).then(({ links }) => { if (live) setDelivery(links); }).catch(() => { if (live) setDelivery({}); });
+    return () => { live = false; };
+  }, [taskIds, orders]);
+  const delivered = tasks.filter((t) => t && delivery[t.id]).length;
   const setAside = market.setAside || [];
   // Rows that can be ticked: all of them when editing; when briefing, only
   // the ones not in Wrike yet.
@@ -417,6 +432,7 @@ export default function MarketView({ market, kind, filmTitle, clientId, filmKey,
         return o.duration ? `${o.duration}s` : "";
       case "wrike":
         return tasks[i] ? (
+          <span className="flex items-center gap-1.5">
           <a
             href={taskLink(tasks[i])}
             target="_blank"
@@ -428,6 +444,21 @@ export default function MarketView({ market, kind, filmTitle, clientId, filmKey,
             <ExternalLink className="w-3 h-3" />
             {matches[i].how === "close" ? "In Wrike?" : "In Wrike"}
           </a>
+          {delivery[tasks[i].id] && (
+            <HoverLabel label="Open the delivery link">
+              <a
+                href={delivery[tasks[i].id]}
+                target="_blank"
+                rel="noreferrer"
+                onClick={(e) => e.stopPropagation()}
+                aria-label="Open the delivery link"
+                className="p-1 rounded-md text-[#1cc1a5] hover:bg-[#1cc1a5]/10 transition-colors"
+              >
+                <Link2 className="w-3.5 h-3.5" />
+              </a>
+            </HoverLabel>
+          )}
+          </span>
         ) : <span className="text-[#b6c3cc]">—</span>;
       default:
         return <span className="block truncate" title={o[col.id]}>{o[col.id]}</span>;
@@ -454,6 +485,7 @@ export default function MarketView({ market, kind, filmTitle, clientId, filmKey,
         <p className="ml-auto text-sm text-[#768994]">
           {summary.total} {summary.total === 1 ? "order" : "orders"} · {summary.confirmed} confirmed
           {inWrike > 0 && ` · ${inWrike} in Wrike`}
+          {delivered > 0 && ` · ${delivered} with a delivery link`}
           {summary.undated > 0 && ` · ${undatedNote(summary.undated)}`}
         </p>
         {filmTitle && (editing ? (
@@ -760,6 +792,7 @@ export default function MarketView({ market, kind, filmTitle, clientId, filmKey,
                             <OrderDetail
                               order={o}
                               task={tasks[i]}
+                              deliveryLink={tasks[i] ? delivery[tasks[i].id] : ""}
                               how={matches[i]?.how}
                               parent={wrikeParents?.get(tasks[i]?.id)}
                               today={today}

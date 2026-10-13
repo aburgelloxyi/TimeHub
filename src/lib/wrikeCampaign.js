@@ -44,7 +44,19 @@ async function wrikeGetAll(path) {
   return out;
 }
 
+// Tasks by id, 100 to a call (Wrike's limit). The by-id endpoint returns each
+// task's customFields without being asked.
+export async function fetchTasksById(taskIds) {
+  const ids = [...new Set(taskIds.filter(Boolean))];
+  const out = [];
+  for (let i = 0; i < ids.length; i += 100) out.push(...await wrikeGet(`/tasks/${ids.slice(i, i + 100).join(",")}`));
+  return out;
+}
+
 // ── Custom-field discovery ────────────────────────────────────────────────────
+
+// Every custom field in the account, for a caller that picks its own by title.
+export const fetchCustomFields = () => wrikeGet("/customfields");
 
 // Find the "Job Number" custom field by title rather than a hardcoded id, so it
 // survives the field being recreated. Exact "Job Number" wins; looser matches

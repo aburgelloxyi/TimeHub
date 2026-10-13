@@ -76,7 +76,7 @@ html.dark-theme.oled-theme {
    a glow, so in OLED it takes the same neutral greys as everything else, a
    step above the cards so it still lifts off them. */
 .oled-theme .floating-card {
-  background-image: linear-gradient(to bottom, #1f1f24, #151518) !important;
+  background-image: linear-gradient(to bottom, rgb(31 31 36 / 0.9), rgb(21 21 24 / 0.9)) !important;
   border-color: rgb(255 255 255 / 0.12) !important;
 }
 
@@ -86,9 +86,13 @@ html.dark-theme.oled-theme {
    gradient, so each page keeps its hue and the white text stays white. */
 .oled-theme .page-header {
   background-image:
+    var(--header-light),
     linear-gradient(rgb(0 0 0 / 0.5), rgb(0 0 0 / 0.5)),
     linear-gradient(to bottom right, var(--tw-gradient-stops)) !important;
 }
+
+/* No section tint behind the page: it would switch the black pixels on. */
+.oled-theme .min-h-screen:has(.page-header) { background-image: none; }
 
 /* Timesheet day tabs that aren't selected. Light mode gives them a grey fill
    so they read as folder tabs behind the white one. The dark themes turn

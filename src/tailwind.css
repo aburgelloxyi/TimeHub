@@ -283,6 +283,57 @@ html.theme-revealing::view-transition-new(root) { animation: themeReveal 480ms v
   background: repeating-linear-gradient(135deg, rgb(148 163 184 / 0.55) 0 3px, rgb(148 163 184 / 0.15) 3px 6px);
 }
 
+/* ── Atmosphere ───────────────────────────────────────────────────────────────
+   Depth without decoration: light in the page headers, a breath of the
+   section colour behind the page, glass on what floats, and a lit top edge on
+   dark cards. The OLED theme opts out of anything that would lift the page
+   off pure black (Timesheeter.css). */
+
+/* Header: a soft light from the top-left corner and a shade in the opposite
+   one, over the section gradient, so the band reads as lit and not as a flat
+   fill. The grain comes from body::after below. */
+:root {
+  --header-light:
+    radial-gradient(120% 150% at 0% 0%, rgb(255 255 255 / 0.2), transparent 55%),
+    radial-gradient(90% 130% at 100% 100%, rgb(0 0 0 / 0.16), transparent 60%);
+}
+div.page-header {
+  background-image: var(--header-light), linear-gradient(to bottom right, var(--tw-gradient-stops));
+  box-shadow: inset 0 -1px 0 rgb(0 0 0 / 0.08);
+}
+
+/* Page: the section colour, very faint, fading out below the header. One
+   colour per page, matching lib/pageGradients.js. */
+.min-h-screen:has(.page-header) {
+  background-image: linear-gradient(to bottom, rgb(var(--page-tint, 18 160 225) / var(--page-tint-strength, 0.1)), transparent 34rem);
+  background-repeat: no-repeat;
+}
+.min-h-screen:has(.page-header[data-page="todayslist"]) { --page-tint: 139 92 246; }
+.min-h-screen:has(.page-header[data-page="canvas"])     { --page-tint: 217 119 6; }
+.min-h-screen:has(.page-header[data-page="profile"])    { --page-tint: 2 132 199; }
+.min-h-screen:has(.page-header[data-page="jobbook"])    { --page-tint: 13 148 136; }
+.min-h-screen:has(.page-header[data-page="orderforms"]) { --page-tint: 79 70 229; }
+html.dark-theme { --page-tint-strength: 0.14; }
+
+/* A bar that floats over content: see-through enough to show what is under
+   it, blurred enough that its own text stays readable. */
+.glass-bar {
+  background-color: rgb(18 32 39 / 0.82);
+  border: 1px solid rgb(255 255 255 / 0.1);
+  -webkit-backdrop-filter: blur(14px) saturate(1.4);
+  backdrop-filter: blur(14px) saturate(1.4);
+}
+html.dark-theme .glass-bar { background-color: rgb(var(--dk-raised-rgb) / 0.78); }
+
+/* Dark cards: the top edge a step lighter than the sides and a faint light
+   falling from it, as if lit from above. On a white card neither would show,
+   so the light theme is left as it is. */
+html.dark-theme .bg-white.border:is(.rounded-2xl, .rounded-3xl):not([class*="bg-gradient"]) {
+  border-top-color: var(--dk-line-strong) !important;
+  background-image: linear-gradient(to bottom, rgb(255 255 255 / 0.035), transparent 7rem);
+  background-repeat: no-repeat;
+}
+
 /* Film grain over the whole viewport for depth (sits above the page background
    and cards, below modals/toasts; never intercepts clicks). */
 body::after {

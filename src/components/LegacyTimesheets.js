@@ -4045,7 +4045,7 @@ export default function LegacyTimesheet({ wrikeData, isAdmin = false }) {
             rows are ticked. */}
         {selectedCount > 0 && (
           <div className="relative z-20 -mb-4 flex justify-center pointer-events-none">
-            <div className="pointer-events-auto flex flex-wrap justify-center items-center gap-2 max-w-full bg-[#122027] text-white rounded-3xl sm:rounded-full shadow-lg px-2 py-1.5 animate-in fade-in slide-in-from-bottom-2 duration-200">
+            <div className="pointer-events-auto flex flex-wrap justify-center items-center gap-2 max-w-full glass-bar text-white rounded-3xl sm:rounded-full shadow-lg px-2 py-1.5 animate-in fade-in slide-in-from-bottom-2 duration-200">
               <span className="text-[11px] font-black uppercase tracking-widest pl-2">
                 {selectedCount} selected
               </span>

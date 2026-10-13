@@ -22,7 +22,7 @@ export default function PageHeader({ pageId, icon: Icon, title, subtitle, childr
 
   return (
     <>
-    <div className={`page-header bg-gradient-to-br ${gradient} py-6 sm:py-7`}>
+    <div data-page={pageId} className={`page-header bg-gradient-to-br ${gradient} py-6 sm:py-7`}>
       {/* Padding lives inside the max-width box, not on this outer
           full-bleed wrapper — matching the page body's own
           max-w-[1800px] + px-6 pattern exactly, so the header's

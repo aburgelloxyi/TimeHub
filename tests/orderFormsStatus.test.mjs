@@ -83,3 +83,47 @@ check("a request past its deadline is overdue", orderUrgency(order("requested", 
   check("the file as read is not changed", file.markets[0].orders.length, 3);
   check("nothing set aside: the same file", applySetAside({ markets: [] }).markets, []);
 }
+
+// ── Across films, for the profile ─────────────────────────────────────────────
+{
+  const { ordersNeedingAttention } = await import("../src/lib/orderForms/status.js");
+  const o = (row, status, deliveryDeadline) => ({ tab: "T", row, status, deliveryDeadline, xyi: { title: "A_B_C_D" } });
+  const files = [
+    { id: "f1", name: "Film One", kind: "print", loadedAt: "2026-10-13T09:00:00Z", markets: [
+      { name: "NZ", orders: [o(3, "requested", "2026-10-01"), o(4, "requested", "2026-10-15"), o(5, "requested", "2026-12-01"), o(6, "confirmed", "2026-10-01")] },
+      { name: "Bad", unreadable: "x", orders: [] },
+    ] },
+    { id: "f2", name: "Film Two", kind: "motion", loadedAt: "2026-10-13T09:00:00Z", markets: [
+      { name: "AU", orders: [o(3, "pending", "2026-12-05"), o(4, "pending", "2026-09-30")] },
+    ] },
+  ];
+  const got = ordersNeedingAttention(files, "2026-10-12");
+  check("overdue across films, soonest first", got.overdue.map((e) => [e.film, e.market, e.order.row]), [["Film Two", "AU", 4], ["Film One", "NZ", 3]]);
+  check("due this week", got.dueSoon.map((e) => e.order.row), [4]);
+  check("requests not picked up, without the ones already listed as late or due", got.requested.map((e) => e.order.row), [5]);
+  check("pending", got.pending.map((e) => [e.film, e.order.row]), [["Film Two", 3]]);
+  check("a line per film", got.films.map((f) => [f.film, f.orders, f.overdue, f.dueSoon, f.requested, f.pending]), [["Film One", 4, 1, 1, 1, 0], ["Film Two", 2, 1, 0, 0, 1]]);
+  check("nothing loaded", ordersNeedingAttention([], "2026-10-12").films, []);
+}
+
+// ── Changes between reads ─────────────────────────────────────────────────────
+{
+  const { changeKeys, marketChanges, mergeChanges, fileChanges, changesNote } = await import("../src/lib/orderForms/status.js");
+  const o = (title, status = "requested", deliveryDeadline = "2026-11-01", row = 1) => ({ tab: "T", row, status, deliveryDeadline, xyi: { title } });
+  const before = { name: "NZ", orders: [o("F_A_B_NZ", "requested", "2026-11-01", 3), o("F_C_D_NZ", "requested", "2026-11-01", 4), o("F_E_F_NZ", "requested", "2026-11-01", 5)] };
+  const after = { name: "NZ", orders: [
+    o("F_A_B_NZ", "confirmed", "2026-11-01", 4), // confirmed, and moved down a row
+    o("F_C_D_NZ", "requested", "2026-11-09", 5), // date moved
+    o("F_G_H_NZ", "requested", "2026-11-01", 6), // new
+  ] };
+  const c = marketChanges(before, after);
+  check("what changed, whatever rows the orders are on now", [c.added, c.confirmed, c.moved, c.removed], [["T|f_g_h_nz"], ["T|f_a_b_nz"], ["T|f_c_d_nz"], 1]);
+  check("nothing changed", marketChanges(before, before), null);
+  check("the same order twice is two orders", changeKeys([o("F_A_B_NZ"), o("F_A_B_NZ")]), ["T|f_a_b_nz", "T|f_a_b_nz#2"]);
+  check("a second identical order added", marketChanges({ orders: [o("F_A_B_NZ")] }, { orders: [o("F_A_B_NZ"), o("F_A_B_NZ")] }).added, ["T|f_a_b_nz#2"]);
+  check("said in a line", changesNote(c), "1 new · 1 confirmed · 1 date moved · 1 gone");
+  check("unseen changes are kept under newer ones", mergeChanges(c, { added: ["x"], confirmed: [], moved: [], removed: 2 }).added.concat(mergeChanges(c, { added: ["x"], confirmed: [], moved: [], removed: 2 }).removed), ["T|f_g_h_nz", "x", 3]);
+  const files = fileChanges({ markets: [before, { name: "AU", orders: [] }], changes: { AU: { added: ["old"], confirmed: [], moved: [], removed: 0 } } },
+    { markets: [after, { name: "AU", orders: [] }, { name: "New", orders: [o("F_Z_Z_XX")] }, { name: "Bad", unreadable: "x", orders: [] }] });
+  check("a film read again: changed markets, unseen ones kept, a new market all new", [Object.keys(files), files.AU.added, files.New.added], [["NZ", "AU", "New"], ["old"], ["T|f_z_z_xx"]]);
+}

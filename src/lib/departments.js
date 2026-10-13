@@ -86,8 +86,10 @@ export const PAGES = {
 //
 //   pages     the pages it sees (Administration, the Job Book and Order Forms
 //             are added on top for the managers; see pageIdsFor)
-//   features  department-specific Canvas tools: "launchTracker" (per-market
-//             print requests), "doohSpecs" (screen specs by country)
+//   features  department-specific tools: on Canvas, "launchTracker"
+//             (per-market print requests) and "doohSpecs" (screen specs by
+//             country); on the profile, "ordersToday" (what needs attention
+//             across the loaded client orders, in place of Active Jobs)
 //   quickFilter  the first job-search chip on the Timesheeter
 //   countedStatus  a Wrike status the board header counts, in place of the
 //             default "overdue" count
@@ -106,7 +108,7 @@ export const DEPARTMENTS = {
   Print: { features: ["launchTracker"], quickFilter: "LAUNCH" },
   AM: {},
   Digital: {},
-  PM: { pages: ["jobbook", "orderforms", "legacy", "profile"] },
+  PM: { pages: ["jobbook", "orderforms", "legacy", "profile"], features: ["ordersToday"] },
   Operations: { pages: ["legacy", "profile"] },
 };
 

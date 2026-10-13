@@ -42,7 +42,8 @@ jobs are set up in Wrike. It also has a team board for each department, notes
   Cloudflare Worker as static files.
 - **The Worker** (`worker/index.js`) handles Wrike login and token storage,
   forwards every Wrike call, receives Wrike's webhooks, and serves the jobs
-  feed and the Toolbox panel's API. It's the only thing that holds secrets.
+  feed, the Toolbox panel's API, and Client Orders' shared films
+  (`/api/orders`, the only way to the `order_films` table). It's the only thing that holds secrets.
 - **Supabase** stores everything: timesheet rows, the Job Book, profiles, the
   shared Wrike cache, notes. The browser signs in to Supabase anonymously and
   identifies itself by the person's Wrike ID.

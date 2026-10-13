@@ -76,6 +76,9 @@ export default {
     if (url.pathname.startsWith("/api/wrike/")) {
       return handleProxy(request, url, env, ctx);
     }
+    if (url.pathname === "/api/orders" || url.pathname.startsWith("/api/orders/")) {
+      return handleOrders(request, url, env);
+    }
     if (url.pathname === "/api/jobs-feed") {
       return handleJobsFeed(request, env);
     }
@@ -197,6 +200,104 @@ async function handleJobsFeed(request, env) {
   }
   const data = await res.json();
   return json(data);
+}
+
+// ── Client Orders, shared ────────────────────────────────────────────────────
+// The films PMs load in Client Orders, kept once for all of them. They are
+// clients' order details for unreleased films, so the table (order_films) has
+// row-level security on and no policies: the public key can't read a row, and
+// everything goes through here with the service key.
+//
+// Open to the people the app offers the page to: the departments below, and
+// anyone ticked as an admin (see pageIdsFor in src/lib/departments.js, which
+// this mirrors; the Worker can't import it).
+const ORDER_DEPARTMENTS = ["PM"];
+const ORDERS_MAX_BYTES = 8 * 1024 * 1024;
+// What a PM decides about a film's orders, saved on their own so that setting
+// a row aside from an older copy of the film can't undo someone's Refresh.
+const ORDER_DECISIONS = ["ignored", "links"];
+
+async function ordersCaller(request, env) {
+  const session = parseCookies(request)[SESSION_COOKIE];
+  if (!session) return { error: json({ error: "not_connected" }, { status: 401 }) };
+  let row;
+  try {
+    row = await getTokenRowBySession(env, session);
+  } catch (err) {
+    console.error("[orders] token lookup unavailable:", err.message);
+    return { error: json({ error: "backend_unavailable" }, { status: 503 }) };
+  }
+  if (!row) return { error: json({ error: "not_connected" }, { status: 401 }) };
+  const res = await sbFetch(env, `/profiles?wrike_user_id=eq.${encodeURIComponent(row.wrike_user_id)}&select=department,is_admin,left_at`);
+  if (!res.ok) return { error: json({ error: "backend_unavailable" }, { status: 503 }) };
+  const profile = (await res.json())[0];
+  const allowed = profile && !profile.left_at && (profile.is_admin || ORDER_DEPARTMENTS.includes(profile.department));
+  if (!allowed) return { error: json({ error: "forbidden" }, { status: 403 }) };
+  return { userId: row.wrike_user_id };
+}
+
+async function handleOrders(request, url, env) {
+  const caller = await ordersCaller(request, env);
+  if (caller.error) return caller.error;
+  const key = decodeURIComponent(url.pathname.slice("/api/orders/".length));
+  const one = `/order_films?key=eq.${encodeURIComponent(key)}`;
+  const failed = async (res, what) => {
+    console.error(`[orders] ${what} ${res.status}:`, await res.text().catch(() => ""));
+    return json({ error: "query_failed" }, { status: 502 });
+  };
+
+  // The list is ids and revisions only. A film is a few hundred kilobytes, and
+  // the page asks again whenever someone returns to its tab, so it fetches a
+  // film in full only when its revision isn't the one that browser has.
+  if (request.method === "GET" && url.pathname === "/api/orders") {
+    const res = await sbFetch(env, "/order_films?select=key,updated_at&order=loaded_at.desc");
+    if (!res.ok) return failed(res, "list");
+    return json((await res.json()).map((r) => ({ id: r.key, rev: r.updated_at })));
+  }
+  if (!key) return json({ error: "not_found" }, { status: 404 });
+
+  if (request.method === "GET") {
+    const res = await sbFetch(env, `${one}&select=data,updated_at`);
+    if (!res.ok) return failed(res, "read");
+    const found = (await res.json())[0];
+    return found ? json({ file: found.data, rev: found.updated_at }) : json({ error: "not_found" }, { status: 404 });
+  }
+
+  if (request.method === "PUT") {
+    const text = await request.text();
+    if (text.length > ORDERS_MAX_BYTES) return json({ error: "too_large" }, { status: 413 });
+    let file;
+    try { file = JSON.parse(text); } catch { return json({ error: "bad_request" }, { status: 400 }); }
+    if (!file || file.id !== key || !Array.isArray(file.markets)) return json({ error: "bad_request" }, { status: 400 });
+    const res = await sbFetch(env, "/order_films?on_conflict=key&select=updated_at", {
+      method: "POST",
+      headers: { Prefer: "resolution=merge-duplicates,return=representation" },
+      body: JSON.stringify({ key, data: file, loaded_at: file.loadedAt || new Date().toISOString(), loaded_by: caller.userId, updated_at: new Date().toISOString() }),
+    });
+    return res.ok ? json({ ok: true, rev: (await res.json())[0]?.updated_at }) : failed(res, "save");
+  }
+
+  if (request.method === "PATCH") {
+    let patch;
+    try { patch = await request.json(); } catch { return json({ error: "bad_request" }, { status: 400 }); }
+    const got = await sbFetch(env, `${one}&select=data`);
+    if (!got.ok) return failed(got, "read");
+    const current = (await got.json())[0]?.data;
+    if (!current) return json({ error: "not_found" }, { status: 404 });
+    for (const field of ORDER_DECISIONS) if (field in patch) current[field] = patch[field];
+    const res = await sbFetch(env, `${one}&select=updated_at`, {
+      method: "PATCH",
+      headers: { Prefer: "return=representation" },
+      body: JSON.stringify({ data: current, updated_at: new Date().toISOString() }),
+    });
+    return res.ok ? json({ ok: true, rev: (await res.json())[0]?.updated_at }) : failed(res, "decide");
+  }
+
+  if (request.method === "DELETE") {
+    const res = await sbFetch(env, one, { method: "DELETE", headers: { Prefer: "return=minimal" } });
+    return res.ok ? json({ ok: true }) : failed(res, "remove");
+  }
+  return json({ error: "method_not_allowed" }, { status: 405 });
 }
 
 // ── Jobs Feed import ─────────────────────────────────────────────────────────

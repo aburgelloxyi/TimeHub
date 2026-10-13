@@ -28,9 +28,14 @@ import {
   Moon,
   MoonStar,
   Sun,
+  ClipboardList,
   SlidersHorizontal,
   Tag,
 } from "lucide-react";
+import { PAGE_GRADIENTS } from "../lib/pageGradients";
+import { hasFeature } from "../lib/departments";
+import { useDepartment } from "../hooks/useDepartment";
+import OrdersToday from "./orderForms/OrdersToday";
 import { supabase } from "../lib/supabaseClient";
 import { getTheme, isDarkMode, setTheme } from "../lib/theme";
 import { fullName, cleanNamePart } from "../lib/formatName";
@@ -1988,13 +1993,31 @@ function SettingsSection({ onSave }) {
   );
 }
 
+// For a department with the "ordersToday" feature (see lib/departments.js),
+// the hub's featured row is this in place of Active Jobs. A trial: a PM's day
+// is the client orders, not a list of Wrike tasks assigned to them.
+const ORDERS_SECTION = {
+  id: "orders",
+  label: "Orders Today",
+  icon: ClipboardList,
+  desc: "What needs you across the films loaded in Client Orders",
+  gradient: PAGE_GRADIENTS.orderforms,
+  featured: true,
+};
+
 // ── Main ──────────────────────────────────────────────────────────────────────
 
 export default function Profile({ wrikeData, onTokenChange, activeSection: activeSectionProp, setActiveSection: setActiveSectionProp }) {
   const [_activeSection, _setActiveSection] = useState(null);
   const activeSection = activeSectionProp !== undefined ? activeSectionProp : _activeSection;
   const setActiveSection = setActiveSectionProp ?? _setActiveSection;
-  const activeMeta = SECTIONS.find((s) => s.id === activeSection);
+  const department = useDepartment();
+  const sections = useMemo(
+    () => (hasFeature(department, "ordersToday") ? [ORDERS_SECTION, ...SECTIONS.filter((s) => !s.featured)] : SECTIONS),
+    [department]
+  );
+  // Looked up across both, so a link straight to Active Jobs still has its header.
+  const activeMeta = [ORDERS_SECTION, ...SECTIONS].find((s) => s.id === activeSection);
   const [profile, setProfile] = useState(null);
   const [hasToken, setHasToken] = useState(
     () => !!localStorage.getItem("wrike_user_id")
@@ -2149,8 +2172,8 @@ export default function Profile({ wrikeData, onTokenChange, activeSection: activ
         {!activeSection && (
           <div ref={hubRef} className="space-y-4">
             {(() => {
-              const featuredSection = SECTIONS.find((s) => s.featured);
-              const restSections = SECTIONS.filter((s) => !s.featured);
+              const featuredSection = sections.find((s) => s.featured);
+              const restSections = sections.filter((s) => !s.featured);
               return (
                 <>
                   <div className="flex items-center gap-2 px-1">
@@ -2208,7 +2231,9 @@ export default function Profile({ wrikeData, onTokenChange, activeSection: activ
               )}
             </div>
 
-            {loading && activeSection !== "jobs" && activeSection !== "completed" && activeSection !== "settings" ? (
+            {activeSection === "orders" ? (
+              <OrdersToday />
+            ) : loading && activeSection !== "jobs" && activeSection !== "completed" && activeSection !== "settings" ? (
               <div className="bg-white border border-[#dce4ec] rounded-2xl p-16 flex flex-col items-center justify-center gap-3 shadow-sm">
                 <RefreshCw className="w-6 h-6 animate-spin text-[#12a0e1]" />
                 <p className="text-sm font-bold text-[#768994]">Loading your data…</p>

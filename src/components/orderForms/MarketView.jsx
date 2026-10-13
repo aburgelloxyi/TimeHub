@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { ChevronRight, ExternalLink, Loader2, PencilLine } from "lucide-react";
-import { marketSummary, orderUrgency } from "../../lib/orderForms/status";
+import { marketSummary, orderUrgency, changeKeys, changesNote } from "../../lib/orderForms/status";
 import { orderKey, taskLink } from "../../lib/orderForms/wrikeMatch";
 import OrderDetail from "./OrderDetail";
 import PickerMenu from "./PickerMenu";
@@ -73,6 +73,18 @@ export default function MarketView({ market, kind, filmTitle, clientId, filmKey,
   const tasks = matches.map((m) => m?.task || null);
   const inWrike = tasks.filter(Boolean).length;
   const setAside = market.setAside || [];
+  // What the last Refresh changed here and hasn't been acknowledged, and which
+  // of the orders on screen it was (decide.changes; see status.js).
+  const changed = decide?.changes || null;
+  const changedTag = useMemo(() => {
+    if (!changed) return () => "";
+    const keys = changeKeys(orders);
+    const tags = new Map();
+    changed.moved.forEach((key) => tags.set(key, "Date moved"));
+    changed.confirmed.forEach((key) => tags.set(key, "Confirmed"));
+    changed.added.forEach((key) => tags.set(key, "New"));
+    return (i) => tags.get(keys[i]) || "";
+  }, [changed, orders]);
 
   useEffect(() => { setSelected(0); setExpanded(null); setEditing(false); setEdits({}); setUndo(null); }, [market.name]);
   // A fresh read replaces the orders, and with them what each cell held.
@@ -291,6 +303,18 @@ export default function MarketView({ market, kind, filmTitle, clientId, filmKey,
         )}
       </div>
 
+      {changed && (
+        <div className="flex flex-wrap items-center gap-3 px-5 py-2.5 border-b border-[#dce4ec] bg-indigo-50">
+          <span className="w-2 h-2 rounded-full bg-indigo-600 shrink-0" aria-hidden />
+          <p className="text-sm text-[#122027] mr-auto">
+            <span className="font-bold">Since you last looked:</span> {changesNote(changed)}
+          </p>
+          <button onClick={decide.onSeen} className="px-3 py-1 rounded-lg bg-white border border-[#dce4ec] hover:border-[#12a0e1] text-xs font-bold text-[#122027] transition-colors">
+            Got it
+          </button>
+        </div>
+      )}
+
       {editing && clientId && <Corrections clientId={clientId} filmKey={filmKey} market={market.name} onApplied={onChanged} />}
 
       {orders.length === 0 ? (
@@ -336,6 +360,9 @@ export default function MarketView({ market, kind, filmTitle, clientId, filmKey,
                           <ChevronRight className={`w-3.5 h-3.5 transition-transform duration-200 ${open ? "rotate-90" : ""}`} />
                           {o.row}
                         </button>
+                        {changedTag(i) && (
+                          <span className="block mt-0.5 text-[9px] font-black uppercase tracking-wider text-indigo-600 whitespace-nowrap">{changedTag(i)}</span>
+                        )}
                       </td>
                       {columns.map((col) => (
                         <td key={col.id} className="px-3 py-2 border-b border-slate-100 align-middle overflow-hidden">

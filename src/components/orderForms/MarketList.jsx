@@ -1,6 +1,6 @@
 import React, { useMemo, useState } from "react";
 import { ArrowDown, ArrowUp, ChevronRight } from "lucide-react";
-import { marketSummary, fileTotals, sortMarkets } from "../../lib/orderForms/status";
+import { marketSummary, fileTotals, sortMarkets, changesNote } from "../../lib/orderForms/status";
 import MarketFlag from "./MarketFlag";
 import { formatDay, undatedNote, pillClass, STATUS_CLASS, STATUS_LABEL, URGENCY_TEXT } from "./format";
 
@@ -14,6 +14,8 @@ const FILTERS = [
   { id: "unconfirmed", label: "Unconfirmed", test: (m) => m.status === "unconfirmed", on: "bg-violet-600 text-white border-violet-600" },
   { id: "due", label: "Due or overdue", test: (m) => !!m.urgency, on: "bg-rose-600 text-white border-rose-600" },
   { id: "notStarted", label: "Not started", test: (m) => m.status === "notStarted", on: "bg-slate-600 text-white border-slate-600" },
+  // Tested against the file, not the summary: see `changedIn` below.
+  { id: "changed", label: "Changed", test: (m, changedIn) => !!changedIn(m.name), on: "bg-indigo-600 text-white border-indigo-600" },
 ];
 
 const STATUS_ORDER = { requested: 0, pending: 1, unconfirmed: 2, confirmed: 3, notStarted: 4, unreadable: 5 };
@@ -26,12 +28,18 @@ const COMPARE = {
 
 const GRID = "grid grid-cols-[minmax(0,1.4fr)_120px_minmax(0,1fr)_120px_90px_90px_20px] gap-4 items-center px-5";
 
-function MarketName({ name, undated = 0 }) {
+// `changed` is what the last Refresh found different in this market and nobody
+// has looked at yet, as a line ("2 new · 1 confirmed").
+function MarketName({ name, undated = 0, changed = "" }) {
   return (
     <span className="flex items-center gap-2.5 min-w-0">
       <MarketFlag name={name} />
       <span className="min-w-0">
-        <span className="block font-bold text-[#122027] truncate">{name}</span>
+        <span className="flex items-center gap-1.5 font-bold text-[#122027]">
+          <span className="truncate">{name}</span>
+          {changed && <span className="w-2 h-2 rounded-full bg-indigo-600 shrink-0" aria-hidden />}
+        </span>
+        {changed && <span className="block text-[11px] font-bold text-indigo-600 truncate">{changed}</span>}
         {undated > 0 && <span className="block text-[11px] text-[#768994] truncate">{undatedNote(undated)}</span>}
       </span>
     </span>
@@ -71,13 +79,19 @@ export default function MarketList({ file, today, matcher, onOpen, arriving = fa
     [file, matcher]
   );
 
+  // What the last Refresh changed in a market and hasn't been looked at.
+  const changedIn = useMemo(() => {
+    const changes = file.changes || {};
+    return (name) => changesNote(changes[name]);
+  }, [file]);
+
   const rows = useMemo(() => {
     const test = FILTERS.find((f) => f.id === filter)?.test;
-    const shown = test ? summaries.filter(test) : summaries;
+    const shown = test ? summaries.filter((m) => test(m, changedIn)) : summaries;
     if (!sort) return shown;
     const sorted = [...shown].sort(COMPARE[sort.by]);
     return sort.desc ? sorted.reverse() : sorted;
-  }, [summaries, filter, sort]);
+  }, [summaries, filter, sort, changedIn]);
 
   // Third click on a column returns to the default order.
   const onSort = (by) =>
@@ -88,7 +102,7 @@ export default function MarketList({ file, today, matcher, onOpen, arriving = fa
   const active = rows.filter((m) => m.status !== "notStarted");
   const idle = rows.filter((m) => m.status === "notStarted");
 
-  const counts = { requested: totals.requested, confirmed: totals.confirmed, pending: totals.pending, unconfirmed: totals.unconfirmed, due: totals.due, notStarted: totals.notStarted };
+  const counts = { changed: Object.keys(file.changes || {}).length, requested: totals.requested, confirmed: totals.confirmed, pending: totals.pending, unconfirmed: totals.unconfirmed, due: totals.due, notStarted: totals.notStarted };
 
   return (
     <div className="space-y-4">
@@ -147,7 +161,7 @@ export default function MarketList({ file, today, matcher, onOpen, arriving = fa
               disabled={arriving}
               className={`${arriving ? "list-row-in " : ""}${GRID} w-full py-3 border-b border-slate-100 last:border-b-0 text-sm text-left hover:bg-slate-50 focus:outline-none focus-visible:bg-slate-50 transition-colors group`}
             >
-              <MarketName name={m.name} undated={m.undated} />
+              <MarketName name={m.name} undated={m.undated} changed={changedIn(m.name)} />
               <span><span className={`${pillClass} ${STATUS_CLASS[m.status]}`}>{STATUS_LABEL[m.status]}</span></span>
               <span className="flex items-center gap-3 min-w-0">
                 <span className="flex-1 h-1.5 rounded-full bg-slate-100 overflow-hidden">
@@ -185,7 +199,7 @@ export default function MarketList({ file, today, matcher, onOpen, arriving = fa
                 disabled={arriving}
                 className={`${arriving ? "list-row-in " : ""}flex items-center px-5 py-2.5 border-b border-slate-100 text-sm text-left hover:bg-slate-50 focus:outline-none focus-visible:bg-slate-50 transition-colors`}
               >
-                <MarketName name={m.name} undated={m.undated} />
+                <MarketName name={m.name} undated={m.undated} changed={changedIn(m.name)} />
               </button>
             ))}
           </div>

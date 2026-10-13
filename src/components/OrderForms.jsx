@@ -9,20 +9,20 @@ import MarketView from "./orderForms/MarketView";
 import Corrections from "./orderForms/Corrections";
 import { readXlsx } from "../lib/orderForms/readXlsx";
 import { parseWorkbook } from "../lib/orderForms/parseWorkbook";
-import { listFiles, saveFile, removeFile } from "../lib/orderForms/store";
+import { listFiles, saveFile, saveDecisions, saveSeen, removeFile, fileKey, storeReach } from "../lib/orderForms/store";
 import { connectGoogle, googleConfigured, googleConnected } from "../lib/orderForms/googleApi";
 import { loadFilm, loadMarketOf } from "../lib/orderForms/loadFilm";
 import { makeMatcher, indexParents, orderKey } from "../lib/orderForms/wrikeMatch";
-import { applySetAside } from "../lib/orderForms/status";
+import { applySetAside, fileChanges, marketChanges, mergeChanges } from "../lib/orderForms/status";
 import { confirmAction } from "../lib/confirm";
 import { notify } from "../lib/toast";
 import { isoToday } from "../utils/dates";
 
-// The PMs' readable view of the clients' order forms. Orders come in two
-// ways: a film read live from Google (every market's sheet, found in the
-// client's Drive folders), or a workbook dropped onto the page. Either way they are
-// parsed in the browser and kept in this browser only (see lib/orderForms/
-// store.js for why they never go to Supabase). A market's page is where the
+// The PMs' view of the clients' order forms. Orders come in two ways: a film
+// read live from Google (every market's sheet, found in the client's Drive
+// folders), or a workbook dropped onto the page. Either way they are parsed in
+// the browser and then shared between the PMs (see lib/orderForms/store.js
+// for where, and why not in a table the browser can read). A market's page is where the
 // writes are: its edit mode writes to Google Sheets, and its Wrike button
 // creates the market's folder.
 
@@ -37,9 +37,12 @@ const hashFor = (fileId, market) =>
   `#orderforms${fileId ? `/${fileId}` : ""}${fileId && market ? `/${encodeURIComponent(market)}` : ""}`;
 
 // The film a Google-loaded file is for, as its sheets name it. Films loaded
-// before the title was kept still have it in the key Refresh finds them by.
+// before the title was kept have it in their name ("Studio · Film · Medium"),
+// in the case it is written; the key Refresh finds them by is lowercased.
 const filmTitleOf = (file) =>
-  file?.source?.clientId ? file.film || String(file.source.filmKey || "").split("|")[0] : "";
+  file?.source?.clientId
+    ? file.film || file.name.split(" · ").slice(1, -1).join(" · ") || String(file.source.filmKey || "").split("|")[0]
+    : "";
 
 const hasFiles = (e) => Array.from(e.dataTransfer?.types || []).includes("Files");
 
@@ -69,9 +72,30 @@ export default function OrderForms({ wrikeData }) {
   const matcher = useMemo(() => makeMatcher(wrikeData), [wrikeData]);
   const wrikeParents = useMemo(() => indexParents(wrikeData), [wrikeData]);
 
-  useEffect(() => {
-    listFiles().then(setFiles);
+  // `local` is true when the shared store couldn't be reached and the page is
+  // showing this browser's last copies.
+  const [local, setLocal] = useState(false);
+  const loadedAt = useRef(0);
+  const reload = useCallback(async () => {
+    loadedAt.current = Date.now();
+    const found = await listFiles();
+    setFiles(found);
+    setLocal(storeReach() === "local");
   }, []);
+
+  useEffect(() => { reload(); }, [reload]);
+
+  // Someone else may have refreshed a film or set a row aside. Coming back to
+  // the tab picks that up, at most once a minute and never mid-load.
+  const workingRef = useRef(false);
+  useEffect(() => {
+    const onVisible = () => {
+      if (document.visibilityState !== "visible" || workingRef.current) return;
+      if (Date.now() - loadedAt.current > 60000) reload();
+    };
+    document.addEventListener("visibilitychange", onVisible);
+    return () => document.removeEventListener("visibilitychange", onVisible);
+  }, [reload]);
 
   useEffect(() => {
     const onHashChange = () => setView(readHash());
@@ -95,9 +119,11 @@ export default function OrderForms({ wrikeData }) {
   // What a PM has decided about a market's orders, kept on the file: rows set
   // aside (ignored) and tasks matched by hand (links), both by market name.
   const decideFor = (target, marketName) => {
-    const change = (work) => {
+    // `save` is saveDecisions for what the PMs share (rows set aside, tasks
+    // matched by hand) and saveSeen for this person's own change markers.
+    const change = (work, save = saveDecisions) => {
       const updated = work(target);
-      saveFile(updated);
+      save(updated);
       setFiles((prev) => prev.map((f) => (f.id === updated.id ? updated : f)));
     };
     const setIgnored = (order, on) => change((f) => {
@@ -106,6 +132,12 @@ export default function OrderForms({ wrikeData }) {
       return { ...f, ignored: { ...f.ignored, [marketName]: [...keys] } };
     });
     return {
+      changes: target.changes?.[marketName],
+      // "Got it" on what changed: it has been looked at.
+      onSeen: () => change((f) => {
+        const { [marketName]: _seen, ...rest } = f.changes || {};
+        return { ...f, changes: rest };
+      }, saveSeen),
       links: target.links?.[marketName],
       onSetAside: (order) => setIgnored(order, true),
       onRestore: (order) => setIgnored(order, false),
@@ -120,15 +152,22 @@ export default function OrderForms({ wrikeData }) {
   // Take a parsed file into the page and the store. `replaces` is the loaded
   // file it supersedes (same name), already agreed to by the caller.
   const adopt = useCallback(async (read, replaces, keepMarket) => {
-    // What was decided about the older read carries over to the newer one.
-    const parsed = replaces ? { ...read, ignored: replaces.ignored, links: replaces.links } : read;
-    if (replaces) await removeFile(replaces.id);
+    // A film has one id for everyone (fileKey), so a newer read replaces the
+    // older one wherever it was loaded. What was decided about the older read
+    // carries over, and what the newer one changed is kept until looked at.
+    const parsed = {
+      ...read,
+      id: fileKey(read),
+      ...(replaces ? { ignored: replaces.ignored, links: replaces.links, changes: fileChanges(replaces, read) } : {}),
+    };
+    if (replaces && replaces.id !== parsed.id) await removeFile(replaces.id);
     const kept = await saveFile(parsed);
     setFiles((prev) => [parsed, ...(prev || []).filter((f) => f.id !== replaces?.id)]);
     go(parsed.id, keepMarket || null, { replace: !!replaces });
     const readable = parsed.markets.filter((m) => !m.unreadable).length;
     if (kept) notify(`${readable} of ${parsed.markets.length} markets read`, "success");
-    else notify("Loaded for now. This browser couldn't store it, so it won't be here after a reload.", "error");
+    else notify("Loaded in this browser, but it couldn't be shared with the team. Refresh it later to try again.", "error");
+    setLocal(storeReach() === "local");
   }, [go]);
 
   const confirmReplace = (name) => confirmAction({
@@ -146,7 +185,7 @@ export default function OrderForms({ wrikeData }) {
         setError("This doesn't look like an order form. No market tabs were found in it.");
         return;
       }
-      const existing = (files || []).find((f) => f.name === parsed.name);
+      const existing = (files || []).find((f) => f.id === fileKey(parsed));
       if (existing && !(await confirmReplace(parsed.name))) return;
       await adopt(parsed, existing);
     } catch (err) {
@@ -160,7 +199,7 @@ export default function OrderForms({ wrikeData }) {
   }, [files, adopt]);
 
   const addFilm = useCallback(async (loaded) => {
-    const existing = (files || []).find((f) => f.name === loaded.name);
+    const existing = (files || []).find((f) => f.id === fileKey(loaded));
     if (existing && !(await confirmReplace(loaded.name))) return;
     await adopt(loaded, existing);
     setAdding(false);
@@ -185,12 +224,19 @@ export default function OrderForms({ wrikeData }) {
           setError(`${market.name}'s folder no longer holds a sheet for this film.`);
           return;
         }
-        const updated = { ...current, markets: current.markets.map((m) => (m.name === market.name ? fresh : m)) };
+        const was = current.markets.find((m) => m.name === market.name);
+        const changed = fresh.unreadable ? current.changes?.[market.name] : mergeChanges(current.changes?.[market.name], marketChanges(was, fresh));
+        const { [market.name]: _gone, ...otherChanges } = current.changes || {};
+        const updated = {
+          ...current,
+          markets: current.markets.map((m) => (m.name === market.name ? fresh : m)),
+          changes: changed ? { ...otherChanges, [market.name]: changed } : otherChanges,
+        };
         const kept = await saveFile(updated);
         setFiles((prev) => prev.map((f) => (f.id === updated.id ? updated : f)));
         if (fresh.unreadable) setError(`${market.name}: ${fresh.unreadable}`);
         else if (kept) notify(`${market.name} read again`, "success");
-        else notify("Read for now. This browser couldn't store it, so it won't be here after a reload.", "error");
+        else notify("Read in this browser, but it couldn't be shared with the team.", "error");
         return;
       }
       const loaded = await loadFilm({
@@ -209,7 +255,7 @@ export default function OrderForms({ wrikeData }) {
   const dropFile = async (target) => {
     const ok = await confirmAction({
       title: "Remove this from the page?",
-      message: `${target.name} will be removed from this browser. Nothing in Google is affected.`,
+      message: `${target.name} will be removed for everyone who uses Client Orders. Nothing in Google is affected, and it can be loaded again.`,
       confirmLabel: "Remove",
       danger: true,
     });
@@ -242,6 +288,7 @@ export default function OrderForms({ wrikeData }) {
   };
 
   const working = busy || googleBusy || !!refreshing;
+  workingRef.current = working || !!partial;
   // A market refreshed on its own was read later than the rest of its film.
   const lastRead = market?.loadedAt || file?.loadedAt;
   const empty = files && files.length === 0;
@@ -282,6 +329,12 @@ export default function OrderForms({ wrikeData }) {
 
       <div className="max-w-[1800px] mx-auto px-4 sm:px-6 py-6 space-y-4">
         {files === null && <div className="h-64 rounded-2xl bg-white/60 border border-[#dce4ec] animate-pulse" />}
+
+        {local && files?.length > 0 && (
+          <p role="status" className="px-4 py-2.5 rounded-xl bg-amber-50 border border-amber-200 text-sm text-amber-700">
+            The shared orders couldn't be reached, so this is this browser's last copy. What you load or decide now stays here until it can be shared.
+          </p>
+        )}
 
         {files && googleConfigured() && (empty || adding || partial) && (
           <GoogleSource onLoaded={addFilm} onBusy={setGoogleBusy} onPartial={setPartial} signedInTick={signedInTick} />

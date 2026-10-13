@@ -14,7 +14,7 @@ import {
   Check,
 } from "lucide-react";
 import { motion, animate, AnimatePresence } from "framer-motion";
-import FloatingCard from "../shared/FloatingCard";
+import FloatingCard, { HoverLabel } from "../shared/FloatingCard";
 import TableSearchableSelect from "./TableSearchableSelect";
 import MultiCountrySelect from "../shared/MultiCountrySelect";
 import CalendarEventsModal from "./CalendarEventsModal";
@@ -821,12 +821,13 @@ export default function CommentTrailModal({
                 <span>
                   Add. time <b className="text-white font-mono">{hm(pickedExtra)}</b>
                 </span>
-                <span
-                  className={dayRegular > NORMAL_DAY_HOURS ? "text-rose-400 font-bold" : "text-slate-500"}
-                  title={dayRegular > NORMAL_DAY_HOURS ? `Over ${hm(NORMAL_DAY_HOURS)}. Anything past it goes in add. time.` : undefined}
-                >
-                  {day.name}'s normal time: <span className="font-mono">{hm(dayRegular)}</span> of {hm(NORMAL_DAY_HOURS)}
-                </span>
+                <HoverLabel label={dayRegular > NORMAL_DAY_HOURS ? `Over ${hm(NORMAL_DAY_HOURS)}. Anything past it goes in add. time.` : undefined}>
+                  <span
+                    className={dayRegular > NORMAL_DAY_HOURS ? "text-rose-400 font-bold" : "text-slate-500"}
+                  >
+                    {day.name}'s normal time: <span className="font-mono">{hm(dayRegular)}</span> of {hm(NORMAL_DAY_HOURS)}
+                  </span>
+                </HoverLabel>
               </span>
             ) : view && view.suggestions.length && !view.missing.length ? (
               <span>Everything you worked on is already on the timesheets for {day.name}.</span>

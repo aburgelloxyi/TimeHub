@@ -12,6 +12,7 @@ import { parseWorkbook } from "../lib/orderForms/parseWorkbook";
 import { listFiles, saveFile, saveDecisions, saveSeen, removeFile, fileKey, storeReach } from "../lib/orderForms/store";
 import { connectGoogle, googleConfigured, googleConnected, onGoogleChange } from "../lib/orderForms/googleApi";
 import GoogleButton from "./orderForms/GoogleButton";
+import { HoverLabel } from "./shared/FloatingCard";
 import { loadFilm, loadMarketOf, listFilms } from "../lib/orderForms/loadFilm";
 import { clientFor, driveStaleness } from "../lib/orderForms/driveTree";
 import { makeMatcher, indexParents, orderKey } from "../lib/orderForms/wrikeMatch";
@@ -393,17 +394,18 @@ export default function OrderForms({ wrikeData }) {
               {/* A film loaded before the page read Drive folders has no client to
                   read again from; it is loaded afresh with the plus beside the switcher. */}
               {file?.source?.clientId && (
-                <button
-                  onClick={refresh}
-                  disabled={working}
-                  title={`Read from Google at ${readAt(lastRead)}`}
-                  className="press flex items-center gap-2 px-4 py-2.5 rounded-xl bg-white border border-[#dce4ec] hover:border-[#12a0e1] shadow-sm text-sm font-bold text-[#122027] transition-colors disabled:opacity-60"
-                >
-                  {refreshing ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />}
-                  {refreshing
-                    ? (market ? `Reading ${market.name}…` : `Reading ${refreshing.done} of ${refreshing.total || "…"}`)
-                    : `Refresh${market ? ` ${market.name}` : ""} · read at ${readAt(lastRead)}`}
-                </button>
+                <HoverLabel label={`Read from Google at ${readAt(lastRead)}`}>
+                  <button
+                    onClick={refresh}
+                    disabled={working}
+                    className="press flex items-center gap-2 px-4 py-2.5 rounded-xl bg-white border border-[#dce4ec] hover:border-[#12a0e1] shadow-sm text-sm font-bold text-[#122027] transition-colors disabled:opacity-60"
+                  >
+                    {refreshing ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />}
+                    {refreshing
+                      ? (market ? `Reading ${market.name}…` : `Reading ${refreshing.done} of ${refreshing.total || "…"}`)
+                      : `Refresh${market ? ` ${market.name}` : ""} · read at ${readAt(lastRead)}`}
+                  </button>
+                </HoverLabel>
               )}
             </FilmBar>
             {error && <p role="alert" className="text-sm font-medium text-rose-600">{error}</p>}

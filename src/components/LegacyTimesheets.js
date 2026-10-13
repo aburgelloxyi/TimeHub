@@ -308,12 +308,13 @@ function BatchCategoryPicker({ onPick, pinned = [] }) {
 // the Job Book could name it. A visible gap instead of the name-prefix guess
 // ("Gmf") the pull used to save, which read as filled in and was never fixed.
 const FilmMissing = () => (
-  <span
-    className="font-semibold text-[#c2410d]"
-    title="No film found for this job code. Set it in Management › Job Book and it will show here."
-  >
-    Film not found
-  </span>
+  <HoverLabel label="No film found for this job code. Set it in Management › Job Book and it will show here.">
+    <span
+      className="font-semibold text-[#c2410d]"
+    >
+      Film not found
+    </span>
+  </HoverLabel>
 );
 
 // A timesheet row's select box and delete button, revealed when the row's
@@ -1553,61 +1554,61 @@ export default function LegacyTimesheet({ wrikeData, isAdmin = false }) {
     const isLocked = !isToday;
 
     return (
-      <td
-        className={`px-1 py-1.5 border-r border-[#263143] text-center group/cell transition-[background-color,opacity] ${
-          isToday
-            ? "bg-[#12a0e1]/8"
-            : isActive
-            ? "bg-[#1e293b]/40"
-            : "opacity-30"
-        }`}
-        title={
-          isLocked ? `Can only log time for today (${todayDayName})` : undefined
-        }
-      >
-        <div className="flex flex-col items-center gap-1">
-          <div className="mx-auto w-11 h-7 relative flex items-center justify-center">
-            {isLocked ? (
-              <span
-                className={`text-[11px] font-bold ${
-                  isActive ? "text-slate-400" : "text-slate-700"
-                }`}
-              >
-                {isActive ? localValue : "—"}
-              </span>
-            ) : (
-              <TableSearchableSelect
-                options={TIME_OPTIONS}
-                value={isActive ? localValue : ""}
-                onChange={(val) => handleModalTimeChange(task, dayOfWeek, val)}
-                placeholder="+"
-                dropdownId={`wrike-day-${task.id}-${dayOfWeek}`}
-                activeDropdown={activeDropdown}
-                setActiveDropdown={setActiveDropdown}
-                isTime={true}
-                isDarkModal={true}
-                compact
-              />
-            )}
-          </div>
-          {wrikeHours &&
-            (() => {
-              const totalMins = Math.round(wrikeHours * 60);
-              const h = Math.floor(totalMins / 60);
-              const m = totalMins % 60;
-              const label =
-                h > 0 && m > 0 ? `${h}h ${m}m` : h > 0 ? `${h}h` : `${m}m`;
-              return (
-                <div
-                  className="text-[10px] font-bold text-emerald-400 bg-emerald-400/10 rounded px-1 leading-tight whitespace-nowrap"
-                  title="Wrike Synced Time"
+      <HoverLabel label={isLocked ? `Can only log time for today (${todayDayName})` : undefined} delay={400}>
+        <td
+          className={`px-1 py-1.5 border-r border-[#263143] text-center group/cell transition-[background-color,opacity] ${
+            isToday
+              ? "bg-[#12a0e1]/8"
+              : isActive
+              ? "bg-[#1e293b]/40"
+              : "opacity-30"
+          }`}
+        >
+          <div className="flex flex-col items-center gap-1">
+            <div className="mx-auto w-11 h-7 relative flex items-center justify-center">
+              {isLocked ? (
+                <span
+                  className={`text-[11px] font-bold ${
+                    isActive ? "text-slate-400" : "text-slate-700"
+                  }`}
                 >
-                  {label} ✓
-                </div>
-              );
-            })()}
-        </div>
-      </td>
+                  {isActive ? localValue : "—"}
+                </span>
+              ) : (
+                <TableSearchableSelect
+                  options={TIME_OPTIONS}
+                  value={isActive ? localValue : ""}
+                  onChange={(val) => handleModalTimeChange(task, dayOfWeek, val)}
+                  placeholder="+"
+                  dropdownId={`wrike-day-${task.id}-${dayOfWeek}`}
+                  activeDropdown={activeDropdown}
+                  setActiveDropdown={setActiveDropdown}
+                  isTime={true}
+                  isDarkModal={true}
+                  compact
+                />
+              )}
+            </div>
+            {wrikeHours &&
+              (() => {
+                const totalMins = Math.round(wrikeHours * 60);
+                const h = Math.floor(totalMins / 60);
+                const m = totalMins % 60;
+                const label =
+                  h > 0 && m > 0 ? `${h}h ${m}m` : h > 0 ? `${h}h` : `${m}m`;
+                return (
+                  <HoverLabel label="Time synced from Wrike">
+                    <div
+                      className="text-[10px] font-bold text-emerald-400 bg-emerald-400/10 rounded px-1 leading-tight whitespace-nowrap"
+                    >
+                      {label} ✓
+                    </div>
+                  </HoverLabel>
+                );
+              })()}
+          </div>
+        </td>
+      </HoverLabel>
     );
   };
 
@@ -3782,7 +3783,7 @@ export default function LegacyTimesheet({ wrikeData, isAdmin = false }) {
                           </div>
                         ) : (
                           <div className={`flex items-center gap-1.5 w-full min-w-0 ${isSub ? "pl-2" : ""}`}>
-                            {isSub && <span className="text-[#768994] text-[11px] shrink-0" title="Set a job for this entry">↳</span>}
+                            {isSub && <HoverLabel label="Set a job for this entry"><span className="text-[#768994] text-[11px] shrink-0">↳</span></HoverLabel>}
                             <div className="flex-1 min-w-0">
                               <TableSearchableSelect
                                 options={jobOptions}
@@ -4006,22 +4007,24 @@ export default function LegacyTimesheet({ wrikeData, isAdmin = false }) {
                 <span className="px-3 py-2 tabular-nums">
                   {currentDayRows.length} {currentDayRows.length === 1 ? "entry" : "entries"}
                 </span>
-                <span
-                  style={{ width: widthOf("Time Spent") }}
-                  title={over ? "Over 7:30 of normal time. Move the rest to Add. time." : "Time spent"}
-                  className={`shrink-0 py-2 text-center tabular-nums border-l border-[#f0f4f8] ${
-                    over ? "text-amber-600" : "text-[#122027]"
-                  }`}
-                >
-                  <span ref={timeTotalRef} className="inline-block"><Rolling key={activeDay} amount={regular}>{formatDayTotal(regular)}h</Rolling></span>
-                </span>
-                <span
-                  style={{ width: widthOf("Add. Time") }}
-                  title="Add. time"
-                  className="shrink-0 py-2 text-center tabular-nums border-l border-[#f0f4f8] text-[#122027]"
-                >
-                  <span ref={addTotalRef} className="inline-block"><Rolling key={activeDay} amount={extra}>{formatDayTotal(extra)}h</Rolling></span>
-                </span>
+                <HoverLabel label={over ? "Over 7:30 of normal time. Move the rest to Add. time." : "Time spent"}>
+                  <span
+                    style={{ width: widthOf("Time Spent") }}
+                    className={`shrink-0 py-2 text-center tabular-nums border-l border-[#f0f4f8] ${
+                      over ? "text-amber-600" : "text-[#122027]"
+                    }`}
+                  >
+                    <span ref={timeTotalRef} className="inline-block"><Rolling key={activeDay} amount={regular}>{formatDayTotal(regular)}h</Rolling></span>
+                  </span>
+                </HoverLabel>
+                <HoverLabel label="Add. time">
+                  <span
+                    style={{ width: widthOf("Add. Time") }}
+                    className="shrink-0 py-2 text-center tabular-nums border-l border-[#f0f4f8] text-[#122027]"
+                  >
+                    <span ref={addTotalRef} className="inline-block"><Rolling key={activeDay} amount={extra}>{formatDayTotal(extra)}h</Rolling></span>
+                  </span>
+                </HoverLabel>
               </div>
               <div className="flex items-center justify-end border-t border-[#f0f4f8]">
                 <span className="px-3 uppercase tracking-widest text-[10px] font-black text-slate-400">

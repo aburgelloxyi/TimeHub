@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { HoverLabel } from "../shared/FloatingCard";
 import gsap from "gsap";
 import { ChevronRight, ClipboardList, ExternalLink, EyeOff, Loader2, RefreshCw, Send } from "lucide-react";
 import { listFiles, saveDecisions, saveFile } from "../../lib/orderForms/store";
@@ -210,11 +211,13 @@ export default function ControlCentre({ wrikeData }) {
               </a>
             )}
             {g.canBrief && (
-              <button onClick={() => refresh(g)} disabled={!!busy} title="Read this market's sheet again" className={actionClass}>
-                <Sweep />
-                {busy === key ? <Loader2 className="w-3 h-3 animate-spin" /> : <RefreshCw className={`${iconMove} duration-500 group-hover/a:rotate-180`} />}
-                Refresh
-              </button>
+              <HoverLabel label="Read this market's sheet again">
+                <button onClick={() => refresh(g)} disabled={!!busy} className={actionClass}>
+                  <Sweep />
+                  {busy === key ? <Loader2 className="w-3 h-3 animate-spin" /> : <RefreshCw className={`${iconMove} duration-500 group-hover/a:rotate-180`} />}
+                  Refresh
+                </button>
+              </HoverLabel>
             )}
             {g.sheetUrl && (
               <a href={g.sheetUrl} target="_blank" rel="noreferrer" className={actionClass}>
@@ -223,22 +226,25 @@ export default function ControlCentre({ wrikeData }) {
                 Sheet
               </a>
             )}
-            <button onClick={() => setAside(g)} title="Stop counting these orders. The sheet isn't changed." className={actionClass}>
-              <Sweep />
-              <EyeOff className={`${iconMove} group-hover/a:scale-110 group-hover/a:-rotate-6`} />
-              Set aside
-            </button>
+            <HoverLabel label="Stop counting these orders. The sheet isn't changed.">
+              <button onClick={() => setAside(g)} className={actionClass}>
+                <Sweep />
+                <EyeOff className={`${iconMove} group-hover/a:scale-110 group-hover/a:-rotate-6`} />
+                Set aside
+              </button>
+            </HoverLabel>
             {/* Orders this old usually mean the film has finished. One click
                 says so, for the whole film, without touching its orders. */}
             {old && (
-              <button
-                onClick={() => setWrapped(g.fileId, true)}
-                title="Stops counting this whole film here, for everyone. Nothing is set aside or deleted, and it can be counted again from Films below."
-                className={actionClass}
-              >
-                <Sweep />
-                Film's finished
-              </button>
+              <HoverLabel label="Stops counting this whole film here, for everyone. Nothing is set aside or deleted, and it can be counted again from Films below.">
+                <button
+                  onClick={() => setWrapped(g.fileId, true)}
+                  className={actionClass}
+                >
+                  <Sweep />
+                  Film's finished
+                </button>
+              </HoverLabel>
             )}
             <a href={linkTo(g.fileId, g.market)} className={`${actionClass} !border-transparent`} aria-label={`Open ${g.market}`}>
               <Sweep />
@@ -279,24 +285,25 @@ export default function ControlCentre({ wrikeData }) {
           const n = ordersIn(found[g.id]);
           const on = only === g.id;
           return (
-            <button
-              key={g.id}
-              ref={cascade(`card-${g.id}`, i)}
-              onClick={() => setOnly(on ? null : g.id)}
-              disabled={!n}
-              aria-pressed={on}
-              title={n ? (on ? "Show everything again" : `Show only ${g.label.toLowerCase()}`) : undefined}
-              className={`press text-left rounded-2xl border shadow-sm px-5 py-4 transition-colors disabled:cursor-default ${
-                on ? "bg-[#122027] border-[#122027]" : "bg-white border-[#dce4ec] enabled:hover:border-[#12a0e1]"
-              }`}
-            >
-              <Counted value={n} className={`block font-display text-3xl font-bold tracking-tight tabular-nums ${on ? "text-white" : n ? g.tone : "text-[#b6c3cc]"}`} />
-              <p className={`text-xs font-bold mt-0.5 ${on ? "text-white" : "text-[#122027]"}`}>{g.label}</p>
-              <p className={`text-[11px] mt-0.5 ${on ? "text-white/70" : "text-[#768994]"}`}>
-                {g.id === "changed" ? count(found.changed.length, "market") : n ? `in ${count(found[g.id].length, "market")}` : "nothing"}
-                {g.id === "overdue" && older > 0 && ` · ${older} older`}
-              </p>
-            </button>
+            <HoverLabel key={g.id} label={n ? (on ? "Show everything again" : `Show only ${g.label.toLowerCase()}`) : undefined} delay={400}>
+              <button
+                key={g.id}
+                ref={cascade(`card-${g.id}`, i)}
+                onClick={() => setOnly(on ? null : g.id)}
+                disabled={!n}
+                aria-pressed={on}
+                className={`press text-left rounded-2xl border shadow-sm px-5 py-4 transition-colors disabled:cursor-default ${
+                  on ? "bg-[#122027] border-[#122027]" : "bg-white border-[#dce4ec] enabled:hover:border-[#12a0e1]"
+                }`}
+              >
+                <Counted value={n} className={`block font-display text-3xl font-bold tracking-tight tabular-nums ${on ? "text-white" : n ? g.tone : "text-[#b6c3cc]"}`} />
+                <p className={`text-xs font-bold mt-0.5 ${on ? "text-white" : "text-[#122027]"}`}>{g.label}</p>
+                <p className={`text-[11px] mt-0.5 ${on ? "text-white/70" : "text-[#768994]"}`}>
+                  {g.id === "changed" ? count(found.changed.length, "market") : n ? `in ${count(found[g.id].length, "market")}` : "nothing"}
+                  {g.id === "overdue" && older > 0 && ` · ${older} older`}
+                </p>
+              </button>
+            </HoverLabel>
           );
         })}
       </div>

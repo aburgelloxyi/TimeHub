@@ -518,18 +518,19 @@ export default function MarketView({ market, kind, filmTitle, clientId, filmKey,
                   All in Wrike
                 </span>
               ) : (
-                <button
-                  onClick={startBriefing}
-                  title={wrikeFolder?.state === "missing" ? "Add this market's folder to Wrike first" : undefined}
-                  className={`group press flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg text-sm font-bold transition-[box-shadow,opacity] ${
-                    wrikeFolder?.state === "missing"
-                      ? "border border-[#dce4ec] text-[#768994]"
-                      : "bg-gradient-to-r from-[#12a0e1] to-[#1cc1a5] text-white shadow-md shadow-[#12a0e1]/20 hover:shadow-lg hover:shadow-[#12a0e1]/30"
-                  }`}
-                >
-                  <Send className="w-3.5 h-3.5 transition-transform duration-200 group-hover:translate-x-0.5 group-hover:-translate-y-0.5" />
-                  Brief {toBrief} into Wrike
-                </button>
+                <HoverLabel label={wrikeFolder?.state === "missing" ? "Add this market's folder to Wrike first" : undefined}>
+                  <button
+                    onClick={startBriefing}
+                    className={`group press flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg text-sm font-bold transition-[box-shadow,opacity] ${
+                      wrikeFolder?.state === "missing"
+                        ? "border border-[#dce4ec] text-[#768994]"
+                        : "bg-gradient-to-r from-[#12a0e1] to-[#1cc1a5] text-white shadow-md shadow-[#12a0e1]/20 hover:shadow-lg hover:shadow-[#12a0e1]/30"
+                    }`}
+                  >
+                    <Send className="w-3.5 h-3.5 transition-transform duration-200 group-hover:translate-x-0.5 group-hover:-translate-y-0.5" />
+                    Brief {toBrief} into Wrike
+                  </button>
+                </HoverLabel>
               ))}
             </div>
           </>

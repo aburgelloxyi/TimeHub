@@ -1,4 +1,5 @@
 import React from "react";
+import { HoverLabel } from "../shared/FloatingCard";
 import { ExternalLink } from "lucide-react";
 import { taskSummary, taskLink } from "../../lib/orderForms/wrikeMatch";
 import { formatDay } from "./format";
@@ -75,13 +76,14 @@ export default function OrderDetail({ order, task, how, parent, today, matching,
           </div>
         </dl>
         {onSetAside && (
-          <button
-            onClick={onSetAside}
-            title="Takes this row off the list and out of the counts. The sheet isn't changed, and it can be brought back from the bottom of the page."
-            className="mt-4 px-3 py-1.5 rounded-lg border border-[#dce4ec] hover:border-[#12a0e1] bg-white text-xs font-bold text-[#122027] transition-colors"
-          >
-            Set this row aside
-          </button>
+          <HoverLabel label="Takes this row off the list and out of the counts. The sheet isn't changed, and it can be brought back from the bottom of the page.">
+            <button
+              onClick={onSetAside}
+              className="mt-4 px-3 py-1.5 rounded-lg border border-[#dce4ec] hover:border-[#12a0e1] bg-white text-xs font-bold text-[#122027] transition-colors"
+            >
+              Set this row aside
+            </button>
+          </HoverLabel>
         )}
       </section>
 

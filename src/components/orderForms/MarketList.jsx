@@ -1,4 +1,5 @@
 import React, { useMemo, useState } from "react";
+import { HoverLabel } from "../shared/FloatingCard";
 import { ArrowDown, ArrowUp, ChevronRight } from "lucide-react";
 import { marketSummary, fileTotals, sortMarkets, changesNote } from "../../lib/orderForms/status";
 import MarketFlag from "./MarketFlag";
@@ -135,7 +136,7 @@ export default function MarketList({ file, today, matcher, onOpen, arriving = fa
           <span>Orders confirmed</span>
           <SortHeader id="deadline" sort={sort} onSort={onSort}>Next deadline</SortHeader>
           <span>Media ok</span>
-          <span title="Orders matched to a Wrike task TimeHub has loaded: by name, by a close name, or chosen by hand. A task it hasn't loaded doesn't show.">In Wrike</span>
+          <HoverLabel label="Orders matched to a Wrike task TimeHub has loaded: by name, by a close name, or chosen by hand. A task it hasn't loaded doesn't show."><span>In Wrike</span></HoverLabel>
           <span />
         </div>}
 

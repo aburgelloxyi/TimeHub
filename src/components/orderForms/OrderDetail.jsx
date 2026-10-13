@@ -21,6 +21,9 @@ function Field({ label, value, note }) {
 
 const LONG_TEXT = [["translations", "Translations"], ["notes", "Notes"], ["specs", "Written specifications"]];
 
+// Each of the three is its own panel on the row's sunken background, so they
+// read as three things and not one run of fields.
+const panelClass = "rounded-xl bg-white border border-[#dce4ec] p-4 min-w-0";
 const headingClass = "text-[10px] font-black uppercase tracking-widest text-[#768994] mb-2.5";
 
 // `task` is the Wrike task matched to this order, `how` the way it was matched
@@ -41,8 +44,8 @@ export default function OrderDetail({ order, task, how, parent, today, matching,
   const candidatesHeading = marketCode ? `Tasks for this film ending in ${marketCode}` : "Tasks for this film";
 
   return (
-    <div className="grid grid-cols-1 lg:grid-cols-3 gap-x-8 gap-y-5 px-5 py-5 bg-slate-50/60">
-      <section>
+    <div className="grid grid-cols-1 lg:grid-cols-3 gap-3 p-4 bg-slate-50">
+      <section className={panelClass}>
         <h3 className={headingClass}>From the market</h3>
         <dl className="space-y-3">
           {LONG_TEXT.map(([field, label]) => (edit?.fields.includes(field) ? (
@@ -82,7 +85,8 @@ export default function OrderDetail({ order, task, how, parent, today, matching,
         )}
       </section>
 
-      <section>
+      {/* The one that isn't the sheet's word: tinted, so the eye finds Wrike. */}
+      <section className={`${panelClass} !bg-sky-50`}>
         <h3 className={headingClass}>
           {task ? `In Wrike${how === "close" ? " · close match, not the exact name" : how === "chosen" ? " · chosen by you" : ""}` : "Not found in Wrike"}
         </h3>
@@ -132,7 +136,7 @@ export default function OrderDetail({ order, task, how, parent, today, matching,
       </section>
 
       {wrikeTitle && (
-        <section>
+        <section className={panelClass}>
           <h3 className={headingClass}>{task ? "From the sheet" : "Becomes Wrike task"}</h3>
           <p className="font-mono text-xs text-[#122027] break-all">{wrikeTitle}</p>
           <dl className="grid grid-cols-2 gap-x-5 gap-y-3 mt-3">

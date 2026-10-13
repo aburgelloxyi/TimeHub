@@ -189,18 +189,25 @@ html.dark-theme body {
 .dark-theme .bg-\[\#f8fafc\],
 .dark-theme .bg-\[\#f8fafc\]\/40 { background-color: rgb(var(--dk-card-rgb) / 0.95) !important; }
 
-/* Pastel team-card backgrounds */
-.dark-theme .bg-blue-50,
-.dark-theme .bg-emerald-50,
+/* Pastel backgrounds (team cards, group rows, tags). Every colour family
+   keeps a dark tint of its own hue. Flattening some to the card colour and
+   not others left lists that use several, such as the job description groups,
+   with a few rows coloured and the rest bare. The remaining families are
+   further down, under "Pastel families completed as pairs". */
+.dark-theme .bg-blue-50     { background-color: #14253b !important; }
+.dark-theme .bg-emerald-50  { background-color: #16302a !important; }
 .dark-theme .bg-pink-50,
-.dark-theme .bg-yellow-50,
-.dark-theme .bg-purple-50,
+.dark-theme .bg-pink-100    { background-color: #361d2c !important; }
+.dark-theme .bg-yellow-50   { background-color: #2f2613 !important; }
+.dark-theme .bg-purple-50   { background-color: #251f3d !important; }
 .dark-theme .bg-orange-50,
+.dark-theme .bg-orange-100  { background-color: #33230f !important; }
 .dark-theme .bg-cyan-50,
+.dark-theme .bg-cyan-100    { background-color: #0f2c36 !important; }
 .dark-theme .bg-indigo-50,
-.dark-theme .bg-indigo-50\/50,
-.dark-theme .bg-rose-50,
-.dark-theme .bg-fuchsia-50 { background-color: var(--dk-card) !important; }
+.dark-theme .bg-indigo-50\/50 { background-color: #1e2440 !important; }
+.dark-theme .bg-rose-50     { background-color: #331c22 !important; }
+.dark-theme .bg-fuchsia-50  { background-color: #331c36 !important; }
 
 /* Motion Board overdue-card tint — kept distinct from plain bg-white cards
    (a faint red-shifted slate) instead of collapsing to the same flat navy,
@@ -438,11 +445,6 @@ html.dark-theme body {
 .dark-theme .border-slate-50,
 .dark-theme .border-slate-300 { border-color: var(--dk-line) !important; }
 
-/* -100 fills, the step up from the -50 tints already covered above. Used for
-   avatar/initial tiles in the same lists. */
-.dark-theme .bg-cyan-100,
-.dark-theme .bg-orange-100,
-.dark-theme .bg-pink-100 { background-color: var(--dk-card) !important; }
 .dark-theme .bg-slate-300 { background-color: var(--dk-raised) !important; }
 
 /* Side-scoped borders: the bare `border-[#dce4ec]` was covered, these weren't,

@@ -11,12 +11,17 @@ const STYLES = {
 // The brand toast pill — same look as the old hand-rolled ToastHost, now
 // rendered inside Sonner (which supplies stacking, swipe-to-dismiss,
 // pause-on-hover, and real exit animations the old host never had).
-export default function ToastPill({ message, type, onDismiss }) {
+export default function ToastPill({ message, type, action, onDismiss }) {
   const { bg, Icon } = STYLES[type] || STYLES.error;
   return (
     <div className={`flex items-center gap-3 pl-5 pr-3 py-3.5 rounded-2xl shadow-2xl text-sm font-bold text-white w-fit max-w-md ${bg}`}>
       <Icon className="w-5 h-5 shrink-0" />
       <span className="flex-1">{message}</span>
+      {action && (
+        <button onClick={action.onClick} className="shrink-0 px-2.5 py-1 rounded-lg bg-white/20 hover:bg-white/30 transition-colors">
+          {action.label}
+        </button>
+      )}
       <button
         onClick={onDismiss}
         className="shrink-0 p-1 rounded-lg hover:bg-white/20 transition-colors"

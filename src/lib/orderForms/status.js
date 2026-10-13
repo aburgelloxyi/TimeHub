@@ -220,3 +220,59 @@ export function changesNote(c) {
     c.removed && `${c.removed} gone`,
   ].filter(Boolean).join(" · ");
 }
+
+// ── What the rest of the team did ─────────────────────────────────────────────
+// For the toasts Client Orders shows when it re-reads the shared films: what
+// is different from the copy this page was showing, where someone else did it.
+// `me` is this person's Wrike id; their own changes (from another tab, say)
+// are not news. Each item is { text, fileId, market } and `market` is where a
+// "View" should go, when there is one place.
+
+const plural = (n, one, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
+const sizes = (byMarket) => Object.fromEntries(Object.entries(byMarket || {}).map(([m, v]) => [m, Array.isArray(v) ? v.length : Object.keys(v || {}).length]));
+
+export function teamNews(before, after, me) {
+  const news = [];
+  const was = new Map((before || []).map((f) => [f.id, f]));
+  const title = (f) => String(f.name || "").replace(/\.xlsx$/i, "");
+  for (const film of after || []) {
+    const old = was.get(film.id);
+    was.delete(film.id);
+    const loader = film.loadedBy;
+    if (!old) {
+      if (loader?.id !== me) news.push({ text: `${loader?.name || "Someone"} loaded ${title(film)}.`, fileId: film.id });
+      continue;
+    }
+    if (film.loadedAt !== old.loadedAt) {
+      if (loader?.id === me) continue;
+      const oldMarkets = new Map(old.markets.map((m) => [m.name, m]));
+      const changed = film.markets
+        .filter((m) => !m.unreadable)
+        .map((m) => [m.name, marketChanges(oldMarkets.get(m.name), m)])
+        .filter(([, c]) => c);
+      if (!changed.length) continue;
+      news.push({
+        text: `${loader?.name || "Someone"} refreshed ${title(film)}: ${changed.length === 1 ? `${changed[0][0]}, ${changesNote(changed[0][1])}` : `${changed.length} markets changed`}.`,
+        fileId: film.id,
+        market: changed.length === 1 ? changed[0][0] : undefined,
+      });
+      continue;
+    }
+    const who = film.decidedBy;
+    if (who?.id === me) continue;
+    const name = who?.name || "Someone";
+    const briefedNow = sizes(film.briefed);
+    const briefedWas = sizes(old.briefed);
+    const asideNow = sizes(film.ignored);
+    const asideWas = sizes(old.ignored);
+    for (const market of new Set([...Object.keys(briefedNow), ...Object.keys(asideNow), ...Object.keys(asideWas)])) {
+      const briefed = (briefedNow[market] || 0) - (briefedWas[market] || 0);
+      const aside = (asideNow[market] || 0) - (asideWas[market] || 0);
+      if (briefed > 0) news.push({ text: `${name} briefed ${plural(briefed, "order")} into Wrike for ${market} (${title(film)}).`, fileId: film.id, market });
+      if (aside > 0) news.push({ text: `${name} set ${plural(aside, "row")} aside in ${market} (${title(film)}).`, fileId: film.id, market });
+      if (aside < 0) news.push({ text: `${name} brought ${plural(-aside, "row")} back in ${market} (${title(film)}).`, fileId: film.id, market });
+    }
+  }
+  for (const gone of was.values()) news.push({ text: `${title(gone)} was removed from Client Orders.` });
+  return news;
+}

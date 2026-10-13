@@ -6,14 +6,17 @@ import React from "react";
 import { toast } from "sonner";
 import ToastPill from "../components/shared/ToastPill";
 
-export function notify(message, type = "error") {
+// `action` is an optional { label, onClick } button on the pill; a toast with
+// one stays longer, since there is something to decide.
+export function notify(message, type = "error", { action, duration } = {}) {
   return toast.custom(
     (t) =>
       React.createElement(ToastPill, {
         message,
         type,
+        action: action && { label: action.label, onClick: () => { toast.dismiss(t); action.onClick(); } },
         onDismiss: () => toast.dismiss(t),
       }),
-    { duration: 4000 }
+    { duration: duration ?? (action ? 9000 : 4000) }
   );
 }

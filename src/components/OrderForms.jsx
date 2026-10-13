@@ -14,7 +14,7 @@ import { connectGoogle, googleConfigured, googleConnected } from "../lib/orderFo
 import { loadFilm, loadMarketOf, listFilms } from "../lib/orderForms/loadFilm";
 import { clientFor, driveStaleness } from "../lib/orderForms/driveTree";
 import { makeMatcher, indexParents, orderKey } from "../lib/orderForms/wrikeMatch";
-import { applySetAside, fileChanges, marketChanges, mergeChanges } from "../lib/orderForms/status";
+import { applySetAside, fileChanges, marketChanges, mergeChanges, teamNews } from "../lib/orderForms/status";
 import { confirmAction } from "../lib/confirm";
 import { notify } from "../lib/toast";
 import { isoToday } from "../utils/dates";
@@ -77,12 +77,23 @@ export default function OrderForms({ wrikeData }) {
   // showing this browser's last copies.
   const [local, setLocal] = useState(false);
   const loadedAt = useRef(0);
+  // What the page is showing, for comparing with a fresh read: the difference
+  // someone else made is said in a toast (see teamNews). Not on the first load,
+  // when there is nothing it was showing.
+  const shownFiles = useRef(null);
   const reload = useCallback(async () => {
     loadedAt.current = Date.now();
     const found = await listFiles();
+    const news = shownFiles.current && storeReach() === "shared"
+      ? teamNews(shownFiles.current, found, localStorage.getItem("wrike_user_id"))
+      : [];
     setFiles(found);
     setLocal(storeReach() === "local");
+    // A few are said one by one, each with a way to it; more than that is one line.
+    if (news.length > 3) notify(`${news.length} updates from the team since you were last here.`, "info");
+    else news.forEach((n) => notify(n.text, "info", n.fileId ? { action: { label: "View", onClick: () => goRef.current?.(n.fileId, n.market || null) } } : undefined));
   }, []);
+  const goRef = useRef(null);
 
   useEffect(() => { reload(); }, [reload]);
 
@@ -130,6 +141,8 @@ export default function OrderForms({ wrikeData }) {
   }, []);
 
   // `file` is as read; `shown` is the same without the rows set aside.
+  shownFiles.current = files;
+  goRef.current = go;
   const file = files?.find((f) => f.id === view.fileId) || files?.[0] || null;
   const shown = useMemo(() => applySetAside(file), [file]);
   const market = shown && view.market ? shown.markets.find((m) => m.name === view.market && !m.unreadable) : null;

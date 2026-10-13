@@ -127,3 +127,31 @@ check("a request past its deadline is overdue", orderUrgency(order("requested", 
     { markets: [after, { name: "AU", orders: [] }, { name: "New", orders: [o("F_Z_Z_XX")] }, { name: "Bad", unreadable: "x", orders: [] }] });
   check("a film read again: changed markets, unseen ones kept, a new market all new", [Object.keys(files), files.AU.added, files.New.added], [["NZ", "AU", "New"], ["old"], ["T|f_z_z_xx"]]);
 }
+
+// ── What the rest of the team did ─────────────────────────────────────────────
+{
+  const { teamNews } = await import("../src/lib/orderForms/status.js");
+  const o = (title, status = "requested") => ({ tab: "T", row: 1, status, deliveryDeadline: "2026-11-01", xyi: { title } });
+  const film = (over = {}) => ({ id: "f", name: "Paramount · Focker In Law · Print", loadedAt: "t1", markets: [{ name: "Slovakia (SVK)", orders: [o("F_A_B_SK")] }, { name: "Austria (AT)", orders: [] }], ...over });
+  const keeley = { id: "K", name: "Keeley Jones" };
+  const texts = (before, after, me = "ME") => teamNews(before, after, me).map((n) => n.text);
+
+  const refreshed = film({ loadedAt: "t2", loadedBy: keeley, markets: [{ name: "Slovakia (SVK)", orders: [o("F_A_B_SK", "confirmed"), o("F_C_D_SK")] }, { name: "Austria (AT)", orders: [] }] });
+  check("someone else's refresh, and what it found", texts([film()], [refreshed]), ["Keeley Jones refreshed Paramount · Focker In Law · Print: Slovakia (SVK), 1 new · 1 confirmed."]);
+  check("it points at the one market that changed", teamNews([film()], [refreshed], "ME")[0].market, "Slovakia (SVK)");
+  check("my own refresh from another tab isn't news", texts([film()], [refreshed], "K"), []);
+  check("a refresh that found nothing new isn't news", texts([film()], [film({ loadedAt: "t2", loadedBy: keeley })]), []);
+  check("several markets are counted, not listed",
+    texts([film()], [film({ loadedAt: "t2", loadedBy: keeley, markets: [{ name: "Slovakia (SVK)", orders: [] }, { name: "Austria (AT)", orders: [o("F_Z_Z_AT")] }] })]),
+    ["Keeley Jones refreshed Paramount · Focker In Law · Print: 2 markets changed."]);
+
+  check("orders briefed and rows set aside by someone else",
+    texts([film({ ignored: { "Austria (AT)": ["a", "b"] } })], [film({ decidedBy: keeley, briefed: { "Slovakia (SVK)": { k1: {}, k2: {} } }, ignored: { "Austria (AT)": ["a"] } })]),
+    ["Keeley Jones briefed 2 orders into Wrike for Slovakia (SVK) (Paramount · Focker In Law · Print).", "Keeley Jones brought 1 row back in Austria (AT) (Paramount · Focker In Law · Print)."]);
+  check("my own decisions aren't news", texts([film()], [film({ decidedBy: { id: "ME" }, ignored: { "Austria (AT)": ["a"] } })]), []);
+
+  check("a film someone loaded, and one that was removed",
+    texts([film()], [film({ id: "g", name: "Universal · Forgotten Island · Motion", loadedBy: keeley })]),
+    ["Keeley Jones loaded Universal · Forgotten Island · Motion.", "Paramount · Focker In Law · Print was removed from Client Orders."]);
+  check("nothing happened", texts([film()], [film()]), []);
+}

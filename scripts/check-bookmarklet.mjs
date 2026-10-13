@@ -28,4 +28,11 @@ if (actual !== expected) {
   console.error("Regenerate it with the command at the top of bookmarklet.src.js, then commit both.");
   process.exit(1);
 }
+// The bookmarklet can't import from the app, so its version number is written
+// in both places. An older bookmark only learns it is old if they agree.
+const versionIn = (file) => Number(/BOOKMARKLET_VERSION = (\d+)/.exec(readFileSync(file, "utf8"))?.[1]);
+if (!versionIn("bookmarklet.src.js") || versionIn("bookmarklet.src.js") !== versionIn("src/lib/bookmarkletVersion.js")) {
+  console.error("BOOKMARKLET_VERSION differs between bookmarklet.src.js and src/lib/bookmarkletVersion.js.");
+  process.exit(1);
+}
 console.log("bookmarklet.txt matches its source.");

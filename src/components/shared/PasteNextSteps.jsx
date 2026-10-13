@@ -1,7 +1,10 @@
-import React, { useEffect, useRef } from "react";
-import { Star, ClipboardPaste, MousePointerClick, Check, ExternalLink } from "lucide-react";
+import React, { useEffect, useRef, useState } from "react";
+import { Star, ClipboardPaste, MousePointerClick, Check, ExternalLink, Copy } from "lucide-react";
+import bookmarkletText from "../../../bookmarklet.txt?raw";
 
-const TIMESHEET_URL = "https://timesheet.xyi.com";
+const BOOKMARKLET = bookmarkletText.trim();
+
+const TIMESHEET_URL = "https://timesheet.xyi.com/Timesheet/";
 
 // "You've copied it — here's where it goes."
 //
@@ -41,9 +44,80 @@ const STEPS = [
   {
     icon: ClipboardPaste,
     title: "Paste into the box, then hit Populate Rows",
-    body: 'A window called "Automate Timesheet" opens with an empty box. Paste what you just copied there!',
+    // The line break keeps the instruction whole on its own line, where the
+    // card's width would otherwise leave its last word alone.
+    body: 'A window called "Automate Timesheet" opens with an empty box.\nPaste what you just copied there!',
   },
 ];
+
+// The bookmark itself, for someone who has lost theirs or whose copy is from
+// an older version. It is code saved inside each person's bookmark and never
+// updates itself, so this is the only way a newer one reaches anyone. Two ways
+// to take it, because browsers offer two: drag the button to the favourites
+// bar for a new bookmark, or copy the code and paste it over the address of
+// the one already there.
+function GetBookmark({ afterCopy }) {
+  const [open, setOpen] = useState(false);
+  const [copied, setCopied] = useState(false);
+  const linkRef = useRef(null);
+
+  // Set on the element directly: React won't put a javascript: address in an
+  // href, which is right everywhere but here.
+  useEffect(() => {
+    if (open) linkRef.current?.setAttribute("href", BOOKMARKLET);
+  }, [open]);
+
+  const copy = async () => {
+    try {
+      await navigator.clipboard.writeText(BOOKMARKLET);
+      setCopied(true);
+    } catch {
+      setCopied(false);
+    }
+  };
+
+  return (
+    <div className="mt-2">
+      <button onClick={() => setOpen((v) => !v)} aria-expanded={open} className="block text-left text-[11px] font-bold text-[#12a0e1] hover:underline whitespace-nowrap">
+        Missing or out of date? Get the latest
+      </button>
+      {open && (
+        <div className="mt-2 rounded-lg border border-[#dce4ec] bg-slate-50 p-2.5 space-y-2.5">
+          <div>
+            <p className="text-[11px] text-[#768994] leading-relaxed mb-1.5 [text-wrap:pretty]">
+              <span className="font-bold text-[#122027]">New bookmark:</span> drag this up to your favourites bar.
+            </p>
+            {/* Dragged, not clicked: clicking would run it here, on the wrong site. */}
+            <a
+              ref={linkRef}
+              onClick={(e) => e.preventDefault()}
+              title="Drag me to your favourites bar"
+              className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-white border border-dashed border-[#12a0e1] text-[11px] font-bold text-[#122027] cursor-grab active:cursor-grabbing"
+            >
+              <Star className="w-3 h-3 fill-[#f5b301] text-[#f5b301]" />
+              Fill my timesheet
+            </a>
+          </div>
+          <div>
+            <p className="text-[11px] text-[#768994] leading-relaxed mb-1.5 [text-wrap:pretty]">
+              <span className="font-bold text-[#122027]">Update the one you have:</span> copy the code, right-click your bookmark, choose Edit, and paste it over the address.
+            </p>
+            <button onClick={copy} className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-white border border-[#dce4ec] hover:border-[#12a0e1] text-[11px] font-bold text-[#122027] transition-colors">
+              {copied ? <Check className="w-3 h-3 text-[#1cc1a5]" strokeWidth={3} /> : <Copy className="w-3 h-3" />}
+              {copied ? "Code copied" : "Copy the code"}
+            </button>
+            {/* The clipboard holds one thing: taking the code puts the week out. */}
+            {copied && afterCopy && (
+              <p className="text-[11px] font-bold text-amber-700 leading-relaxed mt-1.5 [text-wrap:pretty]">
+                That replaced your copied timesheet. Press Copy Me again once the bookmark is updated.
+              </p>
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
 
 // `popover` draws the card's own floating chrome, hung upward off whatever
 // `relative` wrapper the caller put it in. It lives here rather than at the call
@@ -110,11 +184,11 @@ export default function PasteNextSteps({
                 <Icon className="w-3.5 h-3.5" />
               </span>
               <div className="min-w-0">
-                <p className="text-xs font-bold text-[#122027] leading-snug">
+                <p className="text-xs font-bold text-[#122027] leading-snug [text-wrap:balance]">
                   <span className="text-[#768994] tabular-nums">{i + 1}. </span>
                   {step.title}
                 </p>
-                <p className="text-[11px] text-[#768994] leading-relaxed mt-0.5">
+                <p className="text-[11px] text-[#768994] leading-relaxed mt-0.5 whitespace-pre-line [text-wrap:pretty]">
                   {step.body}
                 </p>
 
@@ -138,7 +212,7 @@ export default function PasteNextSteps({
                 {step.chip && (
                   <div className="mt-2 rounded-lg border border-[#dce4ec] bg-slate-50 px-2 py-1.5">
                     <div className="flex items-center gap-1.5">
-                      <span className="flex items-center gap-1 px-1.5 py-0.5 rounded bg-white border border-[#dce4ec] text-[10px] font-bold text-[#323b43]">
+                      <span className="flex items-center gap-1 px-1.5 py-0.5 rounded bg-white border border-[#dce4ec] text-[10px] font-bold text-[#323b43] whitespace-nowrap">
                         <Star className="w-2.5 h-2.5 fill-[#f5b301] text-[#f5b301]" />
                         your bookmark
                       </span>
@@ -148,6 +222,7 @@ export default function PasteNextSteps({
                     </div>
                   </div>
                 )}
+                {step.chip && <GetBookmark afterCopy={copied} />}
               </div>
             </li>
           );

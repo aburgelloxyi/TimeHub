@@ -4,6 +4,10 @@
 // Pastes XYi Tracker JSON into the company timesheet page. Relies on page
 // globals: jQuery ($), RowAdd(), populateJobInfo(), timesheetRowUpdateCheck().
 (function () {
+  // Kept in step with src/lib/bookmarkletVersion.js (npm run check compares
+  // them). What is pasted says which version TimeHub now ships; a bookmark
+  // older than that says so, and carries on.
+  var BOOKMARKLET_VERSION = 1;
   var overlay = document.createElement("div");
   overlay.style.cssText =
     "position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.8);z-index:99999;display:flex;justify-content:center;align-items:center;font-family:sans-serif;";
@@ -63,6 +67,15 @@
 
     try {
       var data = JSON.parse(document.getElementById("xyi-json-input").value);
+      if (data.bookmarklet > BOOKMARKLET_VERSION && !document.getElementById("xyi-outdated")) {
+        var old = document.createElement("div");
+        old.id = "xyi-outdated";
+        old.style.cssText =
+          "margin-bottom:16px;padding:10px 12px;border-radius:8px;background:#fffbeb;border:1px solid #fde68a;font-size:13px;color:#78350f;";
+        old.textContent =
+          "This bookmark is out of date. It will still fill your rows, but TimeHub has a newer one: press Copy Me, then \"Get the latest bookmark\".";
+        modal.insertBefore(old, document.getElementById("xyi-json-input"));
+      }
       var tasks = data.tasks || [];
       var activeDay = $(".day-tab-titles .selected-day a").text().trim();
       var dailyTasks = tasks.filter(function (t) {

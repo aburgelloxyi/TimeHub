@@ -79,17 +79,17 @@ import ReportProblemModal from "./legacy/ReportProblemModal";
 import PullTimesButton from "./legacy/PullTimesButton";
 import { motion } from "framer-motion";
 import { PAGES } from "../lib/departments";
+import { BOOKMARKLET_VERSION } from "../lib/bookmarkletVersion";
 
 // Bottom-bar tools that are an icon until hovered or focused. The label's
 // width is animated, so the button grows instead of a tooltip appearing; on a
 // touch screen it stays an icon and aria-label names it.
 const quietToolClass =
   "group/tool flex items-center p-3 bg-white hover:bg-slate-50 text-[#122027] text-sm font-bold border border-[#dce4ec] rounded-xl shadow-sm transition-[background-color,transform] active:scale-95 focus:outline-none focus-visible:ring-4 focus-visible:ring-[#12a0e1]/30";
-// The tongue opening and closing: a spring to the real width of whatever is
-// showing, soft enough to settle without a visible bounce.
+// The table settings opening and closing: a spring to the real width of the
+// controls, soft enough to settle without a visible bounce.
 const TONGUE_SPRING = { type: "spring", stiffness: 210, damping: 26, mass: 0.9 };
-// Height as well as width: the cog's sphere is taller than the row of controls.
-const tongueFold = (shown) => ({ width: shown ? "auto" : 0, height: shown ? "auto" : 0, opacity: shown ? 1 : 0 });
+const tongueFold = (shown) => ({ width: shown ? "auto" : 0, opacity: shown ? 1 : 0 });
 
 const quietToolLabelClass =
   "max-w-0 overflow-hidden whitespace-nowrap opacity-0 transition-[max-width,opacity,margin] duration-500 ease-in-out [@media(hover:hover)]:group-hover/tool:max-w-[10rem] [@media(hover:hover)]:group-hover/tool:opacity-100 [@media(hover:hover)]:group-hover/tool:ml-2 group-focus-visible/tool:max-w-[10rem] group-focus-visible/tool:opacity-100 group-focus-visible/tool:ml-2";
@@ -2159,6 +2159,8 @@ export default function LegacyTimesheet({ wrikeData, isAdmin = false }) {
 
       const exportData = {
         version: 7, // 7 = seconds are exact (the bookmarklet does the rounding)
+        // The bookmarklet this build ships, so an older bookmark can say it is one.
+        bookmarklet: BOOKMARKLET_VERSION,
         exportDate: new Date().toISOString(),
         tasks: getConsolidatedTasks(mappedTasks),
         rawTasks: mappedTasks,
@@ -2324,9 +2326,10 @@ export default function LegacyTimesheet({ wrikeData, isAdmin = false }) {
   // for arriving on a day that happens to be locked already.
   const lockPressed = useRef(false);
   const lockIconRef = useRef(null);
-  // The tongue is open while the mouse is over it, while keyboard focus is
-  // inside it, after a tap on its cog (until a tap elsewhere), and while its
-  // pull defaults panel is up.
+  // The table settings (the cog in the action bar) are open while the mouse
+  // is over them, while keyboard focus is inside, after a click on the cog
+  // (until a click elsewhere or on it again), and while the pull defaults
+  // panel is up.
   const [tongueHover, setTongueHover] = useState(false);
   const [tongueFocus, setTongueFocus] = useState(false);
   const [tonguePinned, setTonguePinned] = useState(false);
@@ -2657,8 +2660,8 @@ export default function LegacyTimesheet({ wrikeData, isAdmin = false }) {
 
   // Every real row the grid is currently showing, in either view. Consolidated
   // mode emits group headers too, and a collapsed group hides its subrows — so
-  // this is derived from renderItems rather than from currentDayRows, and
-  // "select all" means "all the rows you can actually see".
+  // this is derived from renderItems rather than from currentDayRows. Only
+  // these can be ticked.
   const selectableIds = useMemo(
     () => renderItems.filter((i) => i.type !== "group").map((i) => i.row.id),
     [renderItems]
@@ -2676,15 +2679,24 @@ export default function LegacyTimesheet({ wrikeData, isAdmin = false }) {
     });
   }, [selectableIds]);
 
+  // Ticks every entry under one job number, or clears them if they all are.
+  // A collapsed group is opened first: rows that aren't on screen can't be
+  // selected (see the effect above), and what is about to be merged or edited
+  // should be visible.
+  const toggleGroupSelected = useCallback((group) => {
+    const ids = group._subRows.map((sub) => sub.id);
+    if (collapsedGroups[group.jobNumber]) toggleJobGroup(group.jobNumber);
+    setSelectedRowIds((prev) => {
+      const next = new Set(prev);
+      const all = ids.every((id) => next.has(id));
+      ids.forEach((id) => (all ? next.delete(id) : next.add(id)));
+      return next;
+    });
+    // toggleJobGroup is recreated every render.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [collapsedGroups]);
+
   const selectedCount = selectedRowIds.size;
-  const allSelected = selectableIds.length > 0 && selectedCount === selectableIds.length;
-
-  const toggleSelectAll = useCallback(() => {
-    setSelectedRowIds((prev) =>
-      prev.size === selectableIds.length ? new Set() : new Set(selectableIds)
-    );
-  }, [selectableIds]);
-
   // One field across every ticked row. Goes through handleUpdateRow so a bulk
   // change behaves exactly like typing into each cell — same frozen-day guard,
   // same Job Book side-effects, same save flash.
@@ -3444,28 +3456,6 @@ export default function LegacyTimesheet({ wrikeData, isAdmin = false }) {
                   >
                     {/* "Add. Time" stacks so the full stop ends its own line,
                         matching the two-line Time Spent / Client Amends labels. */}
-                    {/* Select-all lives in the first header cell rather than in
-                        a column of its own — the colgroup drives the resizable
-                        widths, so a new column would have to be threaded
-                        through every row's cells and every saved width. */}
-                    {idx === 0 && rowsAreEditable && selectableIds.length > 0 && (
-                      <HoverLabel label={allSelected ? "Clear selection" : "Select every row on this day"} delay={400}>
-                        <button
-                          onClick={toggleSelectAll}
-                          aria-pressed={allSelected}
-                          aria-label="Select every row on this day"
-                          className="absolute left-0 top-0 bottom-0 w-6 flex items-center justify-center hover:bg-white/10 transition-colors"
-                        >
-                          <span
-                            className={`w-[13px] h-[13px] rounded-[4px] border flex items-center justify-center transition-colors ${
-                              allSelected ? "bg-[#12a0e1] border-[#12a0e1]" : "border-white/40"
-                            }`}
-                          >
-                            {allSelected && <Check className="w-2.5 h-2.5 text-white" strokeWidth={4} />}
-                          </span>
-                        </button>
-                      </HoverLabel>
-                    )}
                     {c.label === "Add. Time" ? (
                       <span className="block leading-tight">
                         <span className="block">Add.</span>
@@ -3490,12 +3480,43 @@ export default function LegacyTimesheet({ wrikeData, isAdmin = false }) {
                 if (item.type === "group") {
                   const g = item.group;
                   const collapsed = collapsedGroups[g.jobNumber];
+                  const tickedInGroup = g._subRows.filter((sub) => selectedRowIds.has(sub.id)).length;
+                  const groupTicked = tickedInGroup > 0;
+                  const groupAllTicked = groupTicked && tickedInGroup === g._subRows.length;
                   return (
                     <tr key={g.id} data-group-id={g.id} className="bg-slate-50 border-y border-[#dce4ec]">
                       {/* overflow-visible (inline, to beat the table's [&_td]:overflow-hidden)
                           so the multi-country add popover isn't clipped by the cell. */}
-                      <td className="p-2 border-r border-[#dce4ec] align-middle" style={{ overflow: "visible" }}>
-                        <div className="flex items-center gap-1.5 pl-1">
+                      <td className="group/tools relative p-2 border-r border-[#dce4ec] align-middle" style={{ overflow: "visible" }}>
+                        {/* The same sliding select box the rows have, for the
+                            whole job: it ticks every entry under this number,
+                            ready to merge or batch edit. A dash means some. */}
+                        {rowsAreEditable && (
+                          <HoverLabel label={groupAllTicked ? "Clear this job's entries" : "Select every entry in this job"} delay={400}>
+                            <button
+                              onClick={() => toggleGroupSelected(g)}
+                              aria-pressed={groupAllTicked}
+                              aria-label={`Select every entry in ${g.jobNumber || "this group"}`}
+                              className={`absolute left-0 top-0 bottom-0 overflow-hidden flex items-center justify-center z-[1] transition-[width,background-color] ${ROW_TOOLS_EASE} ${
+                                groupTicked ? "w-6 bg-[#12a0e1]/10" : `${ROW_TOOLS_GUTTER} hover:bg-slate-100`
+                              }`}
+                            >
+                              <span
+                                className={`w-[13px] h-[13px] rounded-[4px] border flex items-center justify-center transition-[background-color,border-color,opacity] duration-150 ${
+                                  groupTicked
+                                    ? "bg-[#12a0e1] border-[#12a0e1]"
+                                    : "border-[#c2d0da] bg-white opacity-0 group-hover/tools:opacity-100 group-focus-within/tools:opacity-100"
+                                }`}
+                              >
+                                {groupAllTicked && <Check className="w-2.5 h-2.5 text-white" strokeWidth={4} />}
+                                {groupTicked && !groupAllTicked && <span className="w-[7px] h-[2px] rounded bg-white" />}
+                              </span>
+                            </button>
+                          </HoverLabel>
+                        )}
+                        <div className={`flex items-center gap-1.5 transition-[padding] ${ROW_TOOLS_EASE} ${
+                          !rowsAreEditable ? "pl-1" : groupTicked ? "pl-6" : ROW_TOOLS_INSET
+                        }`}>
                           <HoverLabel label={collapsed ? "Expand" : "Collapse"} delay={400}>
                             <button
                               aria-label={collapsed ? "Expand" : "Collapse"}
@@ -4017,10 +4038,8 @@ export default function LegacyTimesheet({ wrikeData, isAdmin = false }) {
           );
         })()}
 
-        {/* Batch-edit bar. Replaces the tongue while rows are ticked rather
-            than stacking above it: they occupy the same spot, and two floating
-            bars competing for the same corner is worse than one that changes
-            what it offers. */}
+        {/* Batch-edit bar: floats over the top edge of the action bar while
+            rows are ticked. */}
         {selectedCount > 0 && (
           <div className="relative z-20 -mb-4 flex justify-center pointer-events-none">
             <div className="pointer-events-auto flex flex-wrap justify-center items-center gap-2 max-w-full bg-[#122027] text-white rounded-3xl sm:rounded-full shadow-lg px-2 py-1.5 animate-in fade-in slide-in-from-bottom-2 duration-200">
@@ -4081,60 +4100,81 @@ export default function LegacyTimesheet({ wrikeData, isAdmin = false }) {
           </div>
         )}
 
-        {/* Bottom-centre "tongue": the table's view controls, floating above
-            the action bar so they cost no vertical space. A single bubble at
-            rest that opens out to its controls (see tongueOpen for when). */}
-        <div className={`relative z-10 -mb-6 flex justify-center pointer-events-none ${selectedCount > 0 ? "hidden" : ""}`}>
-          <div
-            ref={tongueRef}
-            // Mouse only: a touch fires pointerenter too, and would open the
-            // tongue with nothing to close it. It stays open a little after the
-            // pointer leaves, so drifting off it on the way to a control, or
-            // clipping its edge on the way past, doesn't shut it.
-            onPointerEnter={(e) => {
-              if (e.pointerType !== "mouse") return;
-              clearTimeout(tongueLeaveTimer.current);
-              setTongueHover(true);
-            }}
-            onPointerLeave={() => {
-              clearTimeout(tongueLeaveTimer.current);
-              tongueLeaveTimer.current = setTimeout(() => setTongueHover(false), 1200);
-            }}
-            // Keyboard focus only, so a mouse click on a control doesn't hold
-            // it open after the pointer has gone.
-            onFocus={(e) => setTongueFocus(e.target.matches(":focus-visible"))}
-            onBlur={(e) => {
-              if (!e.currentTarget.contains(e.relatedTarget)) setTongueFocus(false);
-            }}
-            // As tall as the cog's sphere whatever is showing. The row of
-            // controls is shorter, and if this shrank to fit it the pointer
-            // would fall outside at the top or bottom edge, close it, and be
-            // back inside the sphere: open, close, open. A fixed height also
-            // keeps the table and the action bar still while it moves.
-            className="pointer-events-auto flex items-center justify-center h-12 max-w-full"
-          >
-            <div className="flex justify-center items-center max-w-full bg-white border border-[#dce4ec] rounded-3xl sm:rounded-full shadow-md p-1">
-              {/* The cog folds away as the controls open, so it isn't left
-                  beside them with nothing to do. */}
-              <motion.div initial={false} animate={tongueFold(!tongueOpen)} transition={TONGUE_SPRING} className="overflow-hidden shrink-0">
-                <button
-                  onClick={() => setTonguePinned(true)}
-                  aria-label="Table settings"
-                  aria-expanded={tongueOpen}
-                  tabIndex={tongueOpen ? -1 : 0}
-                  // Tinted when something is switched on that changes what the
-                  // table shows or what a pull produces: a locked day most of all.
-                  className={`flex items-center justify-center w-10 h-10 rounded-full hover:text-[#122027] focus:outline-none ${
-                    isDayFrozen ? "text-amber-600"
-                    : consolidatedView || defaultCategory || groupMultiCountry ? "text-[#12a0e1]"
-                    : "text-[#768994]"
-                  }`}
-                >
-                  <Settings className="w-5 h-5 shrink-0" />
-                </button>
-              </motion.div>
+        {/* Bottom Action Bar. The batch-edit bar above hangs 16px into it, so
+            below 2xl, where the buttons can reach the centre, the extra top
+            padding keeps them clear of it. */}
+        <div className="p-4 pt-7 2xl:pt-4 border-t border-[#dce4ec] bg-slate-50 rounded-b-2xl flex flex-wrap gap-3 justify-between items-center">
+          {/* The two occasional tools: icons at rest, opening out to their
+              names on hover or keyboard focus. */}
+          <div className="flex gap-3 flex-wrap items-center">
+            <button
+              onClick={handleOpenWrikeModal}
+              aria-label="Wrike Timesheets"
+              className={quietToolClass}
+            >
+              <LayoutList className="w-4 h-4 shrink-0" />
+              <span className={quietToolLabelClass}>Wrike Timesheets</span>
+            </button>
+            <button
+              onClick={() => {
+                if (!wrikeUserId) {
+                  showToast("Please connect Wrike in Profile → Settings first.");
+                  return;
+                }
+                setShowReportProblem(true);
+              }}
+              aria-label="Report a problem"
+              className={quietToolClass}
+            >
+              <MessageSquareWarning className="w-4 h-4 shrink-0" />
+              <span className={quietToolLabelClass}>Report a problem</span>
+            </button>
+            {/* The table's view controls, behind a cog: a third tool that
+                opens out along the bar to Consolidated, Lock and the pull
+                defaults (see tongueOpen for when). The cog is tinted when one
+                of them is switched on, a locked day most of all, so that
+                isn't hidden while it's closed. */}
+            <div
+              ref={tongueRef}
+              // Mouse only: a touch fires pointerenter too, and would open it
+              // with nothing to close it. It stays open a little after the
+              // pointer leaves, so drifting off it on the way to a control
+              // doesn't shut it.
+              onPointerEnter={(e) => {
+                if (e.pointerType !== "mouse") return;
+                clearTimeout(tongueLeaveTimer.current);
+                setTongueHover(true);
+              }}
+              onPointerLeave={() => {
+                clearTimeout(tongueLeaveTimer.current);
+                tongueLeaveTimer.current = setTimeout(() => setTongueHover(false), 500);
+              }}
+              // Keyboard focus only, so a mouse click on a control doesn't hold
+              // it open after the pointer has gone.
+              onFocus={(e) => setTongueFocus(e.target.matches(":focus-visible"))}
+              onBlur={(e) => {
+                if (!e.currentTarget.contains(e.relatedTarget)) setTongueFocus(false);
+              }}
+              className="flex items-center bg-white border border-[#dce4ec] rounded-xl shadow-sm"
+            >
+              <button
+                onClick={() => setTonguePinned((v) => !v)}
+                aria-label="Table settings"
+                aria-expanded={tongueOpen}
+                // h-11 with the wrapper's border is the height of the two tools
+                // beside it, whose (hidden) labels set a taller line than an icon.
+                className={`flex items-center justify-center h-11 px-3 rounded-xl hover:bg-slate-50 transition-[background-color,transform] active:scale-95 focus:outline-none focus-visible:ring-4 focus-visible:ring-[#12a0e1]/30 ${
+                  isDayFrozen ? "text-amber-600"
+                  : consolidatedView || defaultCategory || groupMultiCountry ? "text-[#12a0e1]"
+                  : "text-[#122027]"
+                }`}
+              >
+                <motion.span initial={false} animate={{ rotate: tongueOpen ? 120 : 0 }} transition={TONGUE_SPRING} className="flex">
+                  <Settings className="w-4 h-4 shrink-0" />
+                </motion.span>
+              </button>
               <motion.div initial={false} animate={tongueFold(tongueOpen)} transition={TONGUE_SPRING} className="overflow-hidden min-w-0">
-                <div className="flex flex-wrap sm:flex-nowrap justify-center items-center gap-1 whitespace-nowrap">
+                <div className="flex items-center gap-1 pr-2 whitespace-nowrap">
                   <HoverLabel label="One row per job, with its markets and categories nested underneath">
                     <button
                       onClick={() => switchConsolidated()}
@@ -4167,44 +4207,11 @@ export default function LegacyTimesheet({ wrikeData, isAdmin = false }) {
                     groupMultiCountry={groupMultiCountry}
                     setPrefs={setPrefs}
                     onOpenChange={setPullDefaultsOpen}
+                    pinnedCategories={topCategories}
                   />
                 </div>
               </motion.div>
             </div>
-          </div>
-        </div>
-
-        {/* Bottom Action Bar. The tongue sits centred on its top edge: 24px
-            into it as the sphere, 18px opened out. Opened out it reaches over
-            the right-hand buttons at any width, so the top padding always
-            clears that; below 1760px the buttons reach under the sphere too,
-            and it clears the sphere. */}
-        <div className="p-4 pt-10 min-[1760px]:pt-6 border-t border-[#dce4ec] bg-slate-50 rounded-b-2xl flex flex-wrap gap-3 justify-between items-center">
-          {/* The two occasional tools: icons at rest, opening out to their
-              names on hover or keyboard focus. */}
-          <div className="flex gap-3 flex-wrap items-center">
-            <button
-              onClick={handleOpenWrikeModal}
-              aria-label="Wrike Timesheets"
-              className={quietToolClass}
-            >
-              <LayoutList className="w-4 h-4 shrink-0" />
-              <span className={quietToolLabelClass}>Wrike Timesheets</span>
-            </button>
-            <button
-              onClick={() => {
-                if (!wrikeUserId) {
-                  showToast("Please connect Wrike in Profile → Settings first.");
-                  return;
-                }
-                setShowReportProblem(true);
-              }}
-              aria-label="Report a problem"
-              className={quietToolClass}
-            >
-              <MessageSquareWarning className="w-4 h-4 shrink-0" />
-              <span className={quietToolLabelClass}>Report a problem</span>
-            </button>
           </div>
           {/* Left to right in the order they're used: get rows in (from
               comments, or from Wrike's own times), then copy them out. */}

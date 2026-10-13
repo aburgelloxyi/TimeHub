@@ -1,35 +1,37 @@
 import React, { useState, useEffect, useLayoutEffect, useRef } from "react";
 import { createPortal } from "react-dom";
-import { SlidersHorizontal, Search, Check } from "lucide-react";
+import { SlidersHorizontal } from "lucide-react";
+import TableSearchableSelect from "./TableSearchableSelect";
 import { HoverLabel } from "../shared/FloatingCard";
 import { CATEGORIES } from "../../constants.js";
 
 // The two "how should my pulled rows arrive" preferences, as a popover hanging
-// off the bottom-centre tongue next to Lock.
+// off the table settings in the action bar, next to Lock.
 //
-// It opens UPWARD because the tongue sits at the foot of the table, a few
-// pixels above the action bar — a downward panel would open into the page
-// footer and off the bottom of the viewport.
+// It opens UPWARD because the action bar is at the foot of the table: a
+// downward panel would open into the page footer and off the bottom of the
+// viewport.
 //
 // The panel is portalled to <body> and fixed above the button. Inside the
 // tongue it could never rise above the table: the tongue is its own stacking
 // context at z-10, so the panel's z-index only counted within it, and the
 // table's country and category cells drew straight over the panel.
 //
-// The category list is built here rather than reusing SearchableSelect: that
-// component's menu is a 900px-wide, 20rem-tall panel anchored top-full, which
-// is right for a full-width table cell and completely wrong nested inside a
-// 320px popover that is itself already flipped upward.
+// The default category is chosen with the same picker as the table's Category
+// column (grouped, with the most-used ones on top), so it is one thing to
+// learn. Its list places itself, above the field when there's no room below.
 export default function PullDefaultsPopover({
   defaultCategory,
   groupMultiCountry,
   setPrefs,
   onOpenChange,
+  pinnedCategories = [],
 }) {
   const [open, setOpen] = useState(false);
+  // TableSearchableSelect is open when this names it.
+  const [activeDropdown, setActiveDropdown] = useState(null);
   // The tongue stays opened out while this panel is up; see LegacyTimesheets.
   useEffect(() => { onOpenChange?.(open); }, [open, onOpenChange]);
-  const [search, setSearch] = useState("");
   const wrapRef = useRef(null);
   const panelRef = useRef(null);
   // Where the panel sits: centred on the button, its bottom edge just above it,
@@ -76,15 +78,9 @@ export default function PullDefaultsPopover({
     };
   }, [open]);
 
-  // Reopening should always start from the full list rather than whatever was
-  // typed last time, which is invisible until the panel is open again.
   useEffect(() => {
-    if (!open) setSearch("");
+    if (!open) setActiveDropdown(null);
   }, [open]);
-
-  const filtered = search
-    ? CATEGORIES.filter((c) => c.toLowerCase().includes(search.toLowerCase()))
-    : CATEGORIES;
 
   // A set default is the thing worth surfacing on the closed button — it
   // silently changes what every future pull produces, so it should not be
@@ -155,68 +151,35 @@ export default function PullDefaultsPopover({
             </div>
 
             {/* Default category */}
-            <div className="p-3 pb-2">
-              <p className="text-xs font-black text-[#122027] px-1 mb-2">
-                Default category
-              </p>
-              <div className="flex items-center gap-2 bg-slate-50 border border-[#dce4ec] rounded-xl px-2.5 py-1.5">
-                <Search className="w-3.5 h-3.5 text-[#768994] shrink-0" />
-                <input
-                  autoFocus
-                  value={search}
-                  onChange={(e) => setSearch(e.target.value)}
-                  placeholder="Search categories…"
-                  className="w-full bg-transparent text-xs text-[#122027] outline-none placeholder:text-[#768994]"
+            <div className="p-4">
+              <div className="flex items-baseline justify-between gap-3 mb-2">
+                <p className="text-xs font-black text-[#122027]">Default category</p>
+                {/* Clearing the default is a real choice, not an absence of one:
+                    it hands the category back to the PRINT/REVISION keyword
+                    guess, so it needs to be as reachable as picking one. */}
+                {defaultCategory && (
+                  <button
+                    onClick={() => setPrefs({ defaultCategory: null })}
+                    className="text-[11px] font-bold text-[#768994] hover:text-[#122027] underline underline-offset-2"
+                  >
+                    No default
+                  </button>
+                )}
+              </div>
+              <div className="rounded-xl border border-[#dce4ec] bg-white">
+                <TableSearchableSelect
+                  options={CATEGORIES}
+                  value={defaultCategory || ""}
+                  onChange={(picked) => setPrefs({ defaultCategory: picked || null })}
+                  placeholder="No default"
+                  isGrouped={true}
+                  pinnedOptions={pinnedCategories}
+                  dropdownId="pull-default-category"
+                  activeDropdown={activeDropdown}
+                  setActiveDropdown={setActiveDropdown}
+                  isCategory={true}
                 />
               </div>
-            </div>
-
-            <div className="max-h-56 overflow-y-auto overscroll-contain px-2 pb-2">
-              {/* Clearing the default is a real choice, not an absence of one: it
-                hands the category back to the PRINT/REVISION keyword guess, so
-                it needs to be as reachable as picking a category. */}
-              <button
-                onClick={() => {
-                  setPrefs({ defaultCategory: null });
-                  setOpen(false);
-                }}
-                className={`w-full text-left px-2.5 py-1.5 rounded-lg text-[11px] flex items-center gap-2 transition-colors ${
-                  defaultCategory
-                    ? "text-[#768994] hover:bg-slate-50"
-                    : "text-[#12a0e1] font-bold bg-[#12a0e1]/5"
-                }`}
-              >
-                <Check
-                  className={`w-3 h-3 shrink-0 ${defaultCategory ? "opacity-0" : ""}`}
-                />
-                No default
-              </button>
-
-              {filtered.map((c) => (
-                <button
-                  key={c}
-                  onClick={() => {
-                    setPrefs({ defaultCategory: c });
-                    setOpen(false);
-                  }}
-                  className={`w-full text-left px-2.5 py-1.5 rounded-lg text-[11px] flex items-center gap-2 transition-colors ${
-                    c === defaultCategory
-                      ? "text-[#12a0e1] font-bold bg-[#12a0e1]/5"
-                      : "text-[#122027] hover:bg-slate-50"
-                  }`}
-                >
-                  <Check
-                    className={`w-3 h-3 shrink-0 ${c === defaultCategory ? "" : "opacity-0"}`}
-                  />
-                  <span className="truncate">{c}</span>
-                </button>
-              ))}
-
-              {filtered.length === 0 && (
-                <p className="px-2.5 py-3 text-[11px] text-[#768994] text-center">
-                  No category matches “{search}”.
-                </p>
-              )}
             </div>
           </div>
         </div>,

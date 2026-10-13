@@ -337,6 +337,18 @@ html.dark-theme .bg-white.border:is(.rounded-2xl, .rounded-3xl):not([class*="bg-
   background-repeat: no-repeat;
 }
 
+/* Light cards: lifted off the page by a tight contact shadow and a wide soft
+   one under it, tinted with the ink colour so it reads as depth and not as
+   grey smudge. Cards that ask for a bigger shadow of their own keep it. Rings
+   are carried through, as Tailwind composes them. */
+html:not(.dark-theme) .bg-white.border:is(.rounded-2xl, .rounded-3xl):not([class*="bg-gradient"], [class*="shadow-md"], [class*="shadow-lg"], [class*="shadow-xl"], [class*="shadow-2xl"], [class*="shadow-inner"], [class*="shadow-none"]) {
+  box-shadow:
+    var(--tw-ring-offset-shadow, 0 0 #0000),
+    var(--tw-ring-shadow, 0 0 #0000),
+    0 1px 2px rgb(18 32 39 / 0.05),
+    0 10px 24px -14px rgb(18 32 39 / 0.18);
+}
+
 /* Film grain over the whole viewport for depth (sits above the page background
    and cards, below modals/toasts; never intercepts clicks). */
 body::after {

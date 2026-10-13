@@ -118,33 +118,66 @@ export function sortMarkets(summaries) {
     a.name.localeCompare(b.name));
 }
 
-// What needs a PM across every film loaded, for the profile's Orders Today:
-// orders past their deadline, due within the week, requests XYi hasn't ticked
-// as received, and rows a market has marked pending. An order is in the first
-// of those it fits, so the four lists don't repeat each other. Each entry says
-// where it is ({ fileId, film, market }) and carries the order; lists are
-// soonest deadline first. `films` is one line per file for the summary.
-export function ordersNeedingAttention(files, todayIso) {
-  const lists = { overdue: [], dueSoon: [], requested: [], pending: [] };
+// What needs a PM across every film loaded, for the profile's Control Centre,
+// as markets and not single orders: a PM chases a market or briefs a batch.
+//
+// Five lists, an order in the first it fits:
+//   overdue      past its deadline by up to LONG_OVERDUE_DAYS, not confirmed
+//   dueSoon      due within the week, not confirmed
+//   requested    in the sheet, not ticked as received, and not in Wrike
+//   pending      the market has marked it not ready
+//   longOverdue  past its deadline by more than that: by then it is a question
+//                about the film, not a job to do today
+// Left out altogether: rows set aside, films marked as wrapping up
+// (file.wrapped), and orders whose Wrike task is finished, which nothing
+// remains to do for whatever the sheet's tick box says.
+//
+// `matchFor(file, market)` gives the Wrike match per order, aligned with the
+// market's orders (the matcher's own result, or nothing). Each list is groups
+// { fileId, film, kind, market, sheetUrl, canBrief, orders, toBrief, oldest },
+// soonest first; `films` is a line per film, wrapped ones included.
+export const LONG_OVERDUE_DAYS = 14;
+
+const taskDone = (task) =>
+  !!task && (task.status === "Completed" || task.status === "Cancelled" || /deliver|complete|cancel/i.test(task.customStatusName || ""));
+
+export function ordersByMarket(files, todayIso, matchFor = () => []) {
+  const lists = { overdue: [], dueSoon: [], requested: [], pending: [], longOverdue: [] };
   const films = [];
+  const longAgo = addDays(todayIso, -LONG_OVERDUE_DAYS);
   for (const raw of files || []) {
     const file = applySetAside(raw);
-    const counts = { overdue: 0, dueSoon: 0, requested: 0, pending: 0, orders: 0 };
-    for (const market of file.markets) {
+    const counts = { overdue: 0, dueSoon: 0, requested: 0, pending: 0, longOverdue: 0, orders: 0 };
+    for (const market of raw.wrapped ? [] : file.markets) {
       if (market.unreadable) continue;
-      for (const order of market.orders) {
+      const matches = matchFor(file, market) || [];
+      const found = {};
+      market.orders.forEach((order, i) => {
         counts.orders++;
+        const match = matches[i] || null;
+        if (taskDone(match?.task)) return;
         const urgency = orderUrgency(order, todayIso);
-        const list = urgency || (order.status === "requested" ? "requested" : order.status === "pending" ? "pending" : null);
-        if (!list) continue;
+        const list = urgency === "overdue" ? (order.deliveryDeadline < longAgo ? "longOverdue" : "overdue")
+          : urgency
+          || (order.status === "requested" && !match ? "requested" : order.status === "pending" ? "pending" : null);
+        if (!list) return;
         counts[list]++;
-        lists[list].push({ fileId: file.id, film: file.name, market: market.name, order });
+        const group = found[list] || (found[list] = {
+          fileId: file.id, film: file.name, kind: file.kind, market: market.name,
+          sheetUrl: market.sheetUrl || "", canBrief: !!file.source?.clientId, orders: [], toBrief: 0,
+        });
+        group.orders.push(order);
+        if (!match) group.toBrief++;
+      });
+      for (const [list, group] of Object.entries(found)) {
+        group.oldest = group.orders.map((o) => o.deliveryDeadline).filter(Boolean).sort()[0] || "";
+        lists[list].push(group);
       }
     }
-    films.push({ fileId: file.id, film: file.name, kind: file.kind, loadedAt: file.loadedAt, ...counts });
+    films.push({ fileId: file.id, film: file.name, kind: file.kind, loadedAt: file.loadedAt, wrapped: !!raw.wrapped, ...counts });
   }
-  const byDeadline = (a, b) => (a.order.deliveryDeadline || "9999").localeCompare(b.order.deliveryDeadline || "9999");
-  for (const list of Object.values(lists)) list.sort(byDeadline);
+  const soonest = (x, y) => (x.oldest || "9999").localeCompare(y.oldest || "9999") || x.market.localeCompare(y.market);
+  for (const list of Object.values(lists)) list.sort(soonest);
   return { ...lists, films };
 }
 

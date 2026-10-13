@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { Zap, StickyNote, Briefcase, Settings,
-         FolderPlus, FileBarChart, ClipboardList, Shield } from "lucide-react";
+         FolderPlus, FileBarChart, ClipboardList, Shield, LayoutDashboard } from "lucide-react";
 import { PAGE_GRADIENTS } from "../../lib/pageGradients";
 import { pageIdsFor } from "../../lib/departments";
 
@@ -85,6 +85,19 @@ const ACTIONS = [
     deskOnly: true,
   },
   {
+    id: "controlCentre",
+    label: "Control Centre",
+    icon: LayoutDashboard,
+    kind: "nav",
+    page: "profile",
+    section: "orders",
+    gradient: PAGE_GRADIENTS.orderforms,
+    requires: "profile",
+    // The profile only has this section for desks with the "ordersToday"
+    // feature (lib/departments.js), so it is offered only where named below.
+    deskOnly: true,
+  },
+  {
     id: "jobs",
     label: "Active Jobs",
     icon: Briefcase,
@@ -124,7 +137,7 @@ const ADMIN_ACTION = {
 // Administration reports are only offered to an Operations member who is also
 // a manager (lib/access.js) — everyone else on that desk keeps Settings.
 const DEPARTMENT_ACTIONS = {
-  PM: ["jobsSetup", "jobbook", "orderforms", "jobs", "settings"],
+  PM: ["controlCentre", "jobsSetup", "jobbook", "orderforms", "settings"],
   // timesheetCompletion comes back here once that report exists.
   Operations: ["projectTime", "settings"],
 };

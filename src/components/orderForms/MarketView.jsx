@@ -1,11 +1,13 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { Check, ChevronRight, ExternalLink, FileSpreadsheet, Loader2, PencilLine, Send } from "lucide-react";
+import { AnimatePresence, motion } from "framer-motion";
 import { checkMarketFolder } from "../../lib/orderForms/wrikeMarketFolder";
 import { marketSummary, orderUrgency, changeKeys, changesNote } from "../../lib/orderForms/status";
 import { orderKey, taskLink } from "../../lib/orderForms/wrikeMatch";
 import OrderDetail from "./OrderDetail";
 import PickerMenu from "./PickerMenu";
 import DateField from "../shared/DateField";
+import Sweep, { sweepClass } from "./Sweep";
 import { HoverLabel } from "../shared/FloatingCard";
 import MarketFlag from "./MarketFlag";
 import WrikeFolderButton from "./WrikeFolderButton";
@@ -70,7 +72,7 @@ const cellInputClass = "w-full px-2 py-1 text-sm text-[#122027] border rounded-m
 const groupClass =
   "flex items-stretch rounded-lg border border-[#dce4ec] divide-x divide-[#dce4ec] overflow-hidden [&_a]:border-0 [&_button]:border-0 [&_a]:rounded-none [&_button]:rounded-none";
 const linkButtonClass =
-  "flex items-center gap-1.5 px-3 py-1.5 text-sm font-bold text-[#122027] hover:bg-slate-50 transition-colors";
+  "flex items-center gap-1.5 px-3 py-1.5 text-sm font-bold text-[#122027]";
 
 // One market, laid out like its sheet: a row an order, a column a field, wide
 // enough to scroll sideways. A row opens to show what has no column (see
@@ -92,11 +94,20 @@ const linkButtonClass =
 // `decide` is how a PM overrules what the page works out, kept with the film in
 // this browser: { links, onLink(order, taskId | "none" | null), onSetAside(order),
 // onRestore(order) }. Rows set aside are listed under the orders and don't count.
-export default function MarketView({ market, kind, filmTitle, clientId, filmKey, today, matcher, wrikeParents, decide, onBack, onChanged }) {
+// `startBriefing` opens it already briefing (a link from the Control Centre);
+// `onStarted` is told once that has been acted on.
+export default function MarketView({ market, kind, filmTitle, clientId, filmKey, today, matcher, wrikeParents, decide, onBack, onChanged, startBriefing: briefOnOpen = false, onStarted }) {
   const orders = market.orders;
   // The row being worked in (its dropdown choices are read), and the row opened out.
   const [selected, setSelected] = useState(0);
   const [expanded, setExpanded] = useState(null);
+  // The row that was open a moment ago, kept in the table while its details
+  // fold away. Opening another row closes the first with the same motion.
+  const [closing, setClosing] = useState(null);
+  const toggleRow = (i) => {
+    setClosing(expanded);
+    setExpanded(expanded === i ? null : i);
+  };
   const [editing, setEditing] = useState(false);
   const columns = useMemo(() => columnsFor(kind, editing), [kind, editing]);
   const [edits, setEdits] = useState({}); // "orderIndex:field" → text
@@ -209,6 +220,18 @@ export default function MarketView({ market, kind, filmTitle, clientId, filmKey,
     }
   };
   const stopBriefing = () => { setBriefing(null); setTicked(new Set()); };
+
+  // Arrived to brief: start once the market is on screen, then forget the
+  // instruction so a reload doesn't start it again.
+  const briefedOnOpen = useRef(false);
+  useEffect(() => {
+    if (!briefOnOpen || briefedOnOpen.current || !filmTitle || !orders.length) return;
+    briefedOnOpen.current = true;
+    startBriefing();
+    onStarted?.();
+    // Once, on arrival; startBriefing is recreated every render.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [briefOnOpen]);
 
   const createInWrike = async () => {
     const chosen = [...ticked].sort((a, b) => a - b).map((i) => orders[i]);
@@ -464,13 +487,15 @@ export default function MarketView({ market, kind, filmTitle, clientId, filmKey,
             {/* The sheet: open it, or change it from here. */}
             <div className={groupClass}>
               {market.sheetUrl && (
-                <a href={market.sheetUrl} target="_blank" rel="noreferrer" title={market.sheetName} className={`group ${linkButtonClass}`}>
-                  <FileSpreadsheet className="w-3.5 h-3.5 text-emerald-600" />
+                <a href={market.sheetUrl} target="_blank" rel="noreferrer" title={market.sheetName} className={`group ${sweepClass} ${linkButtonClass}`}>
+                  <Sweep />
+                  <FileSpreadsheet className="w-3.5 h-3.5 text-emerald-600 transition-colors duration-300 group-hover/s:!text-white" />
                   Sheet
-                  <ExternalLink className="w-3 h-3 text-[#768994] transition-transform duration-200 group-hover:-translate-y-0.5 group-hover:translate-x-0.5" />
+                  <ExternalLink className="w-3 h-3 text-[#768994] transition-[transform,color] duration-200 group-hover:-translate-y-0.5 group-hover:translate-x-0.5 group-hover/s:!text-white" />
                 </a>
               )}
-              <button onClick={startEditing} className={`group ${linkButtonClass}`}>
+              <button onClick={startEditing} className={`group ${sweepClass} ${linkButtonClass}`}>
+                <Sweep />
                 <PencilLine className="w-3.5 h-3.5 transition-transform duration-200 group-hover:-rotate-12" />
                 Edit
               </button>
@@ -677,7 +702,7 @@ export default function MarketView({ market, kind, filmTitle, clientId, filmKey,
                 return (
                   <React.Fragment key={orderKey(o)}>
                     <tr
-                      onClick={() => { if (!editing) setExpanded(open ? null : i); setSelected(i); }}
+                      onClick={() => { if (!editing) toggleRow(i); setSelected(i); }}
                       title={editing ? undefined : "Open this order's details"}
                       className={`group ${editing ? "" : "cursor-pointer"} ${open ? "bg-[#12a0e1]/10" : "hover:bg-slate-50"}`}
                     >
@@ -696,7 +721,7 @@ export default function MarketView({ market, kind, filmTitle, clientId, filmKey,
                           />
                         )}
                         <button
-                          onClick={(e) => { e.stopPropagation(); setExpanded(open ? null : i); setSelected(i); }}
+                          onClick={(e) => { e.stopPropagation(); toggleRow(i); setSelected(i); }}
                           aria-expanded={open}
                           aria-label={`Row ${o.row}, ${open ? "close" : "open"} details`}
                           className="flex items-center gap-1 text-xs tabular-nums text-[#768994] hover:text-[#122027]"
@@ -715,10 +740,21 @@ export default function MarketView({ market, kind, filmTitle, clientId, filmKey,
                         </td>
                       ))}
                     </tr>
-                    {open && (
+                    {(open || closing === i) && (
                       <tr>
-                        <td colSpan={columns.length + 1} className="p-0 border-b border-[#dce4ec]">
-                          <div>
+                        <td colSpan={columns.length + 1} className="p-0">
+                          {/* The details open out and fold away; they don't
+                              snap. The height is animated to what they need. */}
+                          <AnimatePresence initial onExitComplete={() => setClosing((c) => (c === i ? null : c))}>
+                          {open && (
+                          <motion.div
+                            key="details"
+                            initial={{ height: 0, opacity: 0 }}
+                            animate={{ height: "auto", opacity: 1 }}
+                            exit={{ height: 0, opacity: 0 }}
+                            transition={{ height: { duration: 0.28, ease: [0.16, 1, 0.3, 1] }, opacity: { duration: 0.2 } }}
+                            className="overflow-hidden border-b border-[#dce4ec]"
+                          >
                             <OrderDetail
                               order={o}
                               task={tasks[i]}
@@ -738,7 +774,9 @@ export default function MarketView({ market, kind, filmTitle, clientId, filmKey,
                                 set: (f, value) => setEdit(i, f, value),
                               } : null}
                             />
-                          </div>
+                          </motion.div>
+                          )}
+                          </AnimatePresence>
                         </td>
                       </tr>
                     )}

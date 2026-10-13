@@ -35,7 +35,7 @@ import {
 import { PAGE_GRADIENTS } from "../lib/pageGradients";
 import { hasFeature } from "../lib/departments";
 import { useDepartment } from "../hooks/useDepartment";
-import OrdersToday from "./orderForms/OrdersToday";
+import ControlCentre from "./orderForms/ControlCentre";
 import { supabase } from "../lib/supabaseClient";
 import { getTheme, isDarkMode, setTheme } from "../lib/theme";
 import { fullName, cleanNamePart } from "../lib/formatName";
@@ -1998,7 +1998,7 @@ function SettingsSection({ onSave }) {
 // is the client orders, not a list of Wrike tasks assigned to them.
 const ORDERS_SECTION = {
   id: "orders",
-  label: "Orders Today",
+  label: "Control Centre",
   icon: ClipboardList,
   desc: "What needs you across the films loaded in Client Orders",
   gradient: PAGE_GRADIENTS.orderforms,
@@ -2232,7 +2232,7 @@ export default function Profile({ wrikeData, onTokenChange, activeSection: activ
             </div>
 
             {activeSection === "orders" ? (
-              <OrdersToday />
+              <ControlCentre wrikeData={wrikeData} />
             ) : loading && activeSection !== "jobs" && activeSection !== "completed" && activeSection !== "settings" ? (
               <div className="bg-white border border-[#dce4ec] rounded-2xl p-16 flex flex-col items-center justify-center gap-3 shadow-sm">
                 <RefreshCw className="w-6 h-6 animate-spin text-[#12a0e1]" />

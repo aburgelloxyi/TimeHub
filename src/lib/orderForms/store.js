@@ -179,7 +179,7 @@ export async function saveFile(file) {
 // older copy back.
 export async function saveDecisions(file) {
   try {
-    const { rev } = await api(at(file.id), { method: "PATCH", body: JSON.stringify({ ignored: file.ignored || {}, links: file.links || {}, briefed: file.briefed || {} }) });
+    const { rev } = await api(at(file.id), { method: "PATCH", body: JSON.stringify({ ignored: file.ignored || {}, links: file.links || {}, briefed: file.briefed || {}, wrapped: !!file.wrapped }) });
     await localPut({ ...file, rev });
     return true;
   } catch {

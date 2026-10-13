@@ -86,24 +86,34 @@ check("a request past its deadline is overdue", orderUrgency(order("requested", 
 
 // ── Across films, for the profile ─────────────────────────────────────────────
 {
-  const { ordersNeedingAttention } = await import("../src/lib/orderForms/status.js");
-  const o = (row, status, deliveryDeadline) => ({ tab: "T", row, status, deliveryDeadline, xyi: { title: "A_B_C_D" } });
+  const { ordersByMarket } = await import("../src/lib/orderForms/status.js");
+  const o = (row, status, deliveryDeadline) => ({ tab: "T", row, status, deliveryDeadline, xyi: { title: `A_B_C_${row}` } });
   const files = [
-    { id: "f1", name: "Film One", kind: "print", loadedAt: "2026-10-13T09:00:00Z", markets: [
-      { name: "NZ", orders: [o(3, "requested", "2026-10-01"), o(4, "requested", "2026-10-15"), o(5, "requested", "2026-12-01"), o(6, "confirmed", "2026-10-01")] },
+    { id: "f1", name: "Film One", kind: "print", loadedAt: "t", source: { clientId: "paramount" }, markets: [
+      { name: "NZ", sheetUrl: "https://sheet", orders: [o(3, "requested", "2026-10-08"), o(4, "requested", "2026-10-15"), o(5, "requested", "2026-12-01"), o(6, "confirmed", "2026-10-01"), o(7, "requested", "2026-02-11"), o(8, "requested", "2026-12-02")] },
       { name: "Bad", unreadable: "x", orders: [] },
     ] },
-    { id: "f2", name: "Film Two", kind: "motion", loadedAt: "2026-10-13T09:00:00Z", markets: [
-      { name: "AU", orders: [o(3, "pending", "2026-12-05"), o(4, "pending", "2026-09-30")] },
-    ] },
+    { id: "f2", name: "Film Two", kind: "motion", loadedAt: "t", markets: [{ name: "AU", orders: [o(3, "pending", "2026-12-05"), o(4, "pending", "2026-10-05")] }] },
+    { id: "f3", name: "Wrapped", kind: "motion", loadedAt: "t", wrapped: true, markets: [{ name: "DE", orders: [o(3, "requested", "2026-08-01")] }] },
   ];
-  const got = ordersNeedingAttention(files, "2026-10-12");
-  check("overdue across films, soonest first", got.overdue.map((e) => [e.film, e.market, e.order.row]), [["Film Two", "AU", 4], ["Film One", "NZ", 3]]);
-  check("due this week", got.dueSoon.map((e) => e.order.row), [4]);
-  check("requests not picked up, without the ones already listed as late or due", got.requested.map((e) => e.order.row), [5]);
-  check("pending", got.pending.map((e) => [e.film, e.order.row]), [["Film Two", 3]]);
-  check("a line per film", got.films.map((f) => [f.film, f.orders, f.overdue, f.dueSoon, f.requested, f.pending]), [["Film One", 4, 1, 1, 1, 0], ["Film Two", 2, 1, 0, 0, 1]]);
-  check("nothing loaded", ordersNeedingAttention([], "2026-10-12").films, []);
+  // Row 8 is in Wrike already; row 3's task there is delivered.
+  const matchFor = (file, market) => market.orders.map((order) =>
+    file.id === "f1" && order.row === 8 ? { task: { id: "t8", status: "Active" } }
+      : file.id === "f1" && order.row === 3 ? { task: { id: "t3", status: "Active", customStatusName: "Delivered" } }
+      : null);
+  const got = ordersByMarket(files, "2026-10-12", matchFor);
+  const rows = (list) => got[list].map((g) => [g.film, g.market, g.orders.map((x) => x.row)]);
+
+  check("overdue is markets, soonest first, and only the recent", rows("overdue"), [["Film Two", "AU", [4]]]);
+  check("an order whose Wrike task is delivered isn't overdue, whatever the sheet says", got.overdue.some((g) => g.orders.some((x) => x.row === 3)), false);
+  check("long overdue is its own list", rows("longOverdue"), [["Film One", "NZ", [7]]]);
+  check("due this week", rows("dueSoon"), [["Film One", "NZ", [4]]]);
+  check("to pick up: requested and not in Wrike yet", rows("requested"), [["Film One", "NZ", [5]]]);
+  check("pending", rows("pending"), [["Film Two", "AU", [3]]]);
+  check("a group knows what can be done with it", [got.dueSoon[0].canBrief, got.dueSoon[0].toBrief, got.dueSoon[0].sheetUrl, got.dueSoon[0].oldest, got.overdue[0].canBrief], [true, 1, "https://sheet", "2026-10-15", false]);
+  check("a film marked as wrapping up is left out, but still listed", [got.films.map((f) => [f.film, f.wrapped, f.orders]), got.longOverdue.some((g) => g.film === "Wrapped")],
+    [[["Film One", false, 6], ["Film Two", false, 2], ["Wrapped", true, 0]], false]);
+  check("nothing loaded", ordersByMarket([], "2026-10-12").films, []);
 }
 
 // ── Changes between reads ─────────────────────────────────────────────────────

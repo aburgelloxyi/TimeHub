@@ -157,6 +157,12 @@ export default function OrderForms({ wrikeData }) {
         return { ...f, changes: rest };
       }, saveSeen),
       links: target.links?.[marketName],
+      // Tasks created from here, by order: [{ key, id, title, permalink }].
+      briefed: target.briefed?.[marketName],
+      onBriefed: (made) => change((f) => ({
+        ...f,
+        briefed: { ...f.briefed, [marketName]: { ...f.briefed?.[marketName], ...Object.fromEntries(made.map(({ key, ...task }) => [key, task])) } },
+      })),
       onSetAside: (order) => setIgnored(order, true),
       onRestore: (order) => setIgnored(order, false),
       onLink: (order, value) => change((f) => {

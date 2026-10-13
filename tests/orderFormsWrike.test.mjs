@@ -61,7 +61,7 @@ check("no parent loaded", taskSummary(sub, undefined), {
     { id: "hr", title: "EBZR_INTL_CandleSmoke_OOH_CLP_118.5x175cm_CMYK_HR" },
   ];
   const m = makeMatcher(hu);
-  const how = (orders, links) => m.match(orders, links).map((r) => (r ? `${r.task.id}:${r.how}` : null));
+  const how = (orders, links, briefed) => m.match(orders, links, briefed).map((r) => (r ? `${r.task.id}:${r.how}` : null));
 
   check("exact name", how([o("EBZR_INTL_CandleSmoke_DINTH_LED_3840x600px_RGB_HU")]), ["ex:exact"]);
   check("a size briefed with a typo is a close match", how([o("EBZR_INTL_CandleSmoke_OOH_CLP_118.5x175cm_CMYK_HU")]), ["typo:close"]);
@@ -76,6 +76,8 @@ check("no parent loaded", taskSummary(sub, undefined), {
   const order = o("EBZR_INTL_CandleSmoke_OOH_CLP_118.5x175cm_CMYK_HU", 4);
   check("chosen by hand wins", how([order], { [orderKey(order)]: "art" }), ["art:chosen"]);
   check("marked as not in Wrike: no close match offered", how([order], { [orderKey(order)]: "none" }), [null]);
+  check("a task made from the page counts before TimeHub has loaded it",
+    how([order], {}, { [orderKey(order)]: { id: "new1", title: "EBZR_Batch1_HU sub", permalink: "https://x" } }), ["new1:created"]);
   check("candidates: same film and market, nearest first", m.candidates(order).map((c) => c.task.id)[0], "typo");
   check("candidates never include another market", m.candidates(order).some((c) => c.task.id === "hr"), false);
 

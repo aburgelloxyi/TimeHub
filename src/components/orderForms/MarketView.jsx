@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { ChevronRight, ExternalLink, Loader2, PencilLine } from "lucide-react";
+import { ChevronRight, ExternalLink, Loader2, PencilLine, Send } from "lucide-react";
 import { marketSummary, orderUrgency, changeKeys, changesNote } from "../../lib/orderForms/status";
 import { orderKey, taskLink } from "../../lib/orderForms/wrikeMatch";
 import OrderDetail from "./OrderDetail";
@@ -12,6 +12,7 @@ import Corrections from "./Corrections";
 import { googleMessage } from "./GoogleSource";
 import { applyCellChanges, connectGoogleForWriting, googleCanWrite, googleConnected, readCellChoices } from "../../lib/orderForms/googleApi";
 import { cellRange, editChanges, reversed } from "../../lib/orderForms/corrections";
+import { readMarketForBriefing, suggestBatchName, suggestDue, planBatch, createBatch } from "../../lib/orderForms/wrikeBatch";
 import { confirmAction } from "../../lib/confirm";
 import { notify } from "../../lib/toast";
 import { formatDay, pillClass, undatedNote, STATUS_CLASS, STATUS_LABEL, URGENCY_TEXT } from "./format";
@@ -79,6 +80,11 @@ const linkButtonClass =
 // nothing is written until Apply is confirmed. `onChanged` reads the market
 // again afterwards.
 //
+// Briefing (Google films only) makes the ticked orders in Wrike: a batch task
+// in the market's folder with a subtask an order. It reads Wrike on the way in,
+// shows where the tasks will go and what they will be called, and creates
+// nothing until that is confirmed.
+//
 // `decide` is how a PM overrules what the page works out, kept with the film in
 // this browser: { links, onLink(order, taskId | "none" | null), onSetAside(order),
 // onRestore(order) }. Rows set aside are listed under the orders and don't count.
@@ -102,6 +108,11 @@ export default function MarketView({ market, kind, filmTitle, clientId, filmKey,
   // is set joins the pending edits, to be reviewed and applied like any other.
   const [ticked, setTicked] = useState(() => new Set());
   const [bulk, setBulk] = useState({ field: "confirmed", value: "" });
+  // Briefing into Wrike: null when off, else what Wrike said about this market
+  // ({ loading } | { ok: false, reason } | { ok, folder, status, … }) with the
+  // batch name and due date being typed. It shares the tick boxes with edit mode.
+  const [briefing, setBriefing] = useState(null);
+  const [creating, setCreating] = useState(null); // { done, total }
   const setEdit = (i, field, value) => setEdits((prev) => ({ ...prev, [`${i}:${field}`]: value }));
   // What an editable cell shows before anything is typed: a date as its day,
   // anything else as the cell holds it.
@@ -111,10 +122,16 @@ export default function MarketView({ market, kind, filmTitle, clientId, filmKey,
   };
   const choicesFor = (held) => (held ? choices[held.at] || choices[`col:${held.at.replace(/\d+$/, "")}`] : null);
   const summary = marketSummary(market, today);
-  const matches = useMemo(() => (matcher ? matcher.match(orders, decide?.links) : orders.map(() => null)), [matcher, orders, decide?.links]);
+  const matches = useMemo(
+    () => (matcher ? matcher.match(orders, decide?.links, decide?.briefed) : orders.map(() => null)),
+    [matcher, orders, decide?.links, decide?.briefed]
+  );
   const tasks = matches.map((m) => m?.task || null);
   const inWrike = tasks.filter(Boolean).length;
   const setAside = market.setAside || [];
+  // Rows that can be ticked: all of them when editing; when briefing, only
+  // the ones not in Wrike yet.
+  const tickable = orders.map((_, i) => i).filter((i) => !briefing || !matches[i]);
   // What the last Refresh changed here and hasn't been acknowledged, and which
   // of the orders on screen it was (decide.changes; see status.js).
   const changed = decide?.changes || null;
@@ -128,7 +145,7 @@ export default function MarketView({ market, kind, filmTitle, clientId, filmKey,
     return (i) => tags.get(keys[i]) || "";
   }, [changed, orders]);
 
-  useEffect(() => { setSelected(0); setExpanded(null); setEditing(false); setEdits({}); setUndo(null); setTicked(new Set()); }, [market.name]);
+  useEffect(() => { setSelected(0); setExpanded(null); setEditing(false); setEdits({}); setUndo(null); setTicked(new Set()); setBriefing(null); }, [market.name]);
   // A fresh read replaces the orders, and with them what each cell held.
   useEffect(() => { setEdits({}); setChoices({}); setExpanded(null); setTicked(new Set()); asked.current = new Set(); }, [orders]);
 
@@ -161,6 +178,50 @@ export default function MarketView({ market, kind, filmTitle, clientId, filmKey,
   const bulkField = BULK_FIELDS.find((f) => f.id === bulk.field);
   const firstTicked = orders[[...ticked][0]];
   const bulkChoices = bulkField && !bulkField.type ? choicesFor(firstTicked?.cells?.[bulk.field]) : null;
+
+  const startBriefing = async () => {
+    // Everything not in Wrike yet starts ticked: that is usually the batch.
+    const fresh = new Set(orders.map((_, i) => i).filter((i) => !matches[i]));
+    setTicked(fresh);
+    setExpanded(null);
+    setBriefing({ loading: true });
+    try {
+      const found = await readMarketForBriefing({ filmTitle, kind, marketName: market.name });
+      const mine = [...fresh].map((i) => orders[i]);
+      setBriefing(found.ok ? { ...found, name: suggestBatchName(found.existingTitles, mine.length ? mine : orders), due: suggestDue(mine) } : found);
+    } catch (err) {
+      setBriefing({ ok: false, reason: /\(401\)|not_connected/.test(err.message) ? "Connect Wrike in Profile first." : "Wrike couldn't be reached." });
+    }
+  };
+  const stopBriefing = () => { setBriefing(null); setTicked(new Set()); };
+
+  const createInWrike = async () => {
+    const chosen = [...ticked].sort((a, b) => a - b).map((i) => orders[i]);
+    const plan = planBatch({ name: briefing.name, due: briefing.due, orders: chosen });
+    if (!plan.ok) return notify(plan.problems[0]);
+    const ok = await confirmAction({
+      title: `Create "${plan.name}" and ${plan.tasks.length} ${plan.tasks.length === 1 ? "subtask" : "subtasks"} in Wrike?`,
+      message: `In ${briefing.film} › ${briefing.parentFolder.title} › ${briefing.folder.title}, due ${formatDay(plan.due, today)}${briefing.status ? `, starting as ${briefing.status.name}` : ""}.\n\n${plan.tasks.slice(0, 6).map((t) => t.title).join("\n")}${plan.tasks.length > 6 ? `\nand ${plan.tasks.length - 6} more` : ""}\n\nNobody is assigned; do that in Wrike.`,
+      confirmLabel: "Create in Wrike",
+    });
+    if (!ok) return;
+    setCreating({ done: 0, total: plan.tasks.length });
+    try {
+      const result = await createBatch({ folder: briefing.folder, status: briefing.status, plan, onProgress: (done, total) => setCreating({ done, total }) });
+      if (result.made.length) decide?.onBriefed(result.made);
+      notify(
+        result.failed.length
+          ? `${plan.name} created with ${result.made.length} of ${plan.tasks.length} subtasks. Wrike refused ${result.failed.length === 1 ? "row" : "rows"} ${result.failed.map((f) => f.row).join(", ")}.`
+          : `${plan.name} created in Wrike with ${result.made.length} ${result.made.length === 1 ? "subtask" : "subtasks"}.`,
+        result.failed.length ? "error" : "success"
+      );
+      stopBriefing();
+    } catch (err) {
+      notify(/\(401\)|not_connected/.test(err.message) ? "Connect Wrike in Profile first." : "Wrike refused the batch task, so nothing was created.");
+    } finally {
+      setCreating(null);
+    }
+  };
 
   const startEditing = () => {
     if (!market.sheetId) return notify("Refresh this market first, so its sheet can be edited from here.");
@@ -379,11 +440,23 @@ export default function MarketView({ market, kind, filmTitle, clientId, filmKey,
               Done editing
             </button>
           </>
-        ) : (
-          <button onClick={startEditing} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-[#dce4ec] hover:border-[#12a0e1] text-sm font-bold text-[#122027] transition-colors">
-            <PencilLine className="w-3.5 h-3.5" />
-            Edit
+        ) : briefing ? (
+          <button onClick={stopBriefing} disabled={!!creating} className="px-3 py-1.5 rounded-lg bg-[#122027] hover:bg-[#25373c] text-sm font-bold text-white transition-colors disabled:opacity-60">
+            Cancel briefing
           </button>
+        ) : (
+          <>
+            <button onClick={startEditing} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-[#dce4ec] hover:border-[#12a0e1] text-sm font-bold text-[#122027] transition-colors">
+              <PencilLine className="w-3.5 h-3.5" />
+              Edit
+            </button>
+            {orders.length > 0 && (
+              <button onClick={startBriefing} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-[#dce4ec] hover:border-[#12a0e1] text-sm font-bold text-[#122027] transition-colors">
+                <Send className="w-3.5 h-3.5" />
+                Brief into Wrike
+              </button>
+            )}
+          </>
         ))}
         {(filmTitle || market.sheetUrl) && (
           <div className="flex items-stretch rounded-lg border border-[#dce4ec] divide-x divide-[#dce4ec] overflow-hidden [&_a]:border-0 [&_button]:border-0 [&_a]:rounded-none [&_button]:rounded-none">
@@ -411,6 +484,49 @@ export default function MarketView({ market, kind, filmTitle, clientId, filmKey,
       )}
 
       {editing && clientId && <Corrections clientId={clientId} filmKey={filmKey} market={market.name} onApplied={onChanged} />}
+
+      {briefing && (
+        <div className="px-5 py-3 border-b border-[#dce4ec] bg-slate-50">
+          {briefing.loading ? (
+            <p className="flex items-center gap-2 text-sm text-[#768994]"><Loader2 className="w-4 h-4 animate-spin" /> Looking at this market in Wrike…</p>
+          ) : !briefing.ok ? (
+            <p role="alert" className="text-sm font-medium text-amber-700">{briefing.reason}</p>
+          ) : (
+            <>
+              <div className="flex flex-wrap items-end gap-3">
+                <p className="text-sm font-bold text-[#122027] pb-2 mr-1">
+                  {ticked.size} {ticked.size === 1 ? "order" : "orders"} to brief
+                </p>
+                <label className="w-72">
+                  <span className="block mb-1 text-[10px] font-black uppercase tracking-widest text-[#768994]">Batch task name</span>
+                  <input
+                    value={briefing.name}
+                    onChange={(e) => setBriefing((b) => ({ ...b, name: e.target.value }))}
+                    className={`${cellInputClass} border-[#dce4ec] py-1.5 font-mono`}
+                  />
+                </label>
+                <div className="w-44">
+                  <span className="block mb-1 text-[10px] font-black uppercase tracking-widest text-[#768994]">Due</span>
+                  <DateField floating compact value={briefing.due} onChange={(due) => setBriefing((b) => ({ ...b, due }))} ariaLabel="Batch due date" placeholder="Pick a date" allowClear={false} />
+                </div>
+                <button
+                  onClick={createInWrike}
+                  disabled={!!creating || ticked.size === 0}
+                  className="press flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-bold transition-colors disabled:opacity-50"
+                >
+                  {creating ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Send className="w-3.5 h-3.5" />}
+                  {creating ? `Creating ${creating.done} of ${creating.total}` : `Create ${ticked.size + 1} tasks in Wrike`}
+                </button>
+              </div>
+              <p className="mt-2 text-[11px] text-[#768994]">
+                One batch task in {briefing.film} › {briefing.parentFolder.title} › <span className="font-bold text-[#122027]">{briefing.folder.title}</span>, with a subtask for each ticked order, named as the sheet names it.{" "}
+                {briefing.status ? `They start as ${briefing.status.name} in the ${briefing.status.workflow} workflow.` : "No Backlog status was found in the Studio workflow, so they start in Wrike's default status."}{" "}
+                You're shown the full list before anything is created.
+              </p>
+            </>
+          )}
+        </div>
+      )}
 
       {editing && ticked.size > 0 && (
         <div className="flex flex-wrap items-end gap-3 px-5 py-3 border-b border-[#dce4ec] bg-slate-50">
@@ -482,19 +598,19 @@ export default function MarketView({ market, kind, filmTitle, clientId, filmKey,
         <div className="overflow-x-auto">
           <table className={`w-full ${editing ? "min-w-[1360px]" : "min-w-[920px]"} table-fixed text-sm text-left text-[#122027] border-separate border-spacing-0`}>
             <colgroup>
-              <col style={{ width: editing ? 84 : 64 }} />
+              <col style={{ width: editing || briefing?.ok ? 84 : 64 }} />
               {columns.map((col) => <col key={col.id} style={col.width ? { width: col.width } : undefined} />)}
             </colgroup>
             <thead>
               <tr className="text-[10px] font-black uppercase tracking-widest text-[#768994]">
                 <th className="px-3 py-2.5 bg-slate-50 border-b border-[#dce4ec] font-black">
                   <span className="flex items-center gap-2">
-                    {editing && (
+                    {(editing || briefing?.ok) && (
                       <input
                         type="checkbox"
                         aria-label="Tick every order"
-                        checked={ticked.size === orders.length && orders.length > 0}
-                        onChange={() => setTicked(ticked.size === orders.length ? new Set() : new Set(orders.map((_, n) => n)))}
+                        checked={tickable.length > 0 && ticked.size === tickable.length}
+                        onChange={() => setTicked(ticked.size === tickable.length ? new Set() : new Set(tickable))}
                         className="accent-indigo-600"
                       />
                     )}
@@ -521,10 +637,13 @@ export default function MarketView({ market, kind, filmTitle, clientId, filmKey,
                     >
                       <td className="px-3 py-2 border-b border-slate-100">
                         <span className="flex items-center gap-2">
-                        {editing && (
+                        {(editing || briefing?.ok) && (
                           <input
                             type="checkbox"
                             aria-label={`Tick row ${o.row}`}
+                            // An order already in Wrike isn't briefed again.
+                            disabled={!!briefing && !!matches[i]}
+                            title={briefing && matches[i] ? "Already in Wrike" : undefined}
                             checked={ticked.has(i)}
                             onChange={() => setTicked((prev) => { const next = new Set(prev); if (!next.delete(i)) next.add(i); return next; })}
                             className="accent-indigo-600 shrink-0"

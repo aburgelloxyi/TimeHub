@@ -404,6 +404,10 @@ can actually damage data in Wrike:
   field to the market's Google Drive folder when the account has that field
   (Client Orders, "Add folder to Wrike";
   `src/lib/orderForms/wrikeMarketFolder.js`)
+- creating a batch task in a market's folder with a subtask for each order
+  ticked, as Milestones with a due date, starting in the Studio workflow's
+  Backlog status, unassigned (Client Orders, "Brief into Wrike";
+  `src/lib/orderForms/wrikeBatch.js`)
 - registering the webhook (Admin)
 
 Everything else only reads. All of the Push to Wrike writes follow the same

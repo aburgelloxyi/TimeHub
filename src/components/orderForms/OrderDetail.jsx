@@ -88,7 +88,7 @@ export default function OrderDetail({ order, task, how, parent, today, matching,
       {/* The one that isn't the sheet's word: tinted, so the eye finds Wrike. */}
       <section className={`${panelClass} !bg-sky-50`}>
         <h3 className={headingClass}>
-          {task ? `In Wrike${how === "close" ? " · close match, not the exact name" : how === "chosen" ? " · chosen by you" : ""}` : "Not found in Wrike"}
+          {task ? `In Wrike${how === "close" ? " · close match, not the exact name" : how === "chosen" ? " · chosen by you" : how === "created" ? " · created from here" : ""}` : "Not found in Wrike"}
         </h3>
         {task && (
           <>

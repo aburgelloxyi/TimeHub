@@ -154,9 +154,12 @@ const orderTitle = (order) => order.xyi?.title || order.deliveryName || "";
 export const orderKey = (order) => `${order.tab || ""}|${order.row}|${taskKey(orderTitle(order))}`;
 
 // Everything the screens need to match orders to the Wrike tasks TimeHub has
-// loaded. `match(orders, links)` returns, per order, { task, how } or null,
-// where `how` is "exact", "close" or "chosen". `links` is what a PM has set by
-// hand: { orderKey: taskId }, or "none" for "this isn't in Wrike".
+// loaded. `match(orders, links, briefed)` returns, per order, { task, how } or
+// null, where `how` is "exact", "close", "chosen" or "created". `links` is what
+// a PM has set by hand: { orderKey: taskId }, or "none" for "this isn't in
+// Wrike". `briefed` is the tasks made from this page: { orderKey: { id, title,
+// permalink } }. Those are known even while TimeHub hasn't loaded them, which
+// it won't until someone on a team is assigned.
 // A task is given to one order only, exact names first, then the closest.
 export function makeMatcher(tasks) {
   const exact = indexTasks(tasks);
@@ -175,7 +178,7 @@ export function makeMatcher(tasks) {
       .map((task) => ({ task, score: titleSimilarity(orderTitle(order), task.title) }))
       .sort((a, b) => b.score - a.score);
 
-  const match = (orders, links = {}) => {
+  const match = (orders, links = {}, briefed = {}) => {
     const result = orders.map(() => null);
     const taken = new Set();
     const give = (i, task, how) => { result[i] = { task, how }; taken.add(task.id); };
@@ -192,6 +195,14 @@ export function makeMatcher(tasks) {
       if (decided.has(i)) return;
       const task = findTask(exact, order);
       if (task && !taken.has(task.id)) give(i, task, "exact");
+    });
+
+    // Made from here: the loaded copy if TimeHub has it by now, else what was
+    // recorded when it was made.
+    orders.forEach((order, i) => {
+      if (decided.has(i) || result[i]) return;
+      const made = briefed?.[orderKey(order)];
+      if (made) give(i, byId.get(made.id) || made, "created");
     });
 
     const offers = [];

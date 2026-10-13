@@ -77,6 +77,40 @@ export async function discoverDriveLinkField() {
   return field ? { id: field.id, title: field.title } : null;
 }
 
+// The id of one status in one workflow ("Studio", "Backlog"), found by name,
+// or null. New tasks are given it so they start where a PM's would.
+export async function discoverCustomStatus(workflowName, statusName) {
+  const norm = (s) => (s || "").toLowerCase().trim();
+  const workflows = await wrikeGet("/workflows");
+  const workflow = workflows.find((w) => norm(w.name) === norm(workflowName));
+  const status = workflow?.customStatuses?.find((st) => norm(st.name) === norm(statusName) && !st.hidden);
+  return status ? { id: status.id, name: status.name, workflow: workflow.name } : null;
+}
+
+// Create a task in a folder. `params` are Wrike's own (title, dates,
+// customStatus, superTasks…); objects and arrays are sent as JSON, as Wrike
+// expects. Returns { id, title, permalink }.
+export async function createTaskIn(folderId, params) {
+  const query = new URLSearchParams(
+    Object.entries(params).filter(([, v]) => v != null && v !== "").map(([k, v]) => [k, typeof v === "string" ? v : JSON.stringify(v)])
+  );
+  const res = await fetch(`${WRIKE}/folders/${folderId}/tasks?${query}`, { method: "POST" });
+  if (!res.ok) {
+    const body = await res.text().catch(() => "");
+    throw new Error(`create task (${res.status})${body ? `: ${body}` : ""}`);
+  }
+  const task = (await res.json()).data?.[0];
+  return { id: task?.id || null, title: task?.title || "", permalink: task?.permalink || "" };
+}
+
+// Take a task out of a folder it sits in. A subtask is made in its market's
+// folder (Wrike needs somewhere to make it) and then left only under its
+// parent task, which is how the PMs' own batches are filed.
+export async function removeTaskFromFolder(taskId, folderId) {
+  const res = await fetch(`${WRIKE}/tasks/${taskId}?removeParents=${encodeURIComponent(JSON.stringify([folderId]))}`, { method: "PUT" });
+  if (!res.ok) throw new Error(`unfile task (${res.status})`);
+}
+
 // The per-slot price on each JOBNUMBER template folder, found by title like Job
 // Number. Only project managers can see it in Wrike, so "not found" means "leave
 // the cost empty", never an error.

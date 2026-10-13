@@ -10,7 +10,8 @@ import Corrections from "./orderForms/Corrections";
 import { readXlsx } from "../lib/orderForms/readXlsx";
 import { parseWorkbook } from "../lib/orderForms/parseWorkbook";
 import { listFiles, saveFile, saveDecisions, saveSeen, removeFile, fileKey, storeReach } from "../lib/orderForms/store";
-import { connectGoogle, googleConfigured, googleConnected } from "../lib/orderForms/googleApi";
+import { connectGoogle, googleConfigured, googleConnected, onGoogleChange } from "../lib/orderForms/googleApi";
+import GoogleButton from "./orderForms/GoogleButton";
 import { loadFilm, loadMarketOf, listFilms } from "../lib/orderForms/loadFilm";
 import { clientFor, driveStaleness } from "../lib/orderForms/driveTree";
 import { makeMatcher, indexParents, orderKey } from "../lib/orderForms/wrikeMatch";
@@ -63,6 +64,8 @@ export default function OrderForms({ wrikeData }) {
   const [partial, setPartial] = useState(null);
   const [refreshing, setRefreshing] = useState(null); // { done, total }
   const [signedInTick, setSignedInTick] = useState(0);
+  // A sign-in made from the header's Google button counts like any other.
+  useEffect(() => onGoogleChange(() => { if (googleConnected()) setSignedInTick((n) => n + 1); }), []);
   const [dragging, setDragging] = useState(false);
   const [error, setError] = useState("");
   // The film loader is shown when asked for (the plus beside the film
@@ -345,7 +348,9 @@ export default function OrderForms({ wrikeData }) {
         icon={ClipboardList}
         title="Client Orders"
         subtitle="Market orders at a glance"
-      />
+      >
+        {googleConfigured() && <GoogleButton />}
+      </PageHeader>
 
       <input
         ref={fileInputRef}

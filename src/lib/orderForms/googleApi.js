@@ -41,7 +41,17 @@ const TOKEN_KEY = "xyi_google_token";
 // to ask Google quietly next time; it is not a credential.
 const GRANTED_KEY = "xyi_google_granted";
 
+// Whoever shows whether this tab is connected asks to be told when that
+// changes: the sign-in can happen from several places on the page.
+const listeners = new Set();
+const changed = () => listeners.forEach((fn) => fn());
+export function onGoogleChange(fn) {
+  listeners.add(fn);
+  return () => listeners.delete(fn);
+}
+
 function remember() {
+  changed();
   try {
     sessionStorage.setItem(TOKEN_KEY, JSON.stringify({ token, expiresAt }));
     localStorage.setItem(GRANTED_KEY, "1");
@@ -54,6 +64,7 @@ function forget() {
   token = null;
   expiresAt = 0;
   try { sessionStorage.removeItem(TOKEN_KEY); } catch { /* nothing stored */ }
+  changed();
 }
 
 try {
@@ -68,7 +79,11 @@ export const googleConnected = () => !!token && Date.now() < expiresAt;
 
 // Drops this tab's sign-in. Google still remembers the grant; removing that is
 // done from the person's Google account.
+// The edit access a correction asked for goes too: "disconnected" should not
+// leave this tab still able to write to sheets.
 export function disconnectGoogle() {
+  writeToken = null;
+  writeExpiresAt = 0;
   forget();
 }
 

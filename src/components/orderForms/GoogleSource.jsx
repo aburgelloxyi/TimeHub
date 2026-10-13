@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from "react";
 import { ChevronRight, Clapperboard, CloudDownload, Loader2, Link2, Search } from "lucide-react";
 import { MEDIUM_LABEL, MEDIUM_CLASS } from "./format";
-import { connectGoogle, disconnectGoogle, googleConnected } from "../../lib/orderForms/googleApi";
+import { connectGoogle, disconnectGoogle, googleConnected, onGoogleChange } from "../../lib/orderForms/googleApi";
 import { CLIENTS, clientFor } from "../../lib/orderForms/driveTree";
 import { listFilms, loadFilm } from "../../lib/orderForms/loadFilm";
 
@@ -126,6 +126,13 @@ export default function GoogleSource({ onLoaded, onBusy, onPartial, signedInTick
   useEffect(() => {
     if (signedInTick && googleConnected()) setConnected(true);
   }, [signedInTick]);
+  // The header's Google button can connect or disconnect while this is open.
+  // Disconnecting there clears what was picked here, as Disconnect here does.
+  useEffect(() => onGoogleChange(() => {
+    const now = googleConnected();
+    setConnected(now);
+    if (!now) { setClientId(""); setFilms(null); setFilmKey(""); setError(""); }
+  }), []);
 
   // The page holds off file drops while a film is loading.
   useEffect(() => { onBusy?.(!!progress); }, [progress, onBusy]);

@@ -73,14 +73,39 @@ export function planMarketFolder(byId, { filmTitle, kind, marketName }) {
 
 // The saved copy of Wrike's folder tree, which the Worker keeps current from
 // Wrike's own notifications. null when it can't be read or looks incomplete.
-async function savedFolders() {
-  try {
-    const { data } = await supabase.from("wrike_sync_meta").select("folder_dictionary").eq("wrike_user_id", "shared").maybeSingle();
-    const byId = data?.folder_dictionary;
-    return byId && Object.keys(byId).length > 500 ? byId : null;
-  } catch {
-    return null;
+// Held for a couple of minutes, so stepping through a film's markets reads it
+// once and not once a market.
+let savedTree = { at: 0, read: null };
+const SAVED_FOR_MS = 2 * 60 * 1000;
+function savedFolders() {
+  if (!savedTree.read || Date.now() - savedTree.at > SAVED_FOR_MS) {
+    savedTree = {
+      at: Date.now(),
+      read: supabase.from("wrike_sync_meta").select("folder_dictionary").eq("wrike_user_id", "shared").maybeSingle()
+        .then(({ data }) => {
+          const byId = data?.folder_dictionary;
+          return byId && Object.keys(byId).length > 500 ? byId : null;
+        })
+        .catch(() => null),
+    };
   }
+  return savedTree.read;
+}
+
+// Whether a market already has its folder in Wrike, from the saved tree alone:
+// quick enough to ask whenever a market is opened, so the page can show what
+// the next step is before anything is clicked. "exists" comes with the folder
+// and its link; "missing" means the place for it was found and it isn't there;
+// "unknown" is everything else (no saved tree, film not found), where the page
+// shouldn't claim either. It never writes, and "missing" is checked against
+// Wrike itself before anything is created.
+export async function checkMarketFolder(request) {
+  const saved = await savedFolders();
+  const plan = saved ? planMarketFolder(saved, request) : null;
+  if (!plan?.ok) return { state: "unknown" };
+  if (!plan.existing) return { state: "missing" };
+  const permalink = await fetchFolderPermalink(plan.existing.id).catch(() => "");
+  return { state: "exists", folder: { ...plan.existing, permalink } };
 }
 
 // Finds the market's place in Wrike and plans. Also says which custom field

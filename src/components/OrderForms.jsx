@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ClipboardList, FileSpreadsheet, Loader2, PencilLine, Plus, RefreshCw, X } from "lucide-react";
-import PageHeader, { pageHeaderActionClass } from "./shared/PageHeader";
+import { ClipboardList, FileSpreadsheet, Loader2, PencilLine, RefreshCw } from "lucide-react";
+import PageHeader from "./shared/PageHeader";
 import DropZone from "./orderForms/DropZone";
 import FilmBar from "./orderForms/FilmBar";
 import GoogleSource, { googleMessage } from "./orderForms/GoogleSource";
@@ -63,8 +63,8 @@ export default function OrderForms({ wrikeData }) {
   const [signedInTick, setSignedInTick] = useState(0);
   const [dragging, setDragging] = useState(false);
   const [error, setError] = useState("");
-  // The film loader is shown when asked for (the header's Add film), or when
-  // nothing is loaded yet. `editingSheets` opens the correction on the overview.
+  // The film loader is shown when asked for (the plus beside the film
+  // switcher), or when nothing is loaded yet. `editingSheets` opens the correction on the overview.
   const [adding, setAdding] = useState(false);
   const [editingSheets, setEditingSheets] = useState(false);
   const fileInputRef = useRef(null);
@@ -343,14 +343,7 @@ export default function OrderForms({ wrikeData }) {
         icon={ClipboardList}
         title="Client Orders"
         subtitle="Market orders at a glance"
-      >
-        {files?.length > 0 && (
-          <button onClick={() => setAdding((v) => !v)} aria-expanded={adding} className={pageHeaderActionClass}>
-            {adding ? <X className="w-3.5 h-3.5" /> : <Plus className="w-3.5 h-3.5" />}
-            {adding ? "Close" : "Add film"}
-          </button>
-        )}
-      </PageHeader>
+      />
 
       <input
         ref={fileInputRef}
@@ -389,9 +382,9 @@ export default function OrderForms({ wrikeData }) {
 
         {files && files.length > 0 && !partial && (
           <>
-            <FilmBar files={files} selectedId={file?.id} onSelect={(id) => { setEditingSheets(false); go(id, null); }} onRemove={dropFile} staleness={stalenessOf}>
+            <FilmBar files={files} selectedId={file?.id} onSelect={(id) => { setEditingSheets(false); go(id, null); }} onRemove={dropFile} staleness={stalenessOf} onAdd={() => setAdding((v) => !v)} adding={adding}>
               {/* A film loaded before the page read Drive folders has no client to
-                  read again from; it is loaded afresh from Add film instead. */}
+                  read again from; it is loaded afresh with the plus beside the switcher. */}
               {file?.source?.clientId && (
                 <button
                   onClick={refresh}

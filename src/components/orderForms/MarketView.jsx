@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { ChevronRight, ExternalLink, Loader2, PencilLine, Send } from "lucide-react";
+import { Check, ChevronRight, ExternalLink, FileSpreadsheet, Loader2, PencilLine, Send } from "lucide-react";
+import { checkMarketFolder } from "../../lib/orderForms/wrikeMarketFolder";
 import { marketSummary, orderUrgency, changeKeys, changesNote } from "../../lib/orderForms/status";
 import { orderKey, taskLink } from "../../lib/orderForms/wrikeMatch";
 import OrderDetail from "./OrderDetail";
@@ -65,6 +66,9 @@ const BULK_FIELDS = [
 ];
 
 const cellInputClass = "w-full px-2 py-1 text-sm text-[#122027] border rounded-md outline-none focus:border-[#12a0e1] bg-white";
+// Buttons that act on the same thing sit joined in one outline.
+const groupClass =
+  "flex items-stretch rounded-lg border border-[#dce4ec] divide-x divide-[#dce4ec] overflow-hidden [&_a]:border-0 [&_button]:border-0 [&_a]:rounded-none [&_button]:rounded-none";
 const linkButtonClass =
   "flex items-center gap-1.5 px-3 py-1.5 text-sm font-bold text-[#122027] hover:bg-slate-50 transition-colors";
 
@@ -113,6 +117,16 @@ export default function MarketView({ market, kind, filmTitle, clientId, filmKey,
   // batch name and due date being typed. It shares the tick boxes with edit mode.
   const [briefing, setBriefing] = useState(null);
   const [creating, setCreating] = useState(null); // { done, total }
+  // Whether this market has its Wrike folder yet, asked when the market opens
+  // so the header can lead with the next step: add the folder, then brief.
+  const [wrikeFolder, setWrikeFolder] = useState(null);
+  useEffect(() => {
+    setWrikeFolder(null);
+    if (!filmTitle) return;
+    let live = true;
+    checkMarketFolder({ filmTitle, kind, marketName: market.name }).then((found) => { if (live) setWrikeFolder(found); }).catch(() => {});
+    return () => { live = false; };
+  }, [filmTitle, kind, market.name]);
   const setEdit = (i, field, value) => setEdits((prev) => ({ ...prev, [`${i}:${field}`]: value }));
   // What an editable cell shows before anything is typed: a date as its day,
   // anything else as the cell holds it.
@@ -132,6 +146,7 @@ export default function MarketView({ market, kind, filmTitle, clientId, filmKey,
   // Rows that can be ticked: all of them when editing; when briefing, only
   // the ones not in Wrike yet.
   const tickable = orders.map((_, i) => i).filter((i) => !briefing || !matches[i]);
+  const toBrief = matches.filter((m) => !m).length;
   // What the last Refresh changed here and hasn't been acknowledged, and which
   // of the orders on screen it was (decide.changes; see status.js).
   const changed = decide?.changes || null;
@@ -441,33 +456,64 @@ export default function MarketView({ market, kind, filmTitle, clientId, filmKey,
             </button>
           </>
         ) : briefing ? (
-          <button onClick={stopBriefing} disabled={!!creating} className="px-3 py-1.5 rounded-lg bg-[#122027] hover:bg-[#25373c] text-sm font-bold text-white transition-colors disabled:opacity-60">
+          <button onClick={stopBriefing} disabled={!!creating} className="press px-3 py-1.5 rounded-lg bg-[#122027] hover:bg-[#25373c] text-sm font-bold text-white transition-colors disabled:opacity-60">
             Cancel briefing
           </button>
         ) : (
           <>
-            <button onClick={startEditing} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-[#dce4ec] hover:border-[#12a0e1] text-sm font-bold text-[#122027] transition-colors">
-              <PencilLine className="w-3.5 h-3.5" />
-              Edit
-            </button>
-            {orders.length > 0 && (
-              <button onClick={startBriefing} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-[#dce4ec] hover:border-[#12a0e1] text-sm font-bold text-[#122027] transition-colors">
-                <Send className="w-3.5 h-3.5" />
-                Brief into Wrike
+            {/* The sheet: open it, or change it from here. */}
+            <div className={groupClass}>
+              {market.sheetUrl && (
+                <a href={market.sheetUrl} target="_blank" rel="noreferrer" title={market.sheetName} className={`group ${linkButtonClass}`}>
+                  <FileSpreadsheet className="w-3.5 h-3.5 text-emerald-600" />
+                  Sheet
+                  <ExternalLink className="w-3 h-3 text-[#768994] transition-transform duration-200 group-hover:-translate-y-0.5 group-hover:translate-x-0.5" />
+                </a>
+              )}
+              <button onClick={startEditing} className={`group ${linkButtonClass}`}>
+                <PencilLine className="w-3.5 h-3.5 transition-transform duration-200 group-hover:-rotate-12" />
+                Edit
               </button>
-            )}
+            </div>
+
+            {/* Wrike: the market's folder, then its orders. Whichever is next
+                is the one that stands out. */}
+            <div className="flex items-center gap-2">
+              <WrikeFolderButton
+                filmTitle={filmTitle}
+                kind={kind}
+                marketName={market.name}
+                driveUrl={market.folderUrl}
+                known={wrikeFolder}
+                onMade={(folder) => setWrikeFolder({ state: "exists", folder })}
+              />
+              {orders.length > 0 && (toBrief === 0 ? (
+                <span className="flex items-center gap-1.5 px-3 py-1.5 text-sm font-bold text-emerald-600">
+                  <Check className="pop-in w-4 h-4" strokeWidth={3} />
+                  All in Wrike
+                </span>
+              ) : (
+                <button
+                  onClick={startBriefing}
+                  title={wrikeFolder?.state === "missing" ? "Add this market's folder to Wrike first" : undefined}
+                  className={`group press flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg text-sm font-bold transition-[box-shadow,opacity] ${
+                    wrikeFolder?.state === "missing"
+                      ? "border border-[#dce4ec] text-[#768994]"
+                      : "bg-gradient-to-r from-[#12a0e1] to-[#1cc1a5] text-white shadow-md shadow-[#12a0e1]/20 hover:shadow-lg hover:shadow-[#12a0e1]/30"
+                  }`}
+                >
+                  <Send className="w-3.5 h-3.5 transition-transform duration-200 group-hover:translate-x-0.5 group-hover:-translate-y-0.5" />
+                  Brief {toBrief} into Wrike
+                </button>
+              ))}
+            </div>
           </>
         ))}
-        {(filmTitle || market.sheetUrl) && (
-          <div className="flex items-stretch rounded-lg border border-[#dce4ec] divide-x divide-[#dce4ec] overflow-hidden [&_a]:border-0 [&_button]:border-0 [&_a]:rounded-none [&_button]:rounded-none">
-            {market.sheetUrl && (
-              <a href={market.sheetUrl} target="_blank" rel="noreferrer" title={market.sheetName} className={linkButtonClass}>
-                <ExternalLink className="w-3.5 h-3.5" />
-                Sheet
-              </a>
-            )}
-            {filmTitle && <WrikeFolderButton filmTitle={filmTitle} kind={kind} marketName={market.name} driveUrl={market.folderUrl} />}
-          </div>
+        {!filmTitle && market.sheetUrl && (
+          <a href={market.sheetUrl} target="_blank" rel="noreferrer" title={market.sheetName} className={`${groupClass} ${linkButtonClass}`}>
+            <ExternalLink className="w-3.5 h-3.5" />
+            Sheet
+          </a>
         )}
       </div>
 
@@ -486,7 +532,7 @@ export default function MarketView({ market, kind, filmTitle, clientId, filmKey,
       {editing && clientId && <Corrections clientId={clientId} filmKey={filmKey} market={market.name} onApplied={onChanged} />}
 
       {briefing && (
-        <div className="px-5 py-3 border-b border-[#dce4ec] bg-slate-50">
+        <div className="px-5 py-3 border-b border-[#dce4ec] bg-slate-50 animate-in fade-in slide-in-from-top-1 duration-200">
           {briefing.loading ? (
             <p className="flex items-center gap-2 text-sm text-[#768994]"><Loader2 className="w-4 h-4 animate-spin" /> Looking at this market in Wrike…</p>
           ) : !briefing.ok ? (
@@ -529,7 +575,7 @@ export default function MarketView({ market, kind, filmTitle, clientId, filmKey,
       )}
 
       {editing && ticked.size > 0 && (
-        <div className="flex flex-wrap items-end gap-3 px-5 py-3 border-b border-[#dce4ec] bg-slate-50">
+        <div className="flex flex-wrap items-end gap-3 px-5 py-3 border-b border-[#dce4ec] bg-slate-50 animate-in fade-in slide-in-from-top-1 duration-200">
           <p className="text-sm font-bold text-[#122027] pb-2 mr-1">
             {ticked.size} {ticked.size === 1 ? "order" : "orders"} ticked
           </p>

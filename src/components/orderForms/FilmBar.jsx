@@ -1,5 +1,5 @@
 import React from "react";
-import { ChevronDown, ChevronRight, Film } from "lucide-react";
+import { ChevronDown, ChevronRight, Film, Plus } from "lucide-react";
 import PickerMenu from "./PickerMenu";
 import { CLIENTS, clientFor } from "../../lib/orderForms/driveTree";
 import { loadedAgo, MEDIUM_LABEL as MEDIUM, MEDIUM_CLASS, MEDIUM_SOLID } from "./format";
@@ -29,7 +29,8 @@ const describe = (file) => {
 
 // `staleness(file)` says whether a film's sheets have left Drive (see
 // driveStaleness); those are marked in the list.
-export default function FilmBar({ files, selectedId, onSelect, onRemove, staleness, children }) {
+// `onAdd` opens and closes the film loader (`adding` says which it is).
+export default function FilmBar({ files, selectedId, onSelect, onRemove, staleness, onAdd, adding = false, children }) {
   const current = files.find((f) => f.id === selectedId) || files[0];
   const now = describe(current);
   const twin = files.find((f) => f.id !== current.id && f.source?.clientId && f.source.clientId === current.source?.clientId
@@ -85,6 +86,25 @@ export default function FilmBar({ files, selectedId, onSelect, onRemove, stalene
         </div>
       ) : (
         <span className={`px-2 py-1 rounded-md text-[10px] font-black uppercase tracking-wider ${MEDIUM_CLASS[current.kind] || MEDIUM_CLASS.motion}`}>{MEDIUM[current.kind] || "Motion"}</span>
+      )}
+
+      {/* Loading another film belongs with the films. An icon that opens out
+          to its name on hover, like the timesheet's tools; a plus that turns
+          to a cross while the loader is open. */}
+      {onAdd && (
+        <button
+          onClick={onAdd}
+          aria-expanded={adding}
+          aria-label={adding ? "Close the film loader" : "Load another film"}
+          className={`group/add press flex items-center p-2.5 rounded-xl border shadow-sm text-sm font-bold transition-colors focus:outline-none focus-visible:ring-4 focus-visible:ring-[#12a0e1]/30 ${
+            adding ? "bg-[#122027] border-[#122027] text-white" : "bg-white border-[#dce4ec] text-[#122027] hover:border-[#12a0e1]"
+          }`}
+        >
+          <Plus className={`w-4 h-4 shrink-0 transition-transform duration-300 ease-out ${adding ? "rotate-45" : "group-hover/add:rotate-90"}`} />
+          <span className="max-w-0 overflow-hidden whitespace-nowrap opacity-0 transition-[max-width,opacity,margin] duration-300 ease-out [@media(hover:hover)]:group-hover/add:max-w-[10rem] [@media(hover:hover)]:group-hover/add:opacity-100 [@media(hover:hover)]:group-hover/add:ml-2 group-focus-visible/add:max-w-[10rem] group-focus-visible/add:opacity-100 group-focus-visible/add:ml-2">
+            {adding ? "Close" : "Load another film"}
+          </span>
+        </button>
       )}
 
       <div className="ml-auto flex items-center gap-2">{children}</div>

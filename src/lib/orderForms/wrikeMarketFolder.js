@@ -10,6 +10,7 @@ import {
   createFolderIn, setFolderField, fetchFolderPermalink,
 } from "../wrikeCampaign";
 import { marketFlag } from "../../components/orderForms/format";
+import { supabase } from "../supabaseClient";
 
 const norm = (s) => String(s || "").toLowerCase().replace(/[^\p{L}\p{N}]+/gu, " ").trim();
 const bareName = (market) => String(market || "").replace(/\s*\([^)]*\)\s*$/, "").trim();
@@ -70,11 +71,29 @@ export function planMarketFolder(byId, { filmTitle, kind, marketName }) {
   };
 }
 
-// Reads Wrike and plans. Also says which custom field the Drive link would go
-// in (`field`), or null when the account has none.
+// The saved copy of Wrike's folder tree, which the Worker keeps current from
+// Wrike's own notifications. null when it can't be read or looks incomplete.
+async function savedFolders() {
+  try {
+    const { data } = await supabase.from("wrike_sync_meta").select("folder_dictionary").eq("wrike_user_id", "shared").maybeSingle();
+    const byId = data?.folder_dictionary;
+    return byId && Object.keys(byId).length > 500 ? byId : null;
+  } catch {
+    return null;
+  }
+}
+
+// Finds the market's place in Wrike and plans. Also says which custom field
+// the Drive link would go in (`field`), or null when the account has none.
+//
+// The saved folder tree is tried first: it is one quick read, where listing
+// every folder from Wrike takes several. Wrike itself is asked only when the
+// saved tree doesn't show the market's folder, so a folder made moments ago is
+// still found and never made twice.
 export async function planMarketFolderLive(request) {
-  const [byId, field] = await Promise.all([fetchAllFolders(), discoverDriveLinkField().catch(() => null)]);
-  const plan = planMarketFolder(byId, request);
+  const [saved, field] = await Promise.all([savedFolders(), discoverDriveLinkField().catch(() => null)]);
+  let plan = saved ? planMarketFolder(saved, request) : null;
+  if (!plan?.ok || !plan.existing) plan = planMarketFolder(await fetchAllFolders(), request);
   if (plan.ok && plan.existing) plan.existing.permalink = await fetchFolderPermalink(plan.existing.id).catch(() => "");
   return { ...plan, field };
 }

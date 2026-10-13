@@ -1,4 +1,5 @@
 import { isBoardTask, isStale } from "../src/lib/jobFilter";
+import { folderPatchPlan, folderEntries, parentsToRead } from "../src/lib/folderMirror";
 // Cloudflare Worker: Wrike OAuth (authorization code flow) + API proxy.
 //
 // Members never see a Wrike token. After /api/wrike/oauth/start and Wrike's
@@ -228,12 +229,14 @@ async function ordersCaller(request, env) {
     return { error: json({ error: "backend_unavailable" }, { status: 503 }) };
   }
   if (!row) return { error: json({ error: "not_connected" }, { status: 401 }) };
-  const res = await sbFetch(env, `/profiles?wrike_user_id=eq.${encodeURIComponent(row.wrike_user_id)}&select=department,is_admin,left_at`);
+  const res = await sbFetch(env, `/profiles?wrike_user_id=eq.${encodeURIComponent(row.wrike_user_id)}&select=department,is_admin,left_at,first_name,last_name`);
   if (!res.ok) return { error: json({ error: "backend_unavailable" }, { status: 503 }) };
   const profile = (await res.json())[0];
   const allowed = profile && !profile.left_at && (profile.is_admin || ORDER_DEPARTMENTS.includes(profile.department));
   if (!allowed) return { error: json({ error: "forbidden" }, { status: 403 }) };
-  return { userId: row.wrike_user_id };
+  // Who did it goes on the film, so the others' pages can say whose change it was.
+  const name = [profile.first_name, profile.last_name].filter(Boolean).join(" ").trim();
+  return { userId: row.wrike_user_id, who: { id: row.wrike_user_id, name } };
 }
 
 async function handleOrders(request, url, env) {
@@ -269,6 +272,7 @@ async function handleOrders(request, url, env) {
     let file;
     try { file = JSON.parse(text); } catch { return json({ error: "bad_request" }, { status: 400 }); }
     if (!file || file.id !== key || !Array.isArray(file.markets)) return json({ error: "bad_request" }, { status: 400 });
+    file.loadedBy = caller.who;
     const res = await sbFetch(env, "/order_films?on_conflict=key&select=updated_at", {
       method: "POST",
       headers: { Prefer: "resolution=merge-duplicates,return=representation" },
@@ -285,6 +289,7 @@ async function handleOrders(request, url, env) {
     const current = (await got.json())[0]?.data;
     if (!current) return json({ error: "not_found" }, { status: 404 });
     for (const field of ORDER_DECISIONS) if (field in patch) current[field] = patch[field];
+    current.decidedBy = caller.who;
     const res = await sbFetch(env, `${one}&select=updated_at`, {
       method: "PATCH",
       headers: { Prefer: "return=representation" },
@@ -1153,6 +1158,42 @@ async function handleWebhookRegister(request, url, env) {
 // and X-Hook-Signature, so headers can't tell them apart; the body can (the
 // challenge is {"requestType":"WebHook secret verification"}, deliveries are an
 // array). Both are signature-checked first.
+// Reads the folders a batch of webhook events touched and patches the saved
+// folder tree with them (see src/lib/folderMirror.js). Any connected member's
+// token will do for the read. The patch is one statement in the database
+// (patch_wrike_folders), so two deliveries at once can't undo each other.
+async function patchFolderMirror(env, events) {
+  const plan = folderPatchPlan(events);
+  if (!plan.remove.length && !plan.refetch.length) return;
+  let upsert = {};
+  const remove = new Set(plan.remove);
+  if (plan.refetch.length) {
+    const row = await panelWrikeToken(env);
+    if (!row) return;
+    const read = async (ids) => {
+      const out = [];
+      for (let i = 0; i < ids.length; i += 100) {
+        const res = await fetch(`https://${row.api_host}/api/v4/folders/${ids.slice(i, i + 100).join(",")}`, {
+          headers: { Authorization: `Bearer ${row.access_token}` },
+        });
+        if (res.ok) out.push(...((await res.json()).data || []));
+      }
+      return out;
+    };
+    const changed = await read(plan.refetch);
+    const parents = parentsToRead(changed, plan.refetch);
+    const found = folderEntries([...changed, ...(parents.length ? await read(parents) : [])]);
+    upsert = found.upsert;
+    found.remove.forEach((id) => remove.add(id));
+  }
+  if (!remove.size && !Object.keys(upsert).length) return;
+  const res = await sbFetch(env, "/rpc/patch_wrike_folders", {
+    method: "POST",
+    body: JSON.stringify({ p_upsert: upsert, p_remove: [...remove] }),
+  });
+  if (!res.ok) throw new Error(`patch ${res.status}`);
+}
+
 async function handleWebhookEvent(request, env, ctx) {
   let config;
   try {
@@ -1211,8 +1252,11 @@ async function handleWebhookEvent(request, env, ctx) {
   }
 
   const events = Array.isArray(parsedBody) ? parsedBody : [parsedBody];
+  // Folder changes patch the saved copy of the folder tree. After the
+  // response, like the task rows below, and never failing the delivery.
+  ctx.waitUntil(patchFolderMirror(env, events).catch((err) => console.error("[webhook] folder mirror:", err.message)));
   const rows = events
-    .filter((evt) => evt?.taskId) // ignore folder/comment/attachment-only events
+    .filter((evt) => evt?.taskId) // task events only; folder ones are handled above
     .map((evt) => ({
       task_id: evt.taskId,
       event_type: evt.eventType || null,

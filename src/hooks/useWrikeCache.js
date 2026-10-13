@@ -784,14 +784,17 @@ export function useWrikeCache() {
         console.log(`[WrikeCache] film code mappings: ${Object.keys(mergedFilmMappings).length} total, ${Object.keys(newMappings).length} new this sync`);
       }
 
-      // Persist meta. Each dictionary written is either fresh and complete or the copy
-      // already there (fetchWrikeMeta keeps the previous copy of a failed list).
+      // Persist meta. The dictionaries are written only when this sync refreshed
+      // them (or there is no row yet); otherwise they are left out, so the row
+      // keeps what it has. Writing back the copy read at the start of the sync
+      // would undo any folder the Worker patched in from a webhook meanwhile
+      // (see patchFolderMirror in worker/index.js).
       await supabase.from("wrike_sync_meta").upsert({
         wrike_user_id: SHARED_META_ID,
         last_synced_at: new Date().toISOString(),
-        folder_dictionary:  needsMetaRefresh ? folderDictionary  : (meta?.folder_dictionary  ?? {}),
-        contact_dictionary: needsMetaRefresh ? contactDictionary : (meta?.contact_dictionary ?? {}),
-        status_dictionary:  needsMetaRefresh ? statusDictionary  : (meta?.status_dictionary  ?? {}),
+        ...(needsMetaRefresh || !meta
+          ? { folder_dictionary: folderDictionary, contact_dictionary: contactDictionary, status_dictionary: statusDictionary }
+          : {}),
         film_code_mappings: mergedFilmMappings,
         // Only sent if the column exists, and only after a complete refresh, so a
         // failed refresh is retried on the next sync.

@@ -80,6 +80,16 @@ named `shared`. The day is counted from the last refresh of those lists
 list it downloaded in full. If Wrike fails partway, the previous copy stays and
 the next sync tries again.
 
+Between those daily refreshes the folder tree is kept current by Wrike's
+webhook: when a folder is created, renamed, moved or deleted, the Worker reads
+that folder and its parents again and patches the saved copy in place
+(`patchFolderMirror` in `worker/index.js`, `src/lib/folderMirror.js`, and the
+`patch_wrike_folders` database function). A sync that didn't refresh the lists
+leaves them out of what it writes, so it can't put an older copy back over a
+patch. A folder Wrike reported deleted can linger in its parent's list of
+children until the next daily refresh; everything that walks the tree already
+skips ids it has no folder for.
+
 A task is kept if it's assigned to anyone in a department that has a team board
 (Motion, Print, AM and Digital today; PM and Operations don't use the board or
 Canvas, so their tasks aren't kept), if its title matches certain keywords

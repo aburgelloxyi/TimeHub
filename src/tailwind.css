@@ -116,7 +116,10 @@
 /* A view opened from a row (a market): the panel rises into place and its
    own rows follow with .list-row-in. */
 @keyframes viewIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: none; } }
-.view-in { animation: viewIn 320ms var(--ease-app) both; }
+/* A gentler curve than --ease-app, which covers most of its distance in the
+   first few frames: fine for a small thing, abrupt for a whole panel. */
+.view-in { --ease-view: cubic-bezier(0.4, 0, 0.2, 1); animation: viewIn 440ms var(--ease-view) both; }
+.view-in .list-row-in { animation-duration: 380ms; animation-timing-function: var(--ease-view); animation-delay: calc(min(var(--i, 0), 8) * 35ms + 90ms); }
 /* Coming back to a list, or swapping what it lists: a short fade and no
    movement, so it doesn't read as the list arriving all over again. */
 @keyframes viewFade { from { opacity: 0; } to { opacity: 1; } }

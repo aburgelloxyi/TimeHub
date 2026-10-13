@@ -349,6 +349,58 @@ html:not(.dark-theme) .bg-white.border:is(.rounded-2xl, .rounded-3xl):not([class
     0 10px 24px -14px rgb(18 32 39 / 0.18);
 }
 
+/* ── Tactile ──────────────────────────────────────────────────────────────────
+   Things you press look pressable and things that hold a value look like they
+   hold it. All of it is shadow and a 1px move, so nothing changes size. Each
+   has a dark value: on dark surfaces the edge is a black shadow under and a
+   faint light on top. */
+
+/* A button as a key: a thin darker edge under it, and it sinks onto that edge
+   when pressed. Tailwind's rings are carried through for focus. */
+.key {
+  --key-shadow: inset 0 -1px 0 rgb(18 32 39 / 0.05), 0 1px 0 rgb(18 32 39 / 0.1), 0 2px 4px -1px rgb(18 32 39 / 0.1);
+  --key-shadow-down: inset 0 1px 2px rgb(18 32 39 / 0.14);
+  box-shadow: var(--tw-ring-offset-shadow, 0 0 #0000), var(--tw-ring-shadow, 0 0 #0000), var(--key-shadow);
+  transition: color 150ms, background-color 150ms, border-color 150ms, box-shadow 140ms var(--ease-app), translate 140ms var(--ease-app), scale 140ms var(--ease-app);
+}
+.key:active:not(:disabled) {
+  translate: 0 1px;
+  box-shadow: var(--tw-ring-offset-shadow, 0 0 #0000), var(--tw-ring-shadow, 0 0 #0000), var(--key-shadow-down);
+}
+/* A key that is held down: the chosen filter, a panel that is open. */
+.key-down { box-shadow: var(--tw-ring-offset-shadow, 0 0 #0000), var(--tw-ring-shadow, 0 0 #0000), inset 0 2px 3px rgb(0 0 0 / 0.22); }
+html.dark-theme .key {
+  --key-shadow: inset 0 1px 0 rgb(255 255 255 / 0.06), 0 1px 0 rgb(0 0 0 / 0.5), 0 2px 4px -1px rgb(0 0 0 / 0.45);
+  --key-shadow-down: inset 0 1px 3px rgb(0 0 0 / 0.55);
+}
+
+/* A recess: the track of a switch or of a progress bar. */
+.well, .groove { box-shadow: inset 0 1px 2px rgb(18 32 39 / 0.14); }
+html.dark-theme .well, html.dark-theme .groove { background-color: var(--dk-sunken) !important; box-shadow: inset 0 1px 2px rgb(0 0 0 / 0.6); }
+/* What sits in it catches the light along its top. */
+.groove-fill { background-image: linear-gradient(to bottom, rgb(255 255 255 / 0.4), rgb(255 255 255 / 0) 65%); }
+.thumb { box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.28), 0 1px 2px rgb(18 32 39 / 0.3); }
+
+/* A header band under a lid: shaded along its top edge. */
+.tray { box-shadow: inset 0 3px 4px -3px rgb(18 32 39 / 0.16); }
+html.dark-theme .tray { box-shadow: inset 0 3px 4px -3px rgb(0 0 0 / 0.6); }
+
+/* A status pill as a label: a hairline round it and a lit top edge. */
+.pill-label { box-shadow: inset 0 0 0 1px rgb(18 32 39 / 0.06), inset 0 1px 0 rgb(255 255 255 / 0.7); }
+html.dark-theme .pill-label { box-shadow: inset 0 0 0 1px rgb(255 255 255 / 0.07), inset 0 1px 0 rgb(255 255 255 / 0.08); }
+
+/* A list row that opens something: it rises off the list under the pointer
+   and goes back in when pressed. */
+.row-lift { --row-shadow: rgb(18 32 39 / 0.38); transition: background-color 150ms, box-shadow 200ms var(--ease-app); }
+html.dark-theme .row-lift { --row-shadow: rgb(0 0 0 / 0.8); }
+.row-lift:hover:not(:disabled) { position: relative; z-index: 1; box-shadow: 0 10px 20px -14px var(--row-shadow); }
+.row-lift:active:not(:disabled) { box-shadow: inset 0 2px 4px -1px var(--row-shadow); }
+
+@media (prefers-reduced-motion: reduce) {
+  .key, .row-lift { transition: none; }
+  .key:active:not(:disabled) { translate: none; }
+}
+
 /* Film grain over the whole viewport for depth (sits above the page background
    and cards, below modals/toasts; never intercepts clicks). */
 body::after {

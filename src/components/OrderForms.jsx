@@ -398,7 +398,7 @@ export default function OrderForms({ wrikeData }) {
                   <button
                     onClick={refresh}
                     disabled={working}
-                    className="press flex items-center gap-2 px-4 py-2.5 rounded-xl bg-white border border-[#dce4ec] hover:border-[#12a0e1] shadow-sm text-sm font-bold text-[#122027] transition-colors disabled:opacity-60"
+                    className="key press flex items-center gap-2 px-4 py-2.5 rounded-xl bg-white border border-[#dce4ec] hover:border-[#12a0e1] shadow-sm text-sm font-bold text-[#122027] transition-colors disabled:opacity-60"
                   >
                     {refreshing ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />}
                     {refreshing
@@ -438,7 +438,7 @@ export default function OrderForms({ wrikeData }) {
                       onClick={() => setEditingSheets((v) => !v)}
                       aria-expanded={editingSheets}
                       className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl border text-sm font-bold transition-colors ${
-                        editingSheets ? "bg-[#122027] border-[#122027] text-white" : "bg-white border-[#dce4ec] text-[#122027] hover:border-[#12a0e1]"
+                        editingSheets ? "key-down bg-[#122027] border-[#122027] text-white" : "key bg-white border-[#dce4ec] text-[#122027] hover:border-[#12a0e1]"
                       }`}
                     >
                       <PencilLine className="w-3.5 h-3.5" />

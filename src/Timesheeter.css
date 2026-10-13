@@ -273,7 +273,8 @@ html.dark-theme body {
 .dark-theme .text-fuchsia-600  { color: #e879f9 !important; }
 .dark-theme .text-rose-600     { color: #fb7185 !important; }
 .dark-theme .text-indigo-600   { color: #818cf8 !important; }
-.dark-theme .hover\:text-\[\#122027\]:hover { color: #ffffff !important; }
+.dark-theme .hover\:text-\[\#122027\]:hover,
+.dark-theme .group:hover .group-hover\:text-\[\#122027\] { color: #ffffff !important; }
 
 /* Motion Board task-card status text (getTagTextColorClass) — same hues as
    the mappings above, filled in for the 500/600 shades that weren't used

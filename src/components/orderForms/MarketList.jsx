@@ -115,12 +115,12 @@ export default function MarketList({ file, today, matcher, onOpen, arriving = fa
               key={f.id}
               onClick={() => setFilter(filter === f.id ? null : f.id)}
               aria-pressed={filter === f.id}
-              className={`flex items-center gap-2 px-3 py-1.5 rounded-xl border text-sm font-bold transition-colors ${
-                filter === f.id ? f.on : "bg-white border-[#dce4ec] text-[#122027] hover:border-[#9aabb5]"
+              className={`flex items-center gap-2 pl-3 pr-2 py-1.5 rounded-xl border text-sm font-bold transition-colors ${
+                filter === f.id ? `key-down ${f.on}` : "key bg-white border-[#dce4ec] text-[#122027] hover:border-[#9aabb5]"
               }`}
             >
               {f.label}
-              <span className={filter === f.id ? "text-white/80" : "text-[#768994]"}>{counts[f.id]}</span>
+              <span className={`min-w-[1.5rem] px-1.5 py-0.5 rounded-md text-center text-xs tabular-nums ${filter === f.id ? "bg-black/15 text-white" : "bg-slate-100 text-[#768994]"}`}>{counts[f.id]}</span>
             </button>
           ))}
           <p className="ml-auto text-sm text-[#768994]">
@@ -130,7 +130,7 @@ export default function MarketList({ file, today, matcher, onOpen, arriving = fa
         </div>
         {panel}
 
-        {active.length > 0 && <div className={`${GRID} py-2.5 border-b border-[#dce4ec] bg-slate-50/60 text-[10px] font-black uppercase tracking-widest text-[#768994]`}>
+        {active.length > 0 && <div className={`${GRID} py-2.5 border-b border-[#dce4ec] bg-slate-50/60 tray text-[10px] font-black uppercase tracking-widest text-[#768994]`}>
           <SortHeader id="name" sort={sort} onSort={onSort}>Market</SortHeader>
           <SortHeader id="status" sort={sort} onSort={onSort}>Status</SortHeader>
           <span>Orders confirmed</span>
@@ -160,13 +160,13 @@ export default function MarketList({ file, today, matcher, onOpen, arriving = fa
               key={m.name}
               onClick={() => onOpen?.(m.name)}
               disabled={arriving}
-              className={`${arriving ? "list-row-in " : ""}${GRID} w-full py-3 border-b border-slate-100 last:border-b-0 text-sm text-left hover:bg-slate-50 focus:outline-none focus-visible:bg-slate-50 transition-colors group`}
+              className={`${arriving ? "list-row-in " : ""}${GRID} row-lift w-full py-3 border-b border-slate-100 last:border-b-0 text-sm text-left hover:bg-slate-50 focus:outline-none focus-visible:bg-slate-50 transition-colors group`}
             >
               <MarketName name={m.name} undated={m.undated} changed={changedIn(m.name)} />
               <span><span className={`${pillClass} ${STATUS_CLASS[m.status]}`}>{STATUS_LABEL[m.status]}</span></span>
               <span className="flex items-center gap-3 min-w-0">
-                <span className="flex-1 h-1.5 rounded-full bg-slate-100 overflow-hidden">
-                  <span className={`block h-full rounded-full bg-[#1cc1a5] ${arriving ? "bar-fill" : ""}`} style={{ width: `${pct}%` }} />
+                <span className="groove flex-1 h-2 rounded-full bg-slate-100 overflow-hidden">
+                  <span className={`groove-fill block h-full rounded-full bg-[#1cc1a5] ${arriving ? "bar-fill" : ""}`} style={{ width: `${pct}%` }} />
                 </span>
                 <span className="text-xs text-[#768994] tabular-nums shrink-0 w-14 text-right">{m.confirmed} of {m.total}</span>
               </span>
@@ -188,7 +188,7 @@ export default function MarketList({ file, today, matcher, onOpen, arriving = fa
 
       {idle.length > 0 && (
         <div className="bg-white border border-[#dce4ec] rounded-2xl shadow-sm overflow-hidden">
-          <div className="flex items-baseline gap-2 px-5 py-3 border-b border-[#dce4ec] bg-slate-50/60">
+          <div className="flex items-baseline gap-2 px-5 py-3 border-b border-[#dce4ec] bg-slate-50/60 tray">
             <h3 className="text-[10px] font-black uppercase tracking-widest text-[#768994]">Not started</h3>
             <p className="text-xs text-[#768994]">{idle.length} {idle.length === 1 ? "market" : "markets"} with no orders yet</p>
           </div>

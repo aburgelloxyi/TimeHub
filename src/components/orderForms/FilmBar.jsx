@@ -1,5 +1,6 @@
 import React from "react";
 import { ChevronDown, ChevronRight, Film, Plus } from "lucide-react";
+import { motion } from "framer-motion";
 import PickerMenu from "./PickerMenu";
 import { CLIENTS, clientFor } from "../../lib/orderForms/driveTree";
 import { loadedAgo, MEDIUM_LABEL as MEDIUM, MEDIUM_CLASS, MEDIUM_SOLID } from "./format";
@@ -58,7 +59,7 @@ export default function FilmBar({ files, selectedId, onSelect, onRemove, stalene
             onClick={toggle}
             aria-expanded={open}
             aria-haspopup="listbox"
-            className="flex items-center gap-2 pl-3 pr-2.5 py-2.5 rounded-xl bg-white border border-[#dce4ec] hover:border-[#12a0e1] shadow-sm transition-colors min-w-0"
+            className="key flex items-center gap-2 pl-3 pr-2.5 py-2.5 rounded-xl bg-white border border-[#dce4ec] hover:border-[#12a0e1] shadow-sm transition-colors min-w-0"
           >
             <Film className="w-4 h-4 text-[#768994] shrink-0" />
             <span className="text-sm font-bold text-[#768994] shrink-0">{now.client}</span>
@@ -72,15 +73,23 @@ export default function FilmBar({ files, selectedId, onSelect, onRemove, stalene
 
       {/* The same film in the other medium, when that is loaded too. */}
       {twin ? (
-        <div role="group" aria-label="Medium" className="flex p-1 rounded-xl border border-[#dce4ec] bg-white shadow-sm">
+        <div role="group" aria-label="Medium" className="well flex p-1 rounded-xl border border-[#dce4ec] bg-slate-100">
           {[current, twin].sort((a, b) => (a.kind === "motion" ? -1 : 1) - (b.kind === "motion" ? -1 : 1)).map((file) => (
             <button
               key={file.id}
               onClick={() => onSelect(file.id)}
               aria-pressed={file.id === current.id}
-              className={`px-3 py-1.5 rounded-lg text-sm font-bold transition-colors ${file.id === current.id ? MEDIUM_SOLID[file.kind] : "text-[#768994] hover:text-[#122027]"}`}
+              className={`relative px-3 py-1.5 rounded-lg text-sm font-bold transition-colors ${file.id === current.id ? "text-white" : "text-[#768994] hover:text-[#122027]"}`}
             >
-              {MEDIUM[file.kind]}
+              {/* One thumb shared by both, so it slides to whichever is chosen. */}
+              {file.id === current.id && (
+                <motion.span
+                  layoutId="medium-thumb"
+                  transition={{ type: "tween", duration: 0.26, ease: [0.16, 1, 0.3, 1] }}
+                  className={`thumb absolute inset-0 rounded-lg ${MEDIUM_SOLID[file.kind]}`}
+                />
+              )}
+              <span className="relative">{MEDIUM[file.kind]}</span>
             </button>
           ))}
         </div>
@@ -96,7 +105,7 @@ export default function FilmBar({ files, selectedId, onSelect, onRemove, stalene
           onClick={onAdd}
           aria-expanded={adding}
           aria-label={adding ? "Close the film loader" : "Load another film"}
-          className={`group/add press flex items-center p-2.5 rounded-xl border shadow-sm text-sm font-bold transition-colors focus:outline-none focus-visible:ring-4 focus-visible:ring-[#12a0e1]/30 ${
+          className={`group/add key press flex items-center p-2.5 rounded-xl border shadow-sm text-sm font-bold transition-colors focus:outline-none focus-visible:ring-4 focus-visible:ring-[#12a0e1]/30 ${
             adding ? "bg-[#122027] border-[#122027] text-white" : "bg-white border-[#dce4ec] text-[#122027] hover:border-[#12a0e1]"
           }`}
         >

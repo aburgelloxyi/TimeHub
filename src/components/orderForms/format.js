@@ -64,7 +64,7 @@ export const URGENCY_TEXT = { overdue: "text-rose-600", dueSoon: "text-amber-700
 // listed as orders.
 export const undatedNote = (n) => `${n} ${n === 1 ? "row has" : "rows have"} details but no delivery deadline`;
 
-export const pillClass = "inline-flex items-center px-2 py-0.5 rounded-md text-[11px] font-bold whitespace-nowrap";
+export const pillClass = "pill-label inline-flex items-center px-2 py-0.5 rounded-md text-[11px] font-bold whitespace-nowrap";
 
 // Motion and Print wear their departments' colours (see DEPT_GROUPS in lib/people.js).
 export const MEDIUM_LABEL = { motion: "Motion", print: "Print" };

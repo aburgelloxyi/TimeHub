@@ -1,8 +1,9 @@
 import React, { useEffect, useState } from "react";
-import { ExternalLink, FolderPlus, Loader2 } from "lucide-react";
+import { ExternalLink, FolderCheck, FolderPlus, Loader2 } from "lucide-react";
 import { confirmAction } from "../../lib/confirm";
 import { notify } from "../../lib/toast";
 import { planMarketFolderLive, createMarketFolder } from "../../lib/orderForms/wrikeMarketFolder";
+import Sweep, { sweepClass } from "./Sweep";
 
 // Adds this market's country folder to the film's Markets folder in Wrike, with
 // its Google Drive link. It reads Wrike first and says exactly what it would
@@ -10,9 +11,9 @@ import { planMarketFolderLive, createMarketFolder } from "../../lib/orderForms/w
 // made here or found already there, the button is a link to it.
 //
 // `known` is what the page worked out on opening the market (checkMarketFolder):
-// a folder that is known to exist is a link from the start, and one known to be
-// missing is marked as the next thing to do, since orders can't be briefed
-// without it. `onMade` is told when the folder comes to exist.
+// a folder that is known to exist is a link from the start, with a green
+// ticked folder to say it is there; one known to be missing has a dashed
+// outline, the app's usual look for something still to be added. `onMade` is told when the folder comes to exist.
 
 const buttonClass =
   "flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-[#dce4ec] hover:border-[#12a0e1] text-sm font-bold text-[#122027] transition-colors disabled:opacity-60";
@@ -69,24 +70,19 @@ export default function WrikeFolderButton({ filmTitle, kind, marketName, driveUr
 
   if (folder?.permalink) {
     return (
-      <a href={folder.permalink} target="_blank" rel="noreferrer" title={folder.title} className={`group ${buttonClass}`}>
-        <ExternalLink className="w-3.5 h-3.5 transition-transform duration-200 group-hover:-translate-y-0.5 group-hover:translate-x-0.5" />
+      <a href={folder.permalink} target="_blank" rel="noreferrer" title={folder.title} className={`group ${sweepClass} ${buttonClass}`}>
+        <Sweep />
+        <FolderCheck className="w-3.5 h-3.5 text-emerald-600 transition-colors duration-300 group-hover/s:!text-white" />
         Wrike folder
+        <ExternalLink className="w-3 h-3 text-[#768994] transition-[transform,color] duration-200 group-hover:-translate-y-0.5 group-hover:translate-x-0.5 group-hover/s:!text-white" />
       </a>
     );
   }
   return (
-    <button onClick={add} disabled={busy} className={`group relative ${buttonClass} ${known?.state === "missing" ? "!text-indigo-600" : ""}`}>
+    <button onClick={add} disabled={busy} className={`group ${sweepClass} ${buttonClass} ${known?.state === "missing" ? "border-dashed border-[#9aabb5]" : ""}`}>
+      <Sweep />
       {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <FolderPlus className="w-3.5 h-3.5 transition-transform duration-200 group-hover:scale-110" />}
       {busy ? "Checking Wrike…" : "Add folder to Wrike"}
-      {/* The next thing to do for this market. */}
-      {known?.state === "missing" && !busy && (
-        <span aria-hidden className="absolute -top-1 -right-1 flex h-2.5 w-2.5">
-          {/* Three pulses to catch the eye, then it rests as a plain dot. */}
-          <span className="absolute inline-flex h-full w-full rounded-full bg-indigo-500 opacity-60 animate-ping [animation-iteration-count:3] [animation-fill-mode:forwards] motion-reduce:hidden" />
-          <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-indigo-600" />
-        </span>
-      )}
     </button>
   );
 }

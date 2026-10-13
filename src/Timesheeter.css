@@ -86,7 +86,6 @@ html.dark-theme.oled-theme {
    gradient, so each page keeps its hue and the white text stays white. */
 .oled-theme .page-header {
   background-image:
-    var(--header-light),
     linear-gradient(rgb(0 0 0 / 0.5), rgb(0 0 0 / 0.5)),
     linear-gradient(to bottom right, var(--tw-gradient-stops)) !important;
 }

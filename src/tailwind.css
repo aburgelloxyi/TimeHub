@@ -301,9 +301,11 @@ div.page-header {
   background-image: var(--header-light), linear-gradient(to bottom right, var(--tw-gradient-stops));
   box-shadow: inset 0 -1px 0 rgb(0 0 0 / 0.08);
 }
-/* Administration starts from near-black, where a white light turns to grey
-   haze. Its gradient already runs dark to bright, so it carries no light. */
-div.page-header[data-page="management"] { --header-light: none; }
+/* Administration starts from near-black and Client Orders from a deep indigo,
+   where a white light turns to grey haze and washes the colour out. Those two
+   carry no light. */
+div.page-header[data-page="management"],
+div.page-header[data-page="orderforms"] { --header-light: none; }
 
 /* Page: the section colour, very faint, fading out below the header. One
    colour per page, matching lib/pageGradients.js. */

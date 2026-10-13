@@ -464,6 +464,20 @@ html.dark-theme body {
 .dark-theme .border-slate-200\/60 { border-color: var(--dk-line) !important; }
 .dark-theme .divide-\[\#f0f4f8\] > * + * { border-color: var(--dk-line) !important; }
 
+/* Client Orders. Four things it uses that nothing above reached:
+   · the lines between a list's rows, which stayed near-white;
+   · the outline of a selected chip, drawn in the ink colour its fill has in
+     light mode, so it follows that fill here too;
+   · the ink buttons' hover. Their resting fill is remapped with !important,
+     which beat the plain hover class and left them with no hover at all;
+   · mid-grey outlines, a little too bright against the dark surfaces. */
+.dark-theme .divide-\[\#dce4ec\] > * + * { border-color: var(--dk-line) !important; }
+.dark-theme .border-\[\#122027\] { border-color: var(--dk-raised) !important; }
+.dark-theme .hover\:bg-\[\#25373c\]:hover { background-color: var(--dk-raised-2) !important; }
+.dark-theme .border-\[\#9aabb5\],
+.dark-theme .border-\[\#c5d2dc\],
+.dark-theme .hover\:border-\[\#9aabb5\]:hover { border-color: var(--dk-line-strong) !important; }
+
 /* Hover states. A missing hover rule is worse than a missing resting one:
    the element goes light exactly as you point at it, while its text has
    already been remapped to near-white. */

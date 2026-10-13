@@ -390,11 +390,11 @@ html.dark-theme .tray { box-shadow: inset 0 3px 4px -3px rgb(0 0 0 / 0.6); }
 html.dark-theme .pill-label { box-shadow: inset 0 0 0 1px rgb(255 255 255 / 0.07), inset 0 1px 0 rgb(255 255 255 / 0.08); }
 
 /* A list row that opens something: it rises off the list under the pointer
-   and goes back in when pressed. */
+   and settles back flat when pressed. */
 .row-lift { --row-shadow: rgb(18 32 39 / 0.38); transition: background-color 150ms, box-shadow 200ms var(--ease-app); }
 html.dark-theme .row-lift { --row-shadow: rgb(0 0 0 / 0.8); }
 .row-lift:hover:not(:disabled) { position: relative; z-index: 1; box-shadow: 0 10px 20px -14px var(--row-shadow); }
-.row-lift:active:not(:disabled) { box-shadow: inset 0 2px 4px -1px var(--row-shadow); }
+.row-lift:active:not(:disabled) { box-shadow: none; }
 
 @media (prefers-reduced-motion: reduce) {
   .key, .row-lift { transition: none; }

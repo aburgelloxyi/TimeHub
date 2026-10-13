@@ -35,6 +35,27 @@ export function linksFromTasks(tasks, fieldId) {
   return links;
 }
 
+// What filling the sheet's Delivery Link column from Wrike would write: one
+// change per order whose task has a link and whose cell is empty. `tasks` runs
+// alongside `orders`. A cell that already holds something else is counted in
+// `kept` and left for a person to settle; `column` is false when the sheet has
+// no such column to fill.
+export function planDeliveryFill(orders, tasks, links) {
+  const changes = [];
+  let kept = 0;
+  let column = false;
+  orders.forEach((order, i) => {
+    const cell = order.cells?.deliveryLink;
+    if (!cell || !order.tab) return;
+    column = true;
+    const link = links?.[tasks[i]?.id];
+    if (!link || cell.was.trim() === link) return;
+    if (cell.was.trim()) { kept++; return; }
+    changes.push({ tab: order.tab, cell: cell.at, row: order.row, from: cell.was, to: link });
+  });
+  return { changes, kept, column };
+}
+
 // One lookup of the field per page load: its id doesn't change under us.
 let fieldOnce = null;
 const filePathField = () => (fieldOnce ||= fetchCustomFields().then(pickFilePathField).catch(() => { fieldOnce = null; return null; }));

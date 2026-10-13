@@ -233,3 +233,16 @@ check("a site under a merged size has that size",
   check("universal: print banner", print.kind, "print");
   check("a form with no XYi Received column doesn't claim an answer", print.orders[0].received, null);
 }
+
+// ── The Delivery Link column a PM adds after the XYi block ────────────────────
+const linked = parseMarket("Germany (GER)", [
+  ["GERMANY - [MOTION] - PARAMOUNT ORDER FORM "],
+  [...XYI_HEAD, "Delivery Link"],
+  MOTION_HEAD,
+  [...motionRow({ confirmed: "Yes", deadline: 46300 }), "https://d.example/x"],
+  motionRow({ confirmed: "Yes", deadline: 46300 }),
+]);
+check("delivery link: read from its column, with where the cell is",
+  linked.orders.map((o) => [o.xyi.deliveryLink, o.cells.deliveryLink]),
+  [["https://d.example/x", { at: "AR4", was: "https://d.example/x" }], ["", { at: "AR5", was: "" }]]);
+check("delivery link: a sheet without the column has no such cell", germany.orders[0].cells.deliveryLink, undefined);

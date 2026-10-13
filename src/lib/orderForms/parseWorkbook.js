@@ -145,6 +145,8 @@ const XYI_COLUMNS = [
   ["art", "art"],
   ["xyiFormat", "format"],
   ["quote", "quote"],
+  // Where the PMs keep the link an order was delivered at.
+  ["deliveryLink", "delivery link"],
 ];
 
 // Fields the page can edit in the sheet. Most are plain text, where what is
@@ -275,6 +277,11 @@ export function parseMarket(name, rows) {
         // An empty date cell is decided below, by what the rest of its column holds.
         else if (DATE_FIELDS.has(field)) cell.as = typeof raw === "number" ? "serial" : cell.was.trim() ? "text" : "";
         order.cells[field] = cell;
+      }
+      // Not typed into from the table: filled from Wrike (see deliveryLinks.js).
+      if ("deliveryLink" in xyiCols) {
+        const raw = rows[i]?.[xyiCols.deliveryLink];
+        order.cells.deliveryLink = { at: a1(i + origin.r, xyiCols.deliveryLink + origin.c), was: raw == null ? "" : String(raw) };
       }
       orders.push(order);
     }

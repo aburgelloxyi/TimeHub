@@ -4,7 +4,7 @@ import { AnimatePresence, motion } from "framer-motion";
 import { checkMarketFolder } from "../../lib/orderForms/wrikeMarketFolder";
 import { marketSummary, orderUrgency, changeKeys, changesNote } from "../../lib/orderForms/status";
 import { orderKey, taskLink } from "../../lib/orderForms/wrikeMatch";
-import { readDeliveryLinks } from "../../lib/orderForms/deliveryLinks";
+import { deliveryLinkOf, planDeliveryFill, readDeliveryLinks } from "../../lib/orderForms/deliveryLinks";
 import OrderDetail from "./OrderDetail";
 import PickerMenu from "./PickerMenu";
 import DateField from "../shared/DateField";
@@ -167,7 +167,11 @@ export default function MarketView({ market, kind, filmTitle, clientId, filmKey,
     readDeliveryLinks(ids).then(({ links }) => { if (live) setDelivery(links); }).catch(() => { if (live) setDelivery({}); });
     return () => { live = false; };
   }, [taskIds, orders]);
-  const delivered = tasks.filter((t) => t && delivery[t.id]).length;
+  // Wrike's link where it could be read, else the one already in the sheet:
+  // the field is one not everybody can see in Wrike.
+  const linkFor = (i) => (tasks[i] && delivery[tasks[i].id]) || deliveryLinkOf(orders[i].xyi?.deliveryLink);
+  const delivered = orders.filter((_, i) => linkFor(i)).length;
+  const fill = useMemo(() => planDeliveryFill(orders, tasks, delivery), [orders, taskIds, delivery]);
   const setAside = market.setAside || [];
   // Rows that can be ticked: all of them when editing; when briefing, only
   // the ones not in Wrike yet.
@@ -312,6 +316,37 @@ export default function MarketView({ market, kind, filmTitle, clientId, filmKey,
     setEditing(false);
   };
 
+  // Writes the links found in Wrike into the sheet's Delivery Link column,
+  // after showing which rows get one. Empty cells only (planDeliveryFill).
+  const fillDeliveryLinks = async () => {
+    if (!market.sheetId) return notify("Refresh this market first, so its sheet can be written to from here.");
+    if (!market.sheetNative) return notify("This market's sheet is an Excel file, not a Google Sheet, so it can't be written to from here.");
+    const rows = fill.changes;
+    const ok = await confirmAction({
+      title: `Fill ${rows.length} delivery ${rows.length === 1 ? "link" : "links"} in ${market.name}'s sheet?`,
+      message: `${rows.slice(0, 6).map((c) => `Row ${c.row} (${c.cell}): ${c.to}`).join("\n")}${rows.length > 6 ? `\nand ${rows.length - 6} more` : ""}${fill.kept ? `\n\n${fill.kept} ${fill.kept === 1 ? "row already holds" : "rows already hold"} something else and will be left alone.` : ""}\n\nThis writes to the sheet the market sees.`,
+      confirmLabel: "Fill",
+      danger: true,
+    });
+    if (!ok) return;
+    setApplying(true);
+    try {
+      if (!googleCanWrite()) await connectGoogleForWriting();
+      const result = await applyCellChanges(market.sheetId, rows.map((c) => ({ ...c, range: cellRange(c.tab, c.cell) })));
+      notify(
+        `${result.written} delivery ${result.written === 1 ? "link" : "links"} filled in${result.changed ? `, ${result.changed} left alone because the sheet had been edited since it was read` : ""}`,
+        result.changed ? "error" : "success"
+      );
+      onChanged?.();
+    } catch (err) {
+      notify(err?.reason === "denied" ? "Google didn't grant edit access to spreadsheets, so nothing was written."
+        : err?.reason === "no-access" ? "Your Google account can't edit this sheet."
+        : googleMessage(err));
+    } finally {
+      setApplying(false);
+    }
+  };
+
   const applyEdits = async () => {
     const ok = await confirmAction({
       title: `Change ${changes.length} ${changes.length === 1 ? "cell" : "cells"} in ${market.name}'s sheet?`,
@@ -431,33 +466,37 @@ export default function MarketView({ market, kind, filmTitle, clientId, filmKey,
       case "duration":
         return o.duration ? `${o.duration}s` : "";
       case "wrike":
-        return tasks[i] ? (
+        // The delivery link shows with or without a matched task: it can come
+        // from the sheet alone.
+        return tasks[i] || linkFor(i) ? (
           <span className="flex items-center gap-1.5">
-          <a
-            href={taskLink(tasks[i])}
-            target="_blank"
-            rel="noreferrer"
-            onClick={(e) => e.stopPropagation()}
-            title={matches[i].how === "close" ? `Close match: ${tasks[i].title}` : tasks[i].title}
-            className={`${pillClass} gap-1 bg-sky-100 text-sky-600 hover:underline`}
-          >
-            <ExternalLink className="w-3 h-3" />
-            {matches[i].how === "close" ? "In Wrike?" : "In Wrike"}
-          </a>
-          {delivery[tasks[i].id] && (
-            <HoverLabel label="Open the delivery link">
+            {tasks[i] ? (
               <a
-                href={delivery[tasks[i].id]}
+                href={taskLink(tasks[i])}
                 target="_blank"
                 rel="noreferrer"
                 onClick={(e) => e.stopPropagation()}
-                aria-label="Open the delivery link"
-                className="p-1 rounded-md text-[#1cc1a5] hover:bg-[#1cc1a5]/10 transition-colors"
+                title={matches[i].how === "close" ? `Close match: ${tasks[i].title}` : tasks[i].title}
+                className={`${pillClass} gap-1 bg-sky-100 text-sky-600 hover:underline`}
               >
-                <Link2 className="w-3.5 h-3.5" />
+                <ExternalLink className="w-3 h-3" />
+                {matches[i].how === "close" ? "In Wrike?" : "In Wrike"}
               </a>
-            </HoverLabel>
-          )}
+            ) : <span className="text-[#b6c3cc]">—</span>}
+            {linkFor(i) && (
+              <HoverLabel label="Open the delivery link">
+                <a
+                  href={linkFor(i)}
+                  target="_blank"
+                  rel="noreferrer"
+                  onClick={(e) => e.stopPropagation()}
+                  aria-label="Open the delivery link"
+                  className="p-1 rounded-md text-[#1cc1a5] hover:bg-[#1cc1a5]/10 transition-colors"
+                >
+                  <Link2 className="w-3.5 h-3.5" />
+                </a>
+              </HoverLabel>
+            )}
           </span>
         ) : <span className="text-[#b6c3cc]">—</span>;
       default:
@@ -531,6 +570,15 @@ export default function MarketView({ market, kind, filmTitle, clientId, filmKey,
                 <PencilLine className="w-3.5 h-3.5 transition-transform duration-200 group-hover:-rotate-12" />
                 Edit
               </button>
+              {fill.changes.length > 0 && (
+                <HoverLabel label="Copy the delivery links on these orders' Wrike tasks into the sheet's Delivery Link column. You see the rows first.">
+                  <button onClick={fillDeliveryLinks} disabled={applying} className={`group ${sweepClass} ${linkButtonClass} disabled:opacity-60`}>
+                    <Sweep />
+                    {applying ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Link2 className="w-3.5 h-3.5 text-[#1cc1a5] transition-colors duration-300 group-hover/s:!text-white" />}
+                    Fill {fill.changes.length} {fill.changes.length === 1 ? "link" : "links"}
+                  </button>
+                </HoverLabel>
+              )}
             </div>
 
             {/* Wrike: the market's folder, then its orders. Whichever is next
@@ -792,7 +840,7 @@ export default function MarketView({ market, kind, filmTitle, clientId, filmKey,
                             <OrderDetail
                               order={o}
                               task={tasks[i]}
-                              deliveryLink={tasks[i] ? delivery[tasks[i].id] : ""}
+                              deliveryLink={linkFor(i)}
                               how={matches[i]?.how}
                               parent={wrikeParents?.get(tasks[i]?.id)}
                               today={today}

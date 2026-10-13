@@ -163,11 +163,18 @@ export default function TableSearchableSelect({
     let left = rightAlign ? rect.right - w : rect.left;
     left = Math.max(4, Math.min(left, vw - w - 4));
 
-    const spaceBelow = vh - rect.bottom;
-    const flipUp = spaceBelow < 220 && rect.top > spaceBelow;
-    const vertical = flipUp
-      ? { bottom: vh - rect.top + 4 }
-      : { top: rect.bottom + 4 };
+    // The panel is up to 350px tall. It opens on whichever side fits that, or
+    // the roomier one when neither does, and is capped to the room it has, so
+    // it scrolls inside itself instead of running off the page. The 12 is the
+    // 4px gap to the field plus 8px kept clear of the window's edge.
+    const PANEL_MAX = 350;
+    const spaceBelow = vh - rect.bottom - 12;
+    const spaceAbove = rect.top - 12;
+    const flipUp = spaceBelow < PANEL_MAX && spaceAbove > spaceBelow;
+    const vertical = {
+      ...(flipUp ? { bottom: vh - rect.top + 4 } : { top: rect.bottom + 4 }),
+      maxHeight: Math.max(120, Math.min(PANEL_MAX, flipUp ? spaceAbove : spaceBelow)),
+    };
 
     setFixedStyle({
       position: "fixed",

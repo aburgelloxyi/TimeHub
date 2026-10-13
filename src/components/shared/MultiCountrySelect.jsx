@@ -97,14 +97,24 @@ export default function MultiCountrySelect({
       ? Math.max(4, (vw - w) / 2)
       : Math.max(4, Math.min(rect.left, vw - w - 4));
 
-    const spaceBelow = vh - rect.bottom;
-    const flipUp = spaceBelow < 260 && rect.top > spaceBelow;
+    // The list is up to 300px tall, between a search box and a footer that
+    // take about 100px more. The panel opens on whichever side fits all of it,
+    // or the roomier one when neither does, and the list is capped to the room
+    // left, so it scrolls inside itself instead of running off the page. The
+    // 12 is the 4px gap to the field plus 8px kept clear of the window's edge.
+    const LIST_MAX = 300;
+    const CHROME = 100;
+    const spaceBelow = vh - rect.bottom - 12;
+    const spaceAbove = rect.top - 12;
+    const flipUp = spaceBelow < LIST_MAX + CHROME && spaceAbove > spaceBelow;
+    const listMax = Math.max(120, Math.min(LIST_MAX, (flipUp ? spaceAbove : spaceBelow) - CHROME));
 
     setFixedStyle({
       position: "fixed",
       zIndex: 999999,
       left,
       width: w,
+      "--list-max": `${listMax}px`,
       ...(flipUp ? { bottom: vh - rect.top + 4 } : { top: rect.bottom + 4 }),
     });
     searchRef.current?.focus();
@@ -268,7 +278,7 @@ export default function MultiCountrySelect({
             />
           </div>
 
-          <div className="max-h-[300px] overflow-y-auto custom-scrollbar">
+          <div className="overflow-y-auto custom-scrollbar" style={{ maxHeight: "var(--list-max, 300px)" }}>
             {ordered.length > 0 ? (
               <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-1 p-2">
                 {ordered.map((opt) => {

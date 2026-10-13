@@ -6,7 +6,7 @@
 // write is only ever those cells. Nothing here guesses: a header or a value
 // must match in full (ignoring case and spacing) to be changed.
 
-import { findHeaderRow, isMarketTab } from "./parseWorkbook";
+import { findHeaderRow, isMarketTab, toSerial, toUkDate } from "./parseWorkbook";
 import { columnLetter, a1, cellRange } from "./cells";
 
 const norm = (v) => String(v ?? "").replace(/\s+/g, " ").trim().toLowerCase();
@@ -90,17 +90,39 @@ export function docsForScope(films, scope, { market, filmKey } = {}) {
 export const marketNames = (films) =>
   [...new Set((films || []).flatMap((f) => f.markets.map((m) => m.name)))].sort((a, b) => a.localeCompare(b));
 
-// The cells to write for edits typed against a market's orders. `edits` is
-// { "orderIndex:field": text }. Only fields the parser recorded a cell for can
-// be edited, and an edit that leaves the cell as it was is dropped.
+// The cells to write for edits made against a market's orders. `edits` is
+// { "orderIndex:field": value }, where a date's value is its ISO day and
+// anything else is the text typed. Only fields the parser recorded a cell for
+// can be edited, and an edit that leaves the cell as it was is dropped.
+//
+// A date or a size is written as the sheet holds it (the cell's `as`; see
+// EDITABLE_FIELDS), so `to` can be a number. `show` is the change as a person
+// would read it, since a day number means nothing to them.
 export function editChanges(orders, edits) {
   const changes = [];
-  for (const [key, to] of Object.entries(edits || {})) {
+  for (const [key, value] of Object.entries(edits || {})) {
     const [index, field] = key.split(":");
     const order = orders[Number(index)];
     const cell = order?.cells?.[field];
-    if (!cell || !order.tab || to === cell.was) continue;
-    changes.push({ tab: order.tab, cell: cell.at, from: cell.was, to });
+    if (!cell || !order.tab) continue;
+    const numeric = cell.was.trim() !== "" && Number.isFinite(Number(cell.was));
+    let to = value;
+    let show = { from: cell.was, to: value };
+    if (cell.as === "serial" || cell.as === "text") {
+      if ((order[field] || "") === value) continue;
+      to = !value ? "" : cell.as === "serial" ? toSerial(value) : toUkDate(value);
+      show = { from: order[field] || "", to: value, date: true };
+    } else if (cell.as === "number") {
+      const n = Number(value);
+      to = String(value).trim() !== "" && Number.isFinite(n) ? n : value;
+      if (String(to) === cell.was) continue;
+      show = { from: cell.was, to: String(to) };
+    } else if (to === cell.was) continue;
+    changes.push({
+      tab: order.tab, cell: cell.at, from: cell.was, to, show,
+      // What undo writes back, as what it was: a day number or a size stays a number.
+      undo: cell.as && numeric ? Number(cell.was) : cell.was,
+    });
   }
   return changes;
 }

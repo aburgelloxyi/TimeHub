@@ -70,11 +70,25 @@ check("a market's sheets across films", docsForMarket(films, "Bulgaria (BG)").ma
   check("an order knows where its editable cells are, and what they hold",
     [market.orders[0].cells.confirmed, market.orders[0].cells.notes, market.orders[1].cells.siteName],
     [{ at: "B4", was: "Pending" }, { at: "G4", was: "Please update" }, { at: "C6", was: "Lobby" }]);
-  check("dates and sizes aren't editable", ["deliveryDeadline", "width"].map((f) => f in market.orders[0].cells), [false, false]);
+  check("a date knows how the sheet holds it, and a size is a number",
+    [market.orders[0].cells.deliveryDeadline, market.orders[0].cells.width], [{ at: "D4", was: "01/11/2026", as: "text" }, { at: "E4", was: "1", as: "number" }]);
   check("edits become cell changes; an edit back to the same text is dropped",
     editChanges(market.orders, { "0:confirmed": "Confirmed", "0:siteName": "Foyer", "1:notes": "Rush" }),
-    [{ tab: "Croatia (HRV)", cell: "B4", from: "Pending", to: "Confirmed" }, { tab: "Croatia (HRV)", cell: "G6", from: "", to: "Rush" }]);
-  check("an edit to a field with no cell is ignored", editChanges(market.orders, { "0:width": "5", "9:notes": "x" }), []);
+    [
+      { tab: "Croatia (HRV)", cell: "B4", from: "Pending", to: "Confirmed", show: { from: "Pending", to: "Confirmed" }, undo: "Pending" },
+      { tab: "Croatia (HRV)", cell: "G6", from: "", to: "Rush", show: { from: "", to: "Rush" }, undo: "" },
+    ]);
+  check("an edit to a field with no cell is ignored", editChanges(market.orders, { "0:duration": "5", "9:notes": "x" }), []);
+  check("a size is written as a number", editChanges(market.orders, { "0:width": "1090", "0:height": "2" }).map((c) => [c.cell, c.to, c.undo]), [["E4", 1090, 1]]);
+  check("a date kept as text is written as text", editChanges(market.orders, { "0:deliveryDeadline": "2026-11-09" }).map((c) => [c.to, c.show]),
+    [["09/11/2026", { from: "2026-11-01", to: "2026-11-09", date: true }]]);
+  check("the same day again is no change", editChanges(market.orders, { "0:deliveryDeadline": "2026-11-01" }), []);
+
+  const real = marketFromSheets({ T: [["MARKET", "Are your orders confirmed?", "DELIVERY DEADLINE", "LIVE DATE", "WIDTH", "HEIGHT"], ["HR", "Y", 46327, "", 1, 2], ["HR", "Y", 46328, 46330, 1, 2]] }, "X");
+  check("a real date is written as the sheet's day number, and undone as one",
+    editChanges(real.orders, { "0:deliveryDeadline": "2026-11-09" }).map((c) => [c.from, c.to, c.undo]), [["46327", 46335, 46327]]);
+  check("an empty date cell takes after the rest of its column", real.orders[0].cells.liveDate.as, "serial");
+  check("clearing a date empties the cell", editChanges(real.orders, { "1:liveDate": "" }).map((c) => c.to), [""]);
 }
 
 // ── Numbers and tick boxes ────────────────────────────────────────────────────

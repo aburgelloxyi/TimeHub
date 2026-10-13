@@ -4,6 +4,8 @@ import { marketSummary, orderUrgency, changeKeys, changesNote } from "../../lib/
 import { orderKey, taskLink } from "../../lib/orderForms/wrikeMatch";
 import OrderDetail from "./OrderDetail";
 import PickerMenu from "./PickerMenu";
+import DateField from "../shared/DateField";
+import { HoverLabel } from "../shared/FloatingCard";
 import MarketFlag from "./MarketFlag";
 import WrikeFolderButton from "./WrikeFolderButton";
 import Corrections from "./Corrections";
@@ -20,18 +22,46 @@ import { formatDay, pillClass, undatedNote, STATUS_CLASS, STATUS_LABEL, URGENCY_
 // The market's own Confirmed answer only has a column while editing: read-only
 // it says nothing the status doesn't. Long text (translations, notes,
 // specifications) is in the row's details, where there is room to read it.
-const columnsFor = (kind, editing) => [
-  { id: "status", label: "Status", width: "11%" },
-  ...(editing ? [{ id: "confirmed", label: "Confirmed?", width: "11%", field: true }] : []),
-  { id: "deliveryDeadline", label: "Deadline", width: "9%" },
-  { id: "placement", label: "Placement", width: "9%", field: true },
+const columnsFor = (kind, editing) => (editing ? [
+  // Editing adds two columns and turns cells into inputs, so the shares are
+  // set to leave Site name, the one with no width of its own, about a fifth.
+  { id: "status", label: "Status", width: "8%" },
+  { id: "confirmed", label: "Confirmed?", width: "9%", field: true },
+  { id: "deliveryDeadline", label: "Deadline", width: "9%", field: true },
+  // Read-only, the live date sits under the deadline; editing, it needs its own cell.
+  { id: "liveDate", label: "Live", width: "9%", field: true },
+  { id: "placement", label: "Placement", width: "8%", field: true },
   { id: "siteName", label: "Site name", field: true },
+  { id: "size", label: "Size", width: "11%", field: true },
+  kind === "print" ? { id: "type", label: "Type", width: "7%" } : { id: "duration", label: "Duration", width: "6%" },
+  { id: "artwork", label: "Artwork", width: "10%", field: true },
+  { id: "wrike", label: "Wrike", width: "6%" },
+] : [
+  { id: "status", label: "Status", width: "11%" },
+  { id: "deliveryDeadline", label: "Deadline", width: "9%" },
+  { id: "placement", label: "Placement", width: "9%" },
+  { id: "siteName", label: "Site name" },
   { id: "size", label: "Size", width: "13%" },
   kind === "print" ? { id: "type", label: "Type", width: "11%" } : { id: "duration", label: "Duration", width: "8%" },
-  { id: "artwork", label: "Artwork", width: "14%", field: true },
+  { id: "artwork", label: "Artwork", width: "14%" },
   { id: "wrike", label: "Wrike", width: "9%" },
-];
+]);
 const DETAIL_FIELDS = ["translations", "notes", "specs"];
+
+// What "set for the ticked orders" can set, and how each is typed.
+const BULK_FIELDS = [
+  { id: "confirmed", label: "Confirmed?" },
+  { id: "deliveryDeadline", label: "Deadline", type: "date" },
+  { id: "liveDate", label: "Live date", type: "date" },
+  { id: "placement", label: "Placement" },
+  { id: "siteName", label: "Site name" },
+  { id: "width", label: "Width", type: "number" },
+  { id: "height", label: "Height", type: "number" },
+  { id: "artwork", label: "Artwork" },
+  { id: "translations", label: "Translations" },
+  { id: "notes", label: "Notes" },
+  { id: "specs", label: "Specifications" },
+];
 
 const cellInputClass = "w-full px-2 py-1 text-sm text-[#122027] border rounded-md outline-none focus:border-[#12a0e1] bg-white";
 const linkButtonClass =
@@ -68,6 +98,18 @@ export default function MarketView({ market, kind, filmTitle, clientId, filmKey,
   // it is selected in edit mode. Cells not asked about yet aren't in it.
   const [choices, setChoices] = useState({});
   const asked = useRef(new Set());
+  // Orders ticked in edit mode, to set one field on all of them at once. What
+  // is set joins the pending edits, to be reviewed and applied like any other.
+  const [ticked, setTicked] = useState(() => new Set());
+  const [bulk, setBulk] = useState({ field: "confirmed", value: "" });
+  const setEdit = (i, field, value) => setEdits((prev) => ({ ...prev, [`${i}:${field}`]: value }));
+  // What an editable cell shows before anything is typed: a date as its day,
+  // anything else as the cell holds it.
+  const heldIn = (o, field) => {
+    const held = o.cells?.[field];
+    return !held ? "" : held.as === "serial" || held.as === "text" ? o[field] || "" : held.was;
+  };
+  const choicesFor = (held) => (held ? choices[held.at] || choices[`col:${held.at.replace(/\d+$/, "")}`] : null);
   const summary = marketSummary(market, today);
   const matches = useMemo(() => (matcher ? matcher.match(orders, decide?.links) : orders.map(() => null)), [matcher, orders, decide?.links]);
   const tasks = matches.map((m) => m?.task || null);
@@ -86,9 +128,9 @@ export default function MarketView({ market, kind, filmTitle, clientId, filmKey,
     return (i) => tags.get(keys[i]) || "";
   }, [changed, orders]);
 
-  useEffect(() => { setSelected(0); setExpanded(null); setEditing(false); setEdits({}); setUndo(null); }, [market.name]);
+  useEffect(() => { setSelected(0); setExpanded(null); setEditing(false); setEdits({}); setUndo(null); setTicked(new Set()); }, [market.name]);
   // A fresh read replaces the orders, and with them what each cell held.
-  useEffect(() => { setEdits({}); setChoices({}); setExpanded(null); asked.current = new Set(); }, [orders]);
+  useEffect(() => { setEdits({}); setChoices({}); setExpanded(null); setTicked(new Set()); asked.current = new Set(); }, [orders]);
 
   useEffect(() => {
     const current = orders[selected];
@@ -104,6 +146,21 @@ export default function MarketView({ market, kind, filmTitle, clientId, filmKey,
       }))
       .catch(() => {});
   }, [editing, selected, orders, market.sheetId]);
+
+  // A value as the confirmation shows it: a date as a day, nothing as "empty".
+  const said = (value, date) => (!value ? "empty" : date ? formatDay(value, today) : `"${value}"`);
+
+  // Sets the chosen field on every ticked order that has that cell.
+  const setOnTicked = () => {
+    setEdits((prev) => {
+      const next = { ...prev };
+      for (const i of ticked) if (orders[i]?.cells?.[bulk.field]) next[`${i}:${bulk.field}`] = bulk.value;
+      return next;
+    });
+  };
+  const bulkField = BULK_FIELDS.find((f) => f.id === bulk.field);
+  const firstTicked = orders[[...ticked][0]];
+  const bulkChoices = bulkField && !bulkField.type ? choicesFor(firstTicked?.cells?.[bulk.field]) : null;
 
   const startEditing = () => {
     if (!market.sheetId) return notify("Refresh this market first, so its sheet can be edited from here.");
@@ -137,13 +194,14 @@ export default function MarketView({ market, kind, filmTitle, clientId, filmKey,
       danger: true,
     }))) return;
     setEdits({});
+    setTicked(new Set());
     setEditing(false);
   };
 
   const applyEdits = async () => {
     const ok = await confirmAction({
       title: `Change ${changes.length} ${changes.length === 1 ? "cell" : "cells"} in ${market.name}'s sheet?`,
-      message: `${changes.slice(0, 6).map((c) => `${c.cell}: "${c.from}" → "${c.to}"`).join("\n")}${changes.length > 6 ? `\nand ${changes.length - 6} more` : ""}\n\nThis writes to the Google Sheet. To undo it, use the sheet's version history in Google.`,
+      message: `${changes.slice(0, 6).map((c) => `${c.cell}: ${said(c.show.from, c.show.date)} → ${said(c.show.to, c.show.date)}`).join("\n")}${changes.length > 6 ? `\nand ${changes.length - 6} more` : ""}\n\nThis writes to the Google Sheet. To undo it, use the sheet's version history in Google.`,
       confirmLabel: "Apply",
       danger: true,
     });
@@ -173,19 +231,49 @@ export default function MarketView({ market, kind, filmTitle, clientId, filmKey,
   // what the sheet's cell holds, or a dropdown where the sheet has one.
   const cell = (o, i, col) => {
     const at = o.cells?.[col.id];
-    if (editing && col.field && at) {
-      const key = `${i}:${col.id}`;
-      const value = edits[key] ?? at.was;
-      // This cell's own list once it has been read; until then, the list read
-      // for the same column on another row, which is nearly always the same.
-      const options = choices[at.at] || choices[`col:${at.at.replace(/\d+$/, "")}`];
-      const props = {
+    const inputFor = (field, extra = {}) => {
+      const key = `${i}:${field}`;
+      const value = edits[key] ?? heldIn(o, field);
+      return {
         value,
         onFocus: () => setSelected(i),
-        onChange: (e) => setEdits((prev) => ({ ...prev, [key]: e.target.value })),
+        onChange: (e) => setEdit(i, field, e.target.value),
         "aria-label": `${col.label}, row ${o.row}`,
-        className: `${cellInputClass} ${value !== at.was ? "border-indigo-500 ring-2 ring-indigo-500/15" : "border-[#dce4ec]"}`,
+        className: `${cellInputClass} ${value !== heldIn(o, field) ? "border-indigo-500 ring-2 ring-indigo-500/15" : "border-[#dce4ec]"}`,
+        ...extra,
       };
+    };
+    if (editing && col.id === "size" && o.cells?.width && o.cells?.height) {
+      return (
+        <span className="flex items-center gap-1">
+          <input inputMode="decimal" {...inputFor("width", { "aria-label": `Width, row ${o.row}` })} />
+          <span className="text-[#768994] shrink-0">×</span>
+          <input inputMode="decimal" {...inputFor("height", { "aria-label": `Height, row ${o.row}` })} />
+        </span>
+      );
+    }
+    if (editing && col.field && at) {
+      if (at.as === "serial" || at.as === "text") {
+        const day = edits[`${i}:${col.id}`] ?? heldIn(o, col.id);
+        return (
+          <DateField
+            floating
+            compact
+            value={day}
+            onChange={(picked) => setEdit(i, col.id, picked)}
+            onOpen={() => setSelected(i)}
+            changed={day !== heldIn(o, col.id)}
+            ariaLabel={`${col.label}, row ${o.row}`}
+            placeholder="No date"
+            // A row with no delivery deadline stops being an order, so that
+            // one can be moved but not emptied from here.
+            allowClear={col.id !== "deliveryDeadline"}
+          />
+        );
+      }
+      const props = inputFor(col.id);
+      const { value } = props;
+      const options = choicesFor(at);
       return options ? (
         <PickerMenu
           compact
@@ -196,9 +284,14 @@ export default function MarketView({ market, kind, filmTitle, clientId, filmKey,
           // longer includes it.
           items={[...(options.includes(value) ? [] : [value]), ...options].map((opt) => ({ id: opt, label: opt || "—" }))}
           value={value}
-          onChange={(picked) => setEdits((prev) => ({ ...prev, [key]: picked }))}
+          onChange={(picked) => setEdit(i, col.id, picked)}
         />
-      ) : <input {...props} />;
+      ) : (
+        // A box narrower than what's in it shows the whole of it on hover.
+        <HoverLabel label={String(value).length > 16 ? <span className="break-words">{value}</span> : ""} delay={300}>
+          <input {...props} />
+        </HoverLabel>
+      );
     }
     switch (col.id) {
       case "status":
@@ -212,6 +305,8 @@ export default function MarketView({ market, kind, filmTitle, clientId, filmKey,
           </span>
         );
       }
+      case "liveDate":
+        return <span className="tabular-nums">{formatDay(o.liveDate, today)}</span>;
       case "size":
         return (
           <span className="block tabular-nums truncate">
@@ -317,6 +412,67 @@ export default function MarketView({ market, kind, filmTitle, clientId, filmKey,
 
       {editing && clientId && <Corrections clientId={clientId} filmKey={filmKey} market={market.name} onApplied={onChanged} />}
 
+      {editing && ticked.size > 0 && (
+        <div className="flex flex-wrap items-end gap-3 px-5 py-3 border-b border-[#dce4ec] bg-slate-50">
+          <p className="text-sm font-bold text-[#122027] pb-2 mr-1">
+            {ticked.size} {ticked.size === 1 ? "order" : "orders"} ticked
+          </p>
+          <div className="w-44">
+            <span className="block mb-1 text-[10px] font-black uppercase tracking-widest text-[#768994]">Set</span>
+            <PickerMenu
+              compact
+              ariaLabel="Field to set"
+              items={BULK_FIELDS.filter((f) => firstTicked?.cells?.[f.id]).map((f) => ({ id: f.id, label: f.label }))}
+              value={bulk.field}
+              onChange={(field) => setBulk({ field, value: "" })}
+            />
+          </div>
+          <div className="w-64">
+            <span className="block mb-1 text-[10px] font-black uppercase tracking-widest text-[#768994]">To</span>
+            {bulkChoices ? (
+              <PickerMenu
+                compact
+                ariaLabel="Value to set"
+                placeholder="Choose"
+                items={bulkChoices.map((opt) => ({ id: opt, label: opt || "—" }))}
+                value={bulk.value}
+                onChange={(value) => setBulk((b) => ({ ...b, value }))}
+              />
+            ) : (
+              bulkField?.type === "date" ? (
+                <DateField
+                  floating
+                  compact
+                  value={bulk.value}
+                  onChange={(value) => setBulk((b) => ({ ...b, value }))}
+                  ariaLabel="Date to set"
+                  placeholder="Pick a date"
+                  allowClear={false}
+                />
+              ) : (
+                <input
+                  inputMode={bulkField?.type === "number" ? "decimal" : undefined}
+                  value={bulk.value}
+                  onChange={(e) => setBulk((b) => ({ ...b, value: e.target.value }))}
+                  aria-label="Value to set"
+                  className={`${cellInputClass} border-[#dce4ec] py-1.5`}
+                />
+              )
+            )}
+          </div>
+          <button
+            onClick={setOnTicked}
+            className="press px-3 py-1.5 rounded-lg bg-[#122027] hover:bg-[#25373c] text-white text-sm font-bold transition-colors"
+          >
+            Set on {ticked.size}
+          </button>
+          <button onClick={() => setTicked(new Set())} className="px-2 py-1.5 text-xs font-bold text-[#768994] hover:text-[#122027]">
+            Untick all
+          </button>
+          <p className="basis-full text-[11px] text-[#768994]">This fills in the cells below for you to check. Nothing is written until you press Apply.</p>
+        </div>
+      )}
+
       {orders.length === 0 ? (
         <p className="px-5 py-16 text-center text-sm text-[#768994]">
           No orders with a delivery deadline yet.
@@ -324,14 +480,27 @@ export default function MarketView({ market, kind, filmTitle, clientId, filmKey,
         </p>
       ) : (
         <div className="overflow-x-auto">
-          <table className="w-full min-w-[920px] table-fixed text-sm text-left text-[#122027] border-separate border-spacing-0">
+          <table className={`w-full ${editing ? "min-w-[1360px]" : "min-w-[920px]"} table-fixed text-sm text-left text-[#122027] border-separate border-spacing-0`}>
             <colgroup>
-              <col style={{ width: 64 }} />
+              <col style={{ width: editing ? 84 : 64 }} />
               {columns.map((col) => <col key={col.id} style={col.width ? { width: col.width } : undefined} />)}
             </colgroup>
             <thead>
               <tr className="text-[10px] font-black uppercase tracking-widest text-[#768994]">
-                <th className="px-3 py-2.5 bg-slate-50 border-b border-[#dce4ec] font-black">Row</th>
+                <th className="px-3 py-2.5 bg-slate-50 border-b border-[#dce4ec] font-black">
+                  <span className="flex items-center gap-2">
+                    {editing && (
+                      <input
+                        type="checkbox"
+                        aria-label="Tick every order"
+                        checked={ticked.size === orders.length && orders.length > 0}
+                        onChange={() => setTicked(ticked.size === orders.length ? new Set() : new Set(orders.map((_, n) => n)))}
+                        className="accent-indigo-600"
+                      />
+                    )}
+                    Row
+                  </span>
+                </th>
                 {columns.map((col) => (
                   <th key={col.id} className="px-3 py-2.5 bg-slate-50 border-b border-[#dce4ec] font-black whitespace-nowrap truncate">
                     {col.label}
@@ -351,6 +520,16 @@ export default function MarketView({ market, kind, filmTitle, clientId, filmKey,
                       className={`group ${editing ? "" : "cursor-pointer"} ${open ? "bg-[#12a0e1]/10" : "hover:bg-slate-50"}`}
                     >
                       <td className="px-3 py-2 border-b border-slate-100">
+                        <span className="flex items-center gap-2">
+                        {editing && (
+                          <input
+                            type="checkbox"
+                            aria-label={`Tick row ${o.row}`}
+                            checked={ticked.has(i)}
+                            onChange={() => setTicked((prev) => { const next = new Set(prev); if (!next.delete(i)) next.add(i); return next; })}
+                            className="accent-indigo-600 shrink-0"
+                          />
+                        )}
                         <button
                           onClick={(e) => { e.stopPropagation(); setExpanded(open ? null : i); setSelected(i); }}
                           aria-expanded={open}
@@ -360,6 +539,7 @@ export default function MarketView({ market, kind, filmTitle, clientId, filmKey,
                           <ChevronRight className={`w-3.5 h-3.5 transition-transform duration-200 ${open ? "rotate-90" : ""}`} />
                           {o.row}
                         </button>
+                        </span>
                         {changedTag(i) && (
                           <span className="block mt-0.5 text-[9px] font-black uppercase tracking-wider text-indigo-600 whitespace-nowrap">{changedTag(i)}</span>
                         )}
@@ -390,7 +570,7 @@ export default function MarketView({ market, kind, filmTitle, clientId, filmKey,
                                 fields: DETAIL_FIELDS.filter((f) => o.cells?.[f]),
                                 value: (f) => edits[`${i}:${f}`] ?? o.cells[f].was,
                                 changed: (f) => `${i}:${f}` in edits && edits[`${i}:${f}`] !== o.cells[f].was,
-                                set: (f, value) => setEdits((prev) => ({ ...prev, [`${i}:${f}`]: value })),
+                                set: (f, value) => setEdit(i, f, value),
                               } : null}
                             />
                           </div>

@@ -147,10 +147,25 @@ const XYI_COLUMNS = [
   ["quote", "quote"],
 ];
 
-// Fields the page can edit in the sheet: plain text, where what is typed is
-// what the cell should hold. Dates and sizes are left out; written as text
-// they would stop being dates and numbers to the sheet's own formulas.
-export const EDITABLE_FIELDS = ["confirmed", "placement", "siteName", "artwork", "translations", "notes", "specs"];
+// Fields the page can edit in the sheet. Most are plain text, where what is
+// typed is what the cell should hold. Dates and sizes are written as what the
+// sheet holds them as (a cell's `as`), or they would stop being dates and
+// numbers to the sheet's own formulas:
+//   "serial"  a real date, held as a day number
+//   "text"    a date someone typed that the sheet kept as text ("17/08/2026")
+//   "number"  a size
+export const EDITABLE_FIELDS = [
+  "confirmed", "deliveryDeadline", "liveDate", "placement", "siteName", "width", "height",
+  "artwork", "translations", "notes", "specs",
+];
+const NUMBER_FIELDS = new Set(["width", "height"]);
+
+// A day as the sheet's day number, and as the text markets type.
+export const toSerial = (iso) => {
+  const [y, m, d] = iso.split("-").map(Number);
+  return Math.round((Date.UTC(y, m - 1, d) - SERIAL_EPOCH) / 86400000);
+};
+export const toUkDate = (iso) => iso.split("-").reverse().join("/");
 
 const REQUIRED = [["confirmed", "Confirmed"], ["width", "Width"], ["height", "Height"], ["deliveryDeadline", "Delivery deadline"]];
 const DATE_FIELDS = new Set(["deliveryDeadline", "liveDate"]);
@@ -255,10 +270,21 @@ export function parseMarket(name, rows) {
       for (const field of EDITABLE_FIELDS) {
         if (!(field in cols)) continue;
         const raw = rows[i]?.[cols[field]];
-        order.cells[field] = { at: a1(i + origin.r, cols[field] + origin.c), was: raw == null ? "" : String(raw) };
+        const cell = { at: a1(i + origin.r, cols[field] + origin.c), was: raw == null ? "" : String(raw) };
+        if (NUMBER_FIELDS.has(field)) cell.as = "number";
+        // An empty date cell is decided below, by what the rest of its column holds.
+        else if (DATE_FIELDS.has(field)) cell.as = typeof raw === "number" ? "serial" : cell.was.trim() ? "text" : "";
+        order.cells[field] = cell;
       }
       orders.push(order);
     }
+  }
+  // A date typed into an empty cell is written the way the column's other
+  // dates are held: as a real date unless this market's are all text.
+  for (const field of DATE_FIELDS) {
+    const held = orders.map((o) => o.cells[field]?.as).filter(Boolean);
+    const usual = held.length && held.every((as) => as === "text") ? "text" : "serial";
+    for (const o of orders) if (o.cells[field] && !o.cells[field].as) o.cells[field].as = usual;
   }
   return { name, code: codeFromTab(name), kind: kindOf(rows, headerAt, cols), unreadable: null, orders, undated };
 }

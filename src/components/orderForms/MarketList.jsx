@@ -1,7 +1,6 @@
 import React, { useMemo, useState } from "react";
 import { ArrowDown, ArrowUp, ChevronRight } from "lucide-react";
 import { marketSummary, fileTotals, sortMarkets } from "../../lib/orderForms/status";
-import { countInWrike } from "../../lib/orderForms/wrikeMatch";
 import MarketFlag from "./MarketFlag";
 import { formatDay, undatedNote, pillClass, STATUS_CLASS, STATUS_LABEL, URGENCY_TEXT } from "./format";
 
@@ -50,10 +49,12 @@ function SortHeader({ id, sort, onSort, children }) {
   );
 }
 
+// `actions` sits at the right of the filter bar and `panel` opens under it,
+// for what acts on the whole film (editing its sheets).
 // `arriving` is a film still loading: rows ease in as each market is read,
 // their bars fill, and they don't open yet. A finished list is shown still,
 // since it is returned to from every market and shouldn't replay each time.
-export default function MarketList({ file, today, wrikeIndex, onOpen, arriving = false }) {
+export default function MarketList({ file, today, matcher, onOpen, arriving = false, actions, panel }) {
   const [filter, setFilter] = useState(null);
   // null = the default order (what needs attention first).
   const [sort, setSort] = useState(null);
@@ -63,8 +64,11 @@ export default function MarketList({ file, today, wrikeIndex, onOpen, arriving =
 
   // How many of each market's orders are already tasks in Wrike.
   const inWrike = useMemo(
-    () => new Map(file.markets.map((m) => [m.name, countInWrike(wrikeIndex, m.orders)])),
-    [file, wrikeIndex]
+    () => new Map(file.markets.map((m) => [
+      m.name,
+      matcher?.size ? matcher.match(m.orders, file.links?.[m.name]).filter(Boolean).length : 0,
+    ])),
+    [file, matcher]
   );
 
   const rows = useMemo(() => {
@@ -90,7 +94,8 @@ export default function MarketList({ file, today, wrikeIndex, onOpen, arriving =
     <div className="space-y-4">
       <div className="bg-white border border-[#dce4ec] rounded-2xl shadow-sm overflow-hidden">
         <div className="flex flex-wrap items-center gap-2 px-5 py-4 border-b border-[#dce4ec]">
-          {FILTERS.map((f) => (
+          {/* A status nobody is in isn't worth a button. */}
+          {FILTERS.filter((f) => counts[f.id] > 0 || filter === f.id).map((f) => (
             <button
               key={f.id}
               onClick={() => setFilter(filter === f.id ? null : f.id)}
@@ -106,7 +111,9 @@ export default function MarketList({ file, today, wrikeIndex, onOpen, arriving =
           <p className="ml-auto text-sm text-[#768994]">
             {totals.markets} markets · {totals.orders} orders
           </p>
+          {actions}
         </div>
+        {panel}
 
         {active.length > 0 && <div className={`${GRID} py-2.5 border-b border-[#dce4ec] bg-slate-50/60 text-[10px] font-black uppercase tracking-widest text-[#768994]`}>
           <SortHeader id="name" sort={sort} onSort={onSort}>Market</SortHeader>
@@ -114,7 +121,7 @@ export default function MarketList({ file, today, wrikeIndex, onOpen, arriving =
           <span>Orders confirmed</span>
           <SortHeader id="deadline" sort={sort} onSort={onSort}>Next deadline</SortHeader>
           <span>Media ok</span>
-          <span title="Orders whose task name matches a Wrike task TimeHub has loaded. A task it hasn't loaded doesn't show.">In Wrike</span>
+          <span title="Orders matched to a Wrike task TimeHub has loaded: by name, by a close name, or chosen by hand. A task it hasn't loaded doesn't show.">In Wrike</span>
           <span />
         </div>}
 

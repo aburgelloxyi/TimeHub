@@ -2,7 +2,29 @@
 // Derived on display rather than stored, so changing a rule here doesn't mean
 // re-loading anyone's files.
 
+import { orderKey } from "./wrikeMatch";
+
 const DUE_SOON_DAYS = 7;
+
+// A file as the screens show it: each market's orders without the ones a PM
+// has set aside (file.ignored, by market), which are kept on `setAside` so the
+// market's page can list them underneath. The sheet is untouched; this only
+// decides what counts here.
+export function applySetAside(file) {
+  if (!file?.ignored) return file;
+  return {
+    ...file,
+    markets: file.markets.map((m) => {
+      const keys = new Set(file.ignored[m.name] || []);
+      if (!keys.size || m.unreadable) return m;
+      return {
+        ...m,
+        orders: m.orders.filter((o) => !keys.has(orderKey(o))),
+        setAside: m.orders.filter((o) => keys.has(orderKey(o))),
+      };
+    }),
+  };
+}
 
 const addDays = (iso, days) => {
   const [y, m, d] = iso.split("-").map(Number);

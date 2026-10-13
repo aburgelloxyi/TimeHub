@@ -27,6 +27,18 @@ export function correctionProblem({ kind, column, find, to }) {
   return "";
 }
 
+// What to write over a cell: a number stays a number and a tick box a tick box
+// when the new text can be one, so the sheet's formulas still see them as such.
+function sameKind(value, to) {
+  if (typeof value === "number" && to.trim() !== "" && Number.isFinite(Number(to))) return Number(to);
+  if (typeof value === "boolean" && /^(true|false)$/i.test(to.trim())) return /^true$/i.test(to.trim());
+  return to;
+}
+
+// Each sheet's changes turned round, to put back what an apply wrote. Written
+// with the same only-if-unchanged check, so a cell edited since is left alone.
+export const reversed = (changes) => changes.map((c) => ({ ...c, from: String(c.to), to: c.undo ?? c.from }));
+
 // `grids` is { tabName: { rows, origin } } (see gridsFromBuffer): rows as read,
 // and where the first of them sits on the sheet, so a cell's address is right
 // when the sheet doesn't start at A1. Only order tabs are looked at, and only
@@ -48,9 +60,10 @@ export function findChanges(grids, correction) {
       }
       for (let r = headerAt + 1; r < rows.length; r++) {
         const value = rows[r]?.[c];
-        if (typeof value === "string" && norm(value) === norm(find) && value !== to) {
-          changes.push({ tab, cell: address(r, c), from: value, to });
-        }
+        if (value == null || value === "" || norm(value) !== norm(find)) continue;
+        const next = sameKind(value, to);
+        // `undo` is the cell's own value, kept so undoing a number writes a number back.
+        if (next !== value) changes.push({ tab, cell: address(r, c), from: String(value), to: next, undo: value });
       }
     });
   }
@@ -60,7 +73,18 @@ export function findChanges(grids, correction) {
 // Every order sheet in one market's folder, across a client's films.
 export function docsForMarket(films, marketName) {
   return (films || []).flatMap((film) =>
-    film.markets.filter((m) => m.name === marketName).map((m) => ({ film: film.label, sheet: m.sheet })));
+    film.markets.filter((m) => m.name === marketName).map((m) => ({ film: film.label, label: film.label, sheet: m.sheet })));
+}
+
+// The sheets a correction can reach, by how wide it is asked to go: one
+// market's folder ("market"), one film across its markets ("film"), or
+// everything the client has ("client"). Each has a label for its tick box.
+export function docsForScope(films, scope, { market, filmKey } = {}) {
+  if (scope === "market") return docsForMarket(films, market);
+  const chosen = scope === "film" ? (films || []).filter((f) => f.key === filmKey) : films || [];
+  return chosen
+    .flatMap((film) => film.markets.map((m) => ({ film: film.label, label: scope === "film" ? m.name : `${m.name} · ${film.label}`, sheet: m.sheet })))
+    .sort((a, b) => a.label.localeCompare(b.label));
 }
 
 export const marketNames = (films) =>

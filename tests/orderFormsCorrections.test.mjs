@@ -1,4 +1,4 @@
-import { columnLetter, a1, cellRange, findChanges, correctionProblem, docsForMarket, marketNames, editChanges } from "../src/lib/orderForms/corrections.js";
+import { columnLetter, a1, cellRange, findChanges, correctionProblem, docsForMarket, marketNames, editChanges, docsForScope, reversed } from "../src/lib/orderForms/corrections.js";
 
 check("column letters", [0, 3, 25, 26, 27].map(columnLetter), ["A", "D", "Z", "AA", "AB"]);
 check("cell address", [a1(0, 0), a1(2, 26)], ["A1", "AA3"]);
@@ -75,4 +75,30 @@ check("a market's sheets across films", docsForMarket(films, "Bulgaria (BG)").ma
     editChanges(market.orders, { "0:confirmed": "Confirmed", "0:siteName": "Foyer", "1:notes": "Rush" }),
     [{ tab: "Croatia (HRV)", cell: "B4", from: "Pending", to: "Confirmed" }, { tab: "Croatia (HRV)", cell: "G6", from: "", to: "Rush" }]);
   check("an edit to a field with no cell is ignored", editChanges(market.orders, { "0:width": "5", "9:notes": "x" }), []);
+}
+
+// ── Numbers and tick boxes ────────────────────────────────────────────────────
+{
+  const g = { T: { origin: { r: 0, c: 0 }, rows: [["MARKET", "WIDTH", "XYi Received", "DURATION"], ["HR", 1080, false, "15"], ["HR", 1920, true, 15]] } };
+  check("a number in a cell is found, and stays a number",
+    findChanges(g, { kind: "value", column: "Width", find: "1080", to: "1090" }),
+    [{ tab: "T", cell: "B2", from: "1080", to: 1090, undo: 1080 }]);
+  check("a number changed to words becomes text", findChanges(g, { kind: "value", column: "Width", find: "1920", to: "TBC" })[0].to, "TBC");
+  check("a tick box", findChanges(g, { kind: "value", column: "XYi Received", find: "false", to: "TRUE" })[0].to, true);
+  check("text and number spellings of the same value are both found",
+    findChanges(g, { kind: "value", column: "Duration", find: "15", to: "20" }).map((c) => [c.cell, c.to]), [["D2", "20"], ["D3", 20]]);
+  check("undo puts back what was there, as what it was",
+    reversed(findChanges(g, { kind: "value", column: "Width", find: "1080", to: "1090" })),
+    [{ tab: "T", cell: "B2", from: "1090", to: 1080, undo: 1080 }]);
+}
+
+// ── How wide a correction goes ────────────────────────────────────────────────
+{
+  const fs = [
+    { key: "a|motion", label: "A · Motion", markets: [{ name: "Bulgaria (BG)", sheet: { id: "1" } }, { name: "Austria (AT)", sheet: { id: "2" } }] },
+    { key: "b|print", label: "B · Print", markets: [{ name: "Bulgaria (BG)", sheet: { id: "3" } }] },
+  ];
+  check("one market, every film", docsForScope(fs, "market", { market: "Bulgaria (BG)" }).map((d) => d.sheet.id), ["1", "3"]);
+  check("one film, every market, by market name", docsForScope(fs, "film", { filmKey: "a|motion" }).map((d) => [d.label, d.sheet.id]), [["Austria (AT)", "2"], ["Bulgaria (BG)", "1"]]);
+  check("the whole client", docsForScope(fs, "client").map((d) => d.label), ["Austria (AT) · A · Motion", "Bulgaria (BG) · A · Motion", "Bulgaria (BG) · B · Print"]);
 }

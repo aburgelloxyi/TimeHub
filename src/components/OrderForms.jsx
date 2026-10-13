@@ -1,17 +1,19 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ClipboardList, FileSpreadsheet, Loader2, RefreshCw } from "lucide-react";
-import PageHeader from "./shared/PageHeader";
+import { ClipboardList, FileSpreadsheet, Loader2, PencilLine, Plus, RefreshCw, X } from "lucide-react";
+import PageHeader, { pageHeaderActionClass } from "./shared/PageHeader";
 import DropZone from "./orderForms/DropZone";
-import FileSwitcher from "./orderForms/FileSwitcher";
+import FilmBar from "./orderForms/FilmBar";
 import GoogleSource, { googleMessage } from "./orderForms/GoogleSource";
 import MarketList from "./orderForms/MarketList";
 import MarketView from "./orderForms/MarketView";
+import Corrections from "./orderForms/Corrections";
 import { readXlsx } from "../lib/orderForms/readXlsx";
 import { parseWorkbook } from "../lib/orderForms/parseWorkbook";
 import { listFiles, saveFile, removeFile } from "../lib/orderForms/store";
 import { connectGoogle, googleConfigured, googleConnected } from "../lib/orderForms/googleApi";
 import { loadFilm, loadMarketOf } from "../lib/orderForms/loadFilm";
-import { indexTasks, indexParents } from "../lib/orderForms/wrikeMatch";
+import { makeMatcher, indexParents, orderKey } from "../lib/orderForms/wrikeMatch";
+import { applySetAside } from "../lib/orderForms/status";
 import { confirmAction } from "../lib/confirm";
 import { notify } from "../lib/toast";
 import { isoToday } from "../utils/dates";
@@ -57,9 +59,14 @@ export default function OrderForms({ wrikeData }) {
   const [signedInTick, setSignedInTick] = useState(0);
   const [dragging, setDragging] = useState(false);
   const [error, setError] = useState("");
+  // The film loader is shown when asked for (the header's Add film), or when
+  // nothing is loaded yet. `editingSheets` opens the correction on the overview.
+  const [adding, setAdding] = useState(false);
+  const [editingSheets, setEditingSheets] = useState(false);
+  const fileInputRef = useRef(null);
   const dragDepth = useRef(0);
   const today = isoToday();
-  const wrikeIndex = useMemo(() => indexTasks(wrikeData), [wrikeData]);
+  const matcher = useMemo(() => makeMatcher(wrikeData), [wrikeData]);
   const wrikeParents = useMemo(() => indexParents(wrikeData), [wrikeData]);
 
   useEffect(() => {
@@ -76,14 +83,45 @@ export default function OrderForms({ wrikeData }) {
     const hash = hashFor(fileId, market);
     if (window.location.hash !== hash) window.history[replace ? "replaceState" : "pushState"]({}, "", hash);
     setView({ fileId, market });
+    // A message about one film or market has nothing to say about the next.
+    setError("");
   }, []);
 
+  // `file` is as read; `shown` is the same without the rows set aside.
   const file = files?.find((f) => f.id === view.fileId) || files?.[0] || null;
-  const market = file && view.market ? file.markets.find((m) => m.name === view.market && !m.unreadable) : null;
+  const shown = useMemo(() => applySetAside(file), [file]);
+  const market = shown && view.market ? shown.markets.find((m) => m.name === view.market && !m.unreadable) : null;
+
+  // What a PM has decided about a market's orders, kept on the file: rows set
+  // aside (ignored) and tasks matched by hand (links), both by market name.
+  const decideFor = (target, marketName) => {
+    const change = (work) => {
+      const updated = work(target);
+      saveFile(updated);
+      setFiles((prev) => prev.map((f) => (f.id === updated.id ? updated : f)));
+    };
+    const setIgnored = (order, on) => change((f) => {
+      const keys = new Set(f.ignored?.[marketName] || []);
+      if (on) keys.add(orderKey(order)); else keys.delete(orderKey(order));
+      return { ...f, ignored: { ...f.ignored, [marketName]: [...keys] } };
+    });
+    return {
+      links: target.links?.[marketName],
+      onSetAside: (order) => setIgnored(order, true),
+      onRestore: (order) => setIgnored(order, false),
+      onLink: (order, value) => change((f) => {
+        const links = { ...f.links?.[marketName] };
+        if (value) links[orderKey(order)] = value; else delete links[orderKey(order)];
+        return { ...f, links: { ...f.links, [marketName]: links } };
+      }),
+    };
+  };
 
   // Take a parsed file into the page and the store. `replaces` is the loaded
   // file it supersedes (same name), already agreed to by the caller.
-  const adopt = useCallback(async (parsed, replaces, keepMarket) => {
+  const adopt = useCallback(async (read, replaces, keepMarket) => {
+    // What was decided about the older read carries over to the newer one.
+    const parsed = replaces ? { ...read, ignored: replaces.ignored, links: replaces.links } : read;
     if (replaces) await removeFile(replaces.id);
     const kept = await saveFile(parsed);
     setFiles((prev) => [parsed, ...(prev || []).filter((f) => f.id !== replaces?.id)]);
@@ -125,6 +163,7 @@ export default function OrderForms({ wrikeData }) {
     const existing = (files || []).find((f) => f.name === loaded.name);
     if (existing && !(await confirmReplace(loaded.name))) return;
     await adopt(loaded, existing);
+    setAdding(false);
   }, [files, adopt]);
 
   // Read a Google-loaded film again from the client's folders. Asking to refresh
@@ -220,36 +259,55 @@ export default function OrderForms({ wrikeData }) {
         icon={ClipboardList}
         title="Client Orders"
         subtitle="Market orders at a glance"
+      >
+        {files?.length > 0 && (
+          <button onClick={() => setAdding((v) => !v)} aria-expanded={adding} className={pageHeaderActionClass}>
+            {adding ? <X className="w-3.5 h-3.5" /> : <Plus className="w-3.5 h-3.5" />}
+            {adding ? "Close" : "Add film"}
+          </button>
+        )}
+      </PageHeader>
+
+      <input
+        ref={fileInputRef}
+        type="file"
+        accept=".xlsx"
+        className="hidden"
+        onChange={(e) => {
+          const picked = e.target.files?.[0];
+          e.target.value = "";
+          if (picked) addFile(picked).then(() => setAdding(false));
+        }}
       />
 
       <div className="max-w-[1800px] mx-auto px-4 sm:px-6 py-6 space-y-4">
         {files === null && <div className="h-64 rounded-2xl bg-white/60 border border-[#dce4ec] animate-pulse" />}
 
-        {files && googleConfigured() && <GoogleSource onLoaded={addFilm} onBusy={setGoogleBusy} onPartial={setPartial} signedInTick={signedInTick} />}
+        {files && googleConfigured() && (empty || adding || partial) && (
+          <GoogleSource onLoaded={addFilm} onBusy={setGoogleBusy} onPartial={setPartial} signedInTick={signedInTick} />
+        )}
+        {adding && !empty && !partial && (
+          <p className="text-sm text-[#768994] px-1">
+            Or drop a downloaded .xlsx anywhere on the page, or{" "}
+            <button onClick={() => fileInputRef.current?.click()} disabled={working} className="font-bold text-[#122027] underline underline-offset-2 hover:text-[#12a0e1]">choose a file</button>.
+          </p>
+        )}
 
-        {partial && <MarketList file={partial} today={today} wrikeIndex={wrikeIndex} arriving />}
+        {partial && <MarketList file={partial} today={today} matcher={matcher} arriving />}
 
         {empty && !partial && <DropZone onFile={addFile} busy={busy} dragging={dragging} error={error} />}
 
         {files && files.length > 0 && !partial && (
           <>
-            <div className="flex flex-wrap items-stretch gap-2">
-              <FileSwitcher
-                files={files}
-                selectedId={file?.id}
-                onSelect={(id) => go(id, null)}
-                onRemove={dropFile}
-                onFile={addFile}
-                busy={working}
-              />
+            <FilmBar files={files} selectedId={file?.id} onSelect={(id) => { setEditingSheets(false); go(id, null); }} onRemove={dropFile}>
               {/* A film loaded before the page read Drive folders has no client to
-                  read again from; it is loaded afresh from the picker instead. */}
+                  read again from; it is loaded afresh from Add film instead. */}
               {file?.source?.clientId && (
                 <button
                   onClick={refresh}
                   disabled={working}
                   title={`Read from Google at ${readAt(lastRead)}`}
-                  className="press ml-auto flex items-center gap-2 px-4 rounded-xl bg-white border border-[#dce4ec] hover:border-[#12a0e1] text-sm font-bold text-[#122027] transition-colors disabled:opacity-60 min-h-[52px]"
+                  className="press flex items-center gap-2 px-4 py-2.5 rounded-xl bg-white border border-[#dce4ec] hover:border-[#12a0e1] shadow-sm text-sm font-bold text-[#122027] transition-colors disabled:opacity-60"
                 >
                   {refreshing ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />}
                   {refreshing
@@ -257,11 +315,33 @@ export default function OrderForms({ wrikeData }) {
                     : `Refresh${market ? ` ${market.name}` : ""} · read at ${readAt(lastRead)}`}
                 </button>
               )}
-            </div>
+            </FilmBar>
             {error && <p role="alert" className="text-sm font-medium text-rose-600">{error}</p>}
             {market
-              ? <MarketView market={market} kind={market.kind || file.kind} filmTitle={filmTitleOf(file)} clientId={file.source?.clientId} onChanged={refresh} today={today} wrikeIndex={wrikeIndex} wrikeParents={wrikeParents} onBack={() => go(file.id, null)} />
-              : <MarketList file={file} today={today} wrikeIndex={wrikeIndex} onOpen={(name) => go(file.id, name)} />}
+              ? <MarketView market={market} kind={market.kind || file.kind} filmTitle={filmTitleOf(file)} clientId={file.source?.clientId} filmKey={file.source?.filmKey} onChanged={refresh} today={today} matcher={matcher} wrikeParents={wrikeParents} decide={decideFor(file, market.name)} onBack={() => go(file.id, null)} />
+              : (
+                <MarketList
+                  file={shown}
+                  today={today}
+                  matcher={matcher}
+                  onOpen={(name) => go(file.id, name)}
+                  // A film read from Google can be corrected across its markets
+                  // from here. The sheets are read again with Refresh.
+                  actions={file.source?.clientId && (
+                    <button
+                      onClick={() => setEditingSheets((v) => !v)}
+                      aria-expanded={editingSheets}
+                      className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl border text-sm font-bold transition-colors ${
+                        editingSheets ? "bg-[#122027] border-[#122027] text-white" : "bg-white border-[#dce4ec] text-[#122027] hover:border-[#12a0e1]"
+                      }`}
+                    >
+                      <PencilLine className="w-3.5 h-3.5" />
+                      {editingSheets ? "Done editing" : "Edit sheets"}
+                    </button>
+                  )}
+                  panel={editingSheets && file.source?.clientId && <Corrections bare clientId={file.source.clientId} filmKey={file.source.filmKey} />}
+                />
+              )}
           </>
         )}
       </div>

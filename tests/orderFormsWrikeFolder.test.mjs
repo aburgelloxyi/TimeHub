@@ -34,3 +34,7 @@ check("no markets folder for the medium",
   planMarketFolder(tree({ print: { id: "print", title: "Print", childIds: [] } }), { filmTitle: "Forgotten Island", kind: "print", marketName: "Bulgaria" }).ok, false);
 check("two markets folders: refuses instead of picking",
   plan({ marketName: "Bulgaria" }, tree({ digital: { id: "digital", title: "Digital", childIds: ["dm", "dm2"] }, dm2: { id: "dm2", title: "XY9_INTL_DIGITAL_Outdoor_Campaign_Markets", childIds: [] } })).ok, false);
+
+check("a film punctuated differently in Wrike is still found",
+  planMarketFolder(tree({ film: { id: "film", title: "Focker In-Law", childIds: ["digital", "print"] } }), { filmTitle: "Focker In Law", kind: "motion", marketName: "Slovakia (SVK)" }).film,
+  "Focker In-Law");

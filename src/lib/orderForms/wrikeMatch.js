@@ -1,6 +1,7 @@
 // Is this order already a task in Wrike? Read-only: it compares the name the
 // sheet builds for an order with the titles of the Wrike tasks TimeHub has
 // already loaded. Nothing is sent anywhere and nothing in Wrike changes.
+// makeMatcher (below) is what the screens use.
 //
 // It can only say yes. The shared cache keeps what is assigned to a team with
 // a board and the subtasks under those (see keepForCache), so a task that
@@ -77,5 +78,136 @@ export function taskSummary(task, parent) {
   };
 }
 
-export const countInWrike = (index, orders) =>
-  index?.size ? orders.filter((o) => findTask(index, o)).length : 0;
+
+// Wrike strips nothing from this; the cached copy of a task just doesn't carry it.
+export const taskLink = (task) => task?.permalink || (task?.id ? `https://www.wrike.com/open.htm?id=${task.id}` : "");
+
+// ── Close matches ─────────────────────────────────────────────────────────────
+// A task is rarely named exactly as the sheet builds it: a size is briefed with
+// a typo, a word is added, the creative changes after the order went in. So
+// when no task has the order's exact name, the nearest one for the same film
+// and market is offered as a close match, and labelled as one.
+
+const parts = (title) => taskKey(title).split("_").filter(Boolean);
+
+// "118,5x175cm" and "118.5 x 175 CM" are the same size.
+const sizeOf = (token) => {
+  const found = /^(\d+(?:[.,]\d+)?)x(\d+(?:[.,]\d+)?)/.exec(token);
+  return found ? `${found[1].replace(",", ".")}x${found[2].replace(",", ".")}` : "";
+};
+
+function editDistance(a, b, max) {
+  if (Math.abs(a.length - b.length) > max) return max + 1;
+  let prev = Array.from({ length: b.length + 1 }, (_, i) => i);
+  for (let i = 1; i <= a.length; i++) {
+    const row = [i];
+    for (let j = 1; j <= b.length; j++) {
+      row[j] = Math.min(prev[j] + 1, row[j - 1] + 1, prev[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
+    }
+    prev = row;
+  }
+  return prev[b.length];
+}
+
+// The same word, allowing for a slip: one wrong character in a word of four or
+// more, two in one of eight or more. Short codes (OOH, RGB, HU) must be exact.
+function sameToken(a, b) {
+  if (a === b) return true;
+  const size = sizeOf(a);
+  if (size && size === sizeOf(b)) return true;
+  const allowed = Math.min(a.length, b.length) >= 8 ? 2 : Math.min(a.length, b.length) >= 4 ? 1 : 0;
+  return allowed > 0 && editDistance(a, b, allowed) <= allowed;
+}
+
+// 0 to 1: how much of two names is the same words, wherever they sit.
+export function titleSimilarity(a, b) {
+  const left = parts(a);
+  const right = [...parts(b)];
+  if (!left.length || !right.length) return 0;
+  let shared = 0;
+  for (const token of left) {
+    const at = right.findIndex((other) => sameToken(token, other));
+    if (at === -1) continue;
+    right.splice(at, 1);
+    shared++;
+  }
+  return (2 * shared) / (left.length + parts(b).length);
+}
+
+// Close enough to offer: one word of a typical name changed or added still
+// passes, two changed does not.
+const CLOSE = 0.75;
+
+// A name's film code and market code, its first and last words. Close matches
+// are only looked for among tasks that share both.
+const bucketOf = (title) => {
+  const tokens = parts(title);
+  return tokens.length >= 4 ? `${tokens[0]}|${tokens[tokens.length - 1]}` : "";
+};
+
+const orderTitle = (order) => order.xyi?.title || order.deliveryName || "";
+
+// What identifies an order between reads of its sheet, for the things a PM
+// decides about it here (set aside, matched by hand). The row is part of it
+// because a market can order the same thing twice; if rows move, the decision
+// lapses and the order shows as undecided again, which is the safe way round.
+export const orderKey = (order) => `${order.tab || ""}|${order.row}|${taskKey(orderTitle(order))}`;
+
+// Everything the screens need to match orders to the Wrike tasks TimeHub has
+// loaded. `match(orders, links)` returns, per order, { task, how } or null,
+// where `how` is "exact", "close" or "chosen". `links` is what a PM has set by
+// hand: { orderKey: taskId }, or "none" for "this isn't in Wrike".
+// A task is given to one order only, exact names first, then the closest.
+export function makeMatcher(tasks) {
+  const exact = indexTasks(tasks);
+  const byId = new Map((tasks || []).map((t) => [t.id, t]));
+  const buckets = new Map();
+  for (const task of tasks || []) {
+    const bucket = bucketOf(task?.title);
+    if (!bucket) continue;
+    if (!buckets.has(bucket)) buckets.set(bucket, []);
+    buckets.get(bucket).push(task);
+  }
+
+  // Tasks for the same film and market, nearest name first.
+  const candidates = (order) =>
+    (buckets.get(bucketOf(orderTitle(order))) || [])
+      .map((task) => ({ task, score: titleSimilarity(orderTitle(order), task.title) }))
+      .sort((a, b) => b.score - a.score);
+
+  const match = (orders, links = {}) => {
+    const result = orders.map(() => null);
+    const taken = new Set();
+    const give = (i, task, how) => { result[i] = { task, how }; taken.add(task.id); };
+    const decided = new Set();
+
+    orders.forEach((order, i) => {
+      const link = links[orderKey(order)];
+      if (!link) return;
+      decided.add(i);
+      const task = link === "none" ? null : byId.get(link);
+      if (task) give(i, task, "chosen");
+    });
+    orders.forEach((order, i) => {
+      if (decided.has(i)) return;
+      const task = findTask(exact, order);
+      if (task && !taken.has(task.id)) give(i, task, "exact");
+    });
+
+    const offers = [];
+    orders.forEach((order, i) => {
+      if (decided.has(i) || result[i]) return;
+      for (const { task, score } of candidates(order)) {
+        if (score < CLOSE) break;
+        if (!taken.has(task.id)) offers.push({ i, task, score });
+      }
+    });
+    offers.sort((a, b) => b.score - a.score);
+    for (const { i, task } of offers) {
+      if (!result[i] && !taken.has(task.id)) give(i, task, "close");
+    }
+    return result;
+  };
+
+  return { match, candidates, size: exact.size };
+}

@@ -69,3 +69,17 @@ check("a request XYi hasn't ticked yet: the market is at request received",
   [s([order("requested"), order("confirmed")]).status, s([order("requested"), order("pending")]).status, s([order("requested")]).requested],
   ["requested", "requested", 1]);
 check("a request past its deadline is overdue", orderUrgency(order("requested", "2026-10-06"), TODAY), "overdue");
+
+// ── Rows set aside ────────────────────────────────────────────────────────────
+{
+  const { applySetAside } = await import("../src/lib/orderForms/status.js");
+  const { orderKey } = await import("../src/lib/orderForms/wrikeMatch.js");
+  const o = (row) => ({ tab: "T", row, status: "pending", deliveryDeadline: "2026-12-01", xyi: { title: "A_B_C_D" } });
+  const file = { markets: [{ name: "NZ", orders: [o(3), o(4), o(5)] }, { name: "AU", orders: [o(3)] }], ignored: { NZ: [orderKey(o(4))] } };
+  const shown = applySetAside(file);
+  check("a row set aside leaves the orders and is kept to one side", [shown.markets[0].orders.map((x) => x.row), shown.markets[0].setAside.map((x) => x.row)], [[3, 5], [4]]);
+  check("it stops counting", marketSummary(shown.markets[0], "2026-10-12").total, 2);
+  check("other markets are untouched, even with the same row", shown.markets[1].orders.length, 1);
+  check("the file as read is not changed", file.markets[0].orders.length, 3);
+  check("nothing set aside: the same file", applySetAside({ markets: [] }).markets, []);
+}

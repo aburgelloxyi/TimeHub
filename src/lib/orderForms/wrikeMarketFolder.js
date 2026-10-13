@@ -14,6 +14,22 @@ import { marketFlag } from "../../components/orderForms/format";
 const norm = (s) => String(s || "").toLowerCase().replace(/[^\p{L}\p{N}]+/gu, " ").trim();
 const bareName = (market) => String(market || "").replace(/\s*\([^)]*\)\s*$/, "").trim();
 
+// The film in Wrike. Its folder there isn't always punctuated the way the
+// order sheets name it ("Focker In-Law" for "Focker In Law"), so when the name
+// as given finds nothing, folders whose letters and digits are the same are
+// tried.
+const lettersOnly = (s) => String(s || "").toLowerCase().replace(/[^\p{L}\p{N}]+/gu, "");
+function findFilm(byId, filmTitle) {
+  const asGiven = findFilmLocation(byId, filmTitle);
+  if (asGiven || !lettersOnly(filmTitle)) return asGiven;
+  const spellings = [...new Set(Object.values(byId).filter((f) => lettersOnly(f.title) === lettersOnly(filmTitle)).map((f) => f.title))];
+  for (const title of spellings) {
+    const found = findFilmLocation(byId, title);
+    if (found) return found;
+  }
+  return null;
+}
+
 const MARKETS_FOLDER = { motion: /_INTL_DIGITAL_Outdoor_Campaign_Markets$/i, print: /_INTL_PRINT_Outdoor_Campaign_Markets$/i };
 
 // Pure. `byId` is the Wrike folder tree (fetchAllFolders). Returns
@@ -21,7 +37,7 @@ const MARKETS_FOLDER = { motion: /_INTL_DIGITAL_Outdoor_Campaign_Markets$/i, pri
 // exactly one, and otherwise where it goes, what it would be called, and the
 // folder already there for this market if there is one.
 export function planMarketFolder(byId, { filmTitle, kind, marketName }) {
-  const location = findFilmLocation(byId, filmTitle);
+  const location = findFilm(byId, filmTitle);
   if (!location) return { ok: false, reason: `No film called "${filmTitle}" was found in Wrike.` };
 
   const wanted = MARKETS_FOLDER[kind] || MARKETS_FOLDER.motion;

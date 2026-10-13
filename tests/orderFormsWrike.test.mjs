@@ -1,4 +1,4 @@
-import { taskKey, indexTasks, indexParents, findTask, countInWrike, taskSummary } from "../src/lib/orderForms/wrikeMatch.js";
+import { taskKey, indexTasks, indexParents, findTask, taskSummary, makeMatcher, titleSimilarity, orderKey, taskLink } from "../src/lib/orderForms/wrikeMatch.js";
 
 // The sheet leaves a doubled underscore where the site name is empty; the task
 // a PM makes from it has one.
@@ -31,12 +31,6 @@ check("a vague name matches nothing even if a task has it", findTask(indexTasks(
 check("no tasks loaded", findTask(indexTasks([]), order("SF_INTL_Trio_DOOH__1632x832px_30s_KZ")), null);
 check("no index at all", findTask(null, order("SF_INTL_Trio_DOOH__1632x832px_30s_KZ")), null);
 
-check("count per market", countInWrike(index, [
-  order("SF_INTL_Trio_DOOH__1632x832px_30s_KZ"),
-  order("SF_INTL_Trio_DOOH__1760x448px_20s_KZ"),
-  order("SF_INTL_Trio_DOOH__512x1536px_8s_KZ"),
-]), 2);
-check("count with nothing loaded", countInWrike(indexTasks([]), [order("SF_INTL_Trio_DOOH__1632x832px_30s_KZ")]), 0);
 
 // People and dates usually sit on the parent task, not the per-size subtask.
 const hub = { id: "P", title: "SF Motion Outdoor Bespoke KZ", subTaskIds: ["S"], assignees: "James C., AM T.", dates: { due: "2026-10-08T17:00:00" } };
@@ -55,3 +49,38 @@ check("undated subtask takes the parent's date", taskSummary({ ...sub, dates: {}
 check("no parent loaded", taskSummary(sub, undefined), {
   assignees: "", assigneesFromParent: false, due: "2026-10-07", dueFromParent: false, parentDue: "",
 });
+
+// ── Close and hand-chosen matches ─────────────────────────────────────────────
+{
+  const o = (title, row = 1) => ({ tab: "T", row, xyi: { title }, deliveryName: "" });
+  const hu = [
+    { id: "ex", title: "EBZR_INTL_CandleSmoke_DINTH_LED_3840x600px_RGB_HU" },
+    { id: "typo", title: "EBZR_INTL_CandleSmoke_OOH_CLP_118.5x157cm_CMYK_HU" },
+    { id: "word", title: "EBZR_INTL_CandleSmoke_INTH_Panaflex_Foyer_280x180cm_CMYK_HU" },
+    { id: "art", title: "EBZR_INTL_Eyes_DOOH_LED_2304x432px_RGB_HU" },
+    { id: "hr", title: "EBZR_INTL_CandleSmoke_OOH_CLP_118.5x175cm_CMYK_HR" },
+  ];
+  const m = makeMatcher(hu);
+  const how = (orders, links) => m.match(orders, links).map((r) => (r ? `${r.task.id}:${r.how}` : null));
+
+  check("exact name", how([o("EBZR_INTL_CandleSmoke_DINTH_LED_3840x600px_RGB_HU")]), ["ex:exact"]);
+  check("a size briefed with a typo is a close match", how([o("EBZR_INTL_CandleSmoke_OOH_CLP_118.5x175cm_CMYK_HU")]), ["typo:close"]);
+  check("a word added to the task is a close match", how([o("EBZR_INTL_CandleSmoke_INTH_Panaflex_280x180cm_CMYK_HU")]), ["word:close"]);
+  check("a changed creative is a close match", how([o("EBZR_INTL_CandleSmoke_DOOH_LED_2304x432px_RGB_HU")]), ["art:close"]);
+  check("never another market's task", how([o("EBZR_INTL_CandleSmoke_OOH_CLP_118.5x175cm_CMYK_AT")]), [null]);
+  check("a different size and placement is not close", how([o("EBZR_INTL_CandleSmoke_FOH_Standee_100x200cm_CMYK_HU")]), [null]);
+  check("one task goes to one order: the exact name keeps it, the near one goes without",
+    how([o("EBZR_INTL_CandleSmoke_DINTH_LED_3840x600px_RGB_HU", 1), o("EBZR_INTL_CandleSmoke_DINTH_LED_3840x610px_RGB_HU", 2)]),
+    ["ex:exact", null]);
+
+  const order = o("EBZR_INTL_CandleSmoke_OOH_CLP_118.5x175cm_CMYK_HU", 4);
+  check("chosen by hand wins", how([order], { [orderKey(order)]: "art" }), ["art:chosen"]);
+  check("marked as not in Wrike: no close match offered", how([order], { [orderKey(order)]: "none" }), [null]);
+  check("candidates: same film and market, nearest first", m.candidates(order).map((c) => c.task.id)[0], "typo");
+  check("candidates never include another market", m.candidates(order).some((c) => c.task.id === "hr"), false);
+
+  check("sizes written differently are the same", titleSimilarity("A_B_118,5x175_C", "A_B_118.5x175cm_C"), 1);
+  check("the key moves with the row", orderKey(o("X_Y_Z_W", 4)) === orderKey(o("X_Y_Z_W", 5)), false);
+  check("a cached task still has a link", [taskLink({ id: "IEAB" }), taskLink({ id: "IEAB", permalink: "https://x/y" }), taskLink(null)],
+    ["https://www.wrike.com/open.htm?id=IEAB", "https://x/y", ""]);
+}

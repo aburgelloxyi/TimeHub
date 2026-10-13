@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from "react";
-import { X, Shield, CheckCircle, AlertCircle, Zap, Eye, RefreshCw } from "lucide-react";
+import { X, Shield, CheckCircle, AlertCircle, Zap, Eye, RefreshCw, Bell } from "lucide-react";
+import { notify } from "../lib/toast";
 import { supabase } from "../lib/supabaseClient";
 import { useDepartmentPreviewState, setDepartmentPreview } from "../hooks/useDepartment";
 import { isServiceAccount, hasLeft } from "../lib/people";
@@ -110,6 +111,21 @@ export default function AdminModal({ onClose, syncNow, isSyncing = false, lastSy
               {isSyncing ? "Syncing Wrike…" : "Sync Wrike now"}
             </button>
           )}
+          {/* What Client Orders shows when a colleague changes a shared film.
+              A real one needs a second person, so this is the only way to see
+              how it looks alone. The wording is the same; the names are made up. */}
+          <button
+            onClick={() => notify(
+              "Keeley Jones refreshed Paramount · Focker In Law · Print: Slovakia (SVK), 2 new · 1 confirmed.",
+              "info",
+              { action: { label: "View", onClick: () => { window.location.hash = "#orderforms"; onClose(); } } }
+            )}
+            title="Shows a sample of the toast Client Orders gives when a colleague changes a shared film."
+            className="flex items-center gap-1.5 text-[11px] font-black text-[#122027] bg-white border border-[#dce4ec] hover:border-[#12a0e1] rounded-full px-3 py-1.5 transition-colors"
+          >
+            <Bell className="w-3 h-3 text-[#12a0e1]" />
+            Preview a team toast
+          </button>
           {syncNow && !isSyncing && syncError && (
             <span className="flex items-center gap-1 text-[10px] font-bold text-red-500">
               <AlertCircle className="w-3 h-3" /> {String(syncError.message || syncError)}

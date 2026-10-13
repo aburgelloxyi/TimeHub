@@ -33,6 +33,12 @@ export default function OrderDetail({ order, task, how, parent, today, matching,
   const wrike = task ? taskSummary(task, parent) : null;
   const x = order.xyi || {};
   const wrikeTitle = x.title || order.deliveryName;
+  // Candidates are tasks whose names end in the same code as this order's.
+  // That code is the sheet's, and isn't always the country: Belgium's Dutch
+  // rows end in NL, as the Netherlands' tasks do. The heading says what was
+  // looked for, not that the tasks are this market's.
+  const marketCode = String(wrikeTitle || "").trim().split(/[\s_]+/).pop().toUpperCase();
+  const candidatesHeading = marketCode ? `Tasks for this film ending in ${marketCode}` : "Tasks for this film";
 
   return (
     <div className="grid grid-cols-1 lg:grid-cols-3 gap-x-8 gap-y-5 px-5 py-5 bg-slate-50/60">
@@ -113,13 +119,13 @@ export default function OrderDetail({ order, task, how, parent, today, matching,
               items={[
                 { id: "auto", label: "Match automatically" },
                 { id: "none", label: "Not in Wrike" },
-                ...matching.candidates.map(({ task: t }) => ({ id: t.id, label: t.title, group: "Tasks for this film and market" })),
+                ...matching.candidates.map(({ task: t }) => ({ id: t.id, label: t.title, group: candidatesHeading })),
               ]}
               value={matching.link || "auto"}
               onChange={(id) => matching.onLink(id === "auto" ? null : id)}
             />
             {matching.candidates.length === 0 && (
-              <span className="block text-[11px] text-[#768994] mt-1">TimeHub has no tasks loaded for this film and market.</span>
+              <span className="block text-[11px] text-[#768994] mt-1">TimeHub has no tasks loaded for this film ending in {marketCode || "this market's code"}.</span>
             )}
           </div>
         )}

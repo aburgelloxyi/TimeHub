@@ -435,7 +435,7 @@ export default function MarketView({ market, kind, filmTitle, clientId, filmKey,
   };
 
   return (
-    <div className="bg-white border border-[#dce4ec] rounded-2xl shadow-sm overflow-hidden">
+    <div className="view-in bg-white border border-[#dce4ec] rounded-2xl shadow-sm overflow-hidden">
       <div className="flex flex-wrap items-center gap-3 px-5 py-4 border-b border-[#dce4ec]">
         <nav aria-label="Where you are" className="flex items-center gap-1.5 min-w-0">
           <button
@@ -705,7 +705,8 @@ export default function MarketView({ market, kind, filmTitle, clientId, filmKey,
                     <tr
                       onClick={() => { if (!editing) toggleRow(i); setSelected(i); }}
                       title={editing ? undefined : "Open this order's details"}
-                      className={`group ${editing ? "" : "cursor-pointer"} ${open ? "bg-[#12a0e1]/10" : "hover:bg-slate-50"}`}
+                      style={{ "--i": i }}
+                      className={`list-row-in group ${editing ? "" : "cursor-pointer"} ${open ? "bg-[#12a0e1]/10" : "hover:bg-slate-50"}`}
                     >
                       <td className="px-3 py-2 border-b border-slate-100">
                         <span className="flex items-center gap-2">

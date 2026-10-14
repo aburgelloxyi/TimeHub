@@ -205,3 +205,12 @@ check("a request past its deadline is overdue", orderUrgency(order("requested", 
     [filmDelivered(film, says({ 1: "Delivered", 2: "Delivered", 3: "Delivered" })), filmDelivered(film, says({ 1: "Delivered", 2: "Delivering", 3: "Delivered" })), filmDelivered({ id: "e", markets: [] }, says({}))],
     [true, false, false]);
 }
+
+// Folders that aren't markets, in a film saved before they were skipped.
+{
+  const { applySetAside } = await import("../src/lib/orderForms/status.js");
+  const film = { id: "f", markets: [{ name: "Chile (CHI)", orders: [] }, { name: "Copy of _StandardSizes", orders: [] }, { name: "AA_Test_Market", orders: [] }] };
+  check("a saved film shows only its markets", applySetAside(film).markets.map((m) => m.name), ["Chile (CHI)"]);
+  const clean = { id: "g", markets: [{ name: "Chile (CHI)", orders: [] }] };
+  check("and a film with nothing to leave out is passed through as it is", applySetAside(clean) === clean, true);
+}

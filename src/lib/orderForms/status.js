@@ -3,6 +3,7 @@
 // re-loading anyone's files.
 
 import { orderKey, taskKey } from "./wrikeMatch";
+import { isTestFolder } from "./driveTree";
 
 const DUE_SOON_DAYS = 7;
 
@@ -10,11 +11,16 @@ const DUE_SOON_DAYS = 7;
 // has set aside (file.ignored, by market), which are kept on `setAside` so the
 // market's page can list them underneath. The sheet is untouched; this only
 // decides what counts here.
+//
+// Folders that aren't markets (isTestFolder) are left out too: a film saved
+// before they were skipped at load still holds them until it is refreshed.
 export function applySetAside(file) {
-  if (!file?.ignored) return file;
+  if (!file) return file;
+  const markets = (file.markets || []).filter((m) => !isTestFolder(m.name));
+  if (!file.ignored) return markets.length === (file.markets || []).length ? file : { ...file, markets };
   return {
     ...file,
-    markets: file.markets.map((m) => {
+    markets: markets.map((m) => {
       const keys = new Set(file.ignored[m.name] || []);
       if (!keys.size || m.unreadable) return m;
       return {

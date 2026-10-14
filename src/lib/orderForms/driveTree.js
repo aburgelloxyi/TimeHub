@@ -24,9 +24,18 @@ export function sheetFilm(fileName) {
   return { film: found[1].trim(), medium: /print/i.test(found[2]) ? "print" : "motion" };
 }
 
-// A folder the clients keep beside the markets for trying things out
-// ("AA_Test_Market"). Not a market: it is left out of every film.
-export const isTestFolder = (folderName) => /(^|[^a-z])test([^a-z]|$)/i.test(String(folderName ?? ""));
+// A folder the clients keep beside the markets that isn't one: for trying
+// things out ("AA_Test_Market"), a working copy ("Copy of _StandardSizes"),
+// or a template or reference sheet, which they start with an underscore.
+// Left out of every film. Markets are named for their country with its code
+// ("Chile (CHI)"), so none of these patterns is one.
+export const isTestFolder = (folderName) => {
+  const name = String(folderName ?? "").trim();
+  return /(^|[^a-z])test([^a-z]|$)/i.test(name)
+    || /^copy of\b/i.test(name)
+    || /^_/.test(name)
+    || /template|standard\s*sizes/i.test(name);
+};
 
 // "BULGARIA (BG)" → "Bulgaria (BG)". Names already in mixed case are kept.
 export function marketName(folderName) {

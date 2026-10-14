@@ -1,7 +1,8 @@
 import { sheetFilm, marketName, filmsIn, clientFor, driveStaleness, isTestFolder } from "../src/lib/orderForms/driveTree.js";
 
 check("the clients' test folder isn't a market", ["AA_Test_Market", "TEST", "zz test market"].map(isTestFolder), [true, true, true]);
-check("a market is never taken for one", ["Greece (GR)", "LATEST", "Contest (XX)", "Germany (GER)"].map(isTestFolder), [false, false, false, false]);
+check("nor are working copies, templates and reference sheets", ["Copy of _StandardSizes", "_StandardSizes", "Copy of Chile (CHI)", "Order form TEMPLATE"].map(isTestFolder), [true, true, true, true]);
+check("a market is never taken for one", ["Greece (GR)", "LATEST", "Contest (XX)", "Germany (GER)", "Chile (CHI)", "Côte d'Ivoire (CIV)"].map(isTestFolder), [false, false, false, false, false, false]);
 import { marketFromSheets } from "../src/lib/orderForms/parseWorkbook.js";
 
 // ── A sheet's film and medium ─────────────────────────────────────────────────

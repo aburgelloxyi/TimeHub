@@ -55,9 +55,11 @@ function Marked({ text, words }) {
     i % 2 ? <mark key={i} className="bg-[#12a0e1]/15 text-inherit rounded-sm">{part}</mark> : <React.Fragment key={i}>{part}</React.Fragment>);
 }
 
-export function SearchResults({ query, result, groups, films, today, linkTo }) {
+// `compact` is the header's narrower panel: the task name gets the room the
+// site and sheet status columns would take, and the panel itself is the card.
+export function SearchResults({ query, result, groups, films, today, linkTo, compact = false }) {
   const words = query.toLowerCase().split(/\s+/).filter((w) => w.length > 1);
-  const card = "bg-white border border-[#dce4ec] rounded-2xl shadow-sm overflow-hidden";
+  const card = compact ? "bg-white" : "bg-white border border-[#dce4ec] rounded-2xl shadow-sm overflow-hidden";
   if (!result.total) {
     return (
       <motion.p initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} className={`${card} px-6 py-10 text-center text-sm text-[#768994]`}>
@@ -104,11 +106,11 @@ export function SearchResults({ query, result, groups, films, today, linkTo }) {
                   <span className="flex-1 min-w-0 truncate font-mono text-xs text-[#122027]" title={o.xyi?.title || o.deliveryName}>
                     <Marked text={o.xyi?.title || o.deliveryName || [o.placement, o.siteName].filter(Boolean).join(" · ") || `Row ${o.row}`} words={words} />
                   </span>
-                  {o.siteName && <span className="hidden lg:block w-36 shrink-0 truncate text-xs text-[#768994]"><Marked text={o.siteName} words={words} /></span>}
+                  {o.siteName && !compact && <span className="hidden lg:block w-36 shrink-0 truncate text-xs text-[#768994]"><Marked text={o.siteName} words={words} /></span>}
                   <span className={`w-16 shrink-0 text-right text-xs tabular-nums ${h.urgency ? `font-bold ${URGENCY_TEXT[h.urgency]}` : "text-[#768994]"}`}>
                     {formatDay(o.deliveryDeadline, today)}
                   </span>
-                  <span className="hidden sm:block w-24 shrink-0"><span className={`${pillClass} ${STATUS_CLASS[o.status] || ""}`}>{STATUS_LABEL[o.status] || o.status}</span></span>
+                  {!compact && <span className="hidden sm:block w-24 shrink-0"><span className={`${pillClass} ${STATUS_CLASS[o.status] || ""}`}>{STATUS_LABEL[o.status] || o.status}</span></span>}
                   <span className="w-28 shrink-0 text-right">
                     {h.task ? (
                       <span className={`${pillClass} max-w-full gap-1 ${styleFor(h.wrikeStatus, "").pill}`}>

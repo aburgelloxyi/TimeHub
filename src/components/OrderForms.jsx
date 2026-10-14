@@ -4,6 +4,7 @@ import PageHeader from "./shared/PageHeader";
 import DropZone from "./orderForms/DropZone";
 import FilmBar from "./orderForms/FilmBar";
 import GoogleSource, { googleMessage } from "./orderForms/GoogleSource";
+import HeaderSearch from "./orderForms/HeaderSearch";
 import MarketList from "./orderForms/MarketList";
 import MarketView from "./orderForms/MarketView";
 import Corrections from "./orderForms/Corrections";
@@ -366,7 +367,10 @@ export default function OrderForms({ wrikeData }) {
         title="Client Orders"
         subtitle="Market orders at a glance"
       >
-        {googleConfigured() && <GoogleButton />}
+        <div className="flex items-center gap-2">
+          {files?.length > 0 && <HeaderSearch files={files} matcher={matcher} today={today} />}
+          {googleConfigured() && <GoogleButton />}
+        </div>
       </PageHeader>
 
       <input

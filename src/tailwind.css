@@ -212,6 +212,11 @@ html.theme-revealing::view-transition-new(root) { animation: themeReveal 480ms v
 .scrollbar-thin::-webkit-scrollbar-thumb:hover {
   background-color: #97a5b1;
 }
+/* A thin scrollbar inside a rounded panel: the track stops short of the
+   corners, so the thumb never runs into the curve. */
+.scrollbar-inset::-webkit-scrollbar-track {
+  margin-block: 14px;
+}
 /* Riccardo's Slate sits on dark ink — a light-grey thumb there reads as
    correct only against white; give it its own tone in that context. */
 .scrollbar-thin-dark {

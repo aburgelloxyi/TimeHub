@@ -369,36 +369,65 @@ export default function MarketView({ market, kind, filmTitle, clientId, filmKey,
     setEditing(false);
   };
 
-  // Writes the links found in Wrike into the sheet's Delivery Link column,
-  // after showing which rows get one. Empty cells only (planDeliveryFill).
-  const fillDeliveryLinks = async () => {
-    if (!market.sheetId) return notify("Refresh this market first, so its sheet can be written to from here.");
-    if (!market.sheetNative) return notify("This market's sheet is an Excel file, not a Google Sheet, so it can't be written to from here.");
-    const rows = fill.changes;
-    const ok = await confirmAction({
-      title: `Fill ${rows.length} delivery ${rows.length === 1 ? "link" : "links"} in ${market.name}'s sheet?`,
-      message: `${rows.slice(0, 6).map((c) => `Row ${c.row} (${c.cell}): ${c.to}`).join("\n")}${rows.length > 6 ? `\nand ${rows.length - 6} more` : ""}${fill.kept ? `\n\n${fill.kept} ${fill.kept === 1 ? "row already holds" : "rows already hold"} something else and will be left alone.` : ""}\n\nThis writes to the sheet the market sees.`,
-      confirmLabel: "Fill",
-      danger: true,
-    });
-    if (!ok) return;
+  // Writes the links found in Wrike into the sheet's Delivery Link column.
+  // Empty cells only (planDeliveryFill), so nothing a person typed is ever
+  // replaced, and the toast offers an Undo instead of a confirm beforehand.
+  // `auto` is the fill a market does by itself as it opens (below): it never
+  // asks Google for access, so it stays quiet when it has none.
+  const filling = useRef(false);
+  const fillDeliveryLinks = async (rows = fill.changes, { auto = false } = {}) => {
+    if (!market.sheetId) return auto || notify("Refresh this market first, so its sheet can be written to from here.");
+    if (!market.sheetNative) return auto || notify("This market's sheet is an Excel file, not a Google Sheet, so it can't be written to from here.");
+    if (filling.current || !rows.length) return;
+    filling.current = true;
     setApplying(true);
+    const sheetId = market.sheetId;
+    const at = (list) => list.map((c) => ({ ...c, range: cellRange(c.tab, c.cell) }));
     try {
       if (!googleCanWrite()) await connectGoogleForWriting();
-      const result = await applyCellChanges(market.sheetId, rows.map((c) => ({ ...c, range: cellRange(c.tab, c.cell) })));
+      const result = await applyCellChanges(sheetId, at(rows));
+      if (!result.written && auto) return;
       notify(
-        `${result.written} delivery ${result.written === 1 ? "link" : "links"} filled in${result.changed ? `, ${result.changed} left alone because the sheet had been edited since it was read` : ""}`,
-        result.changed ? "error" : "success"
+        `${result.written} delivery ${result.written === 1 ? "link" : "links"} filled in from Wrike${result.changed ? `, ${result.changed} left alone because the sheet had been edited since it was read` : ""}`,
+        result.changed ? "error" : "success",
+        result.written ? {
+          action: {
+            label: "Undo",
+            // Puts back only cells that still hold the link just written.
+            onClick: () => applyCellChanges(sheetId, at(reversed(rows)))
+              .then((r) => { notify(`${r.written} ${r.written === 1 ? "link" : "links"} taken out again`, "success"); onChanged?.(); })
+              .catch((err) => notify(googleMessage(err))),
+          },
+        } : undefined
       );
       onChanged?.();
     } catch (err) {
+      if (auto) return;
       notify(err?.reason === "denied" ? "Google didn't grant edit access to spreadsheets, so nothing was written."
         : err?.reason === "no-access" ? "Your Google account can't edit this sheet."
         : googleMessage(err));
     } finally {
+      filling.current = false;
       setApplying(false);
     }
   };
+
+  // Links are filled by themselves when the market opens, or whenever Wrike
+  // has a new one, once this browser can write to Google Sheets (anyone who
+  // has applied an edit or filled links this session). Google only grants
+  // that from a click, so before then the Fill button does it. Each cell is
+  // tried once per page load, so a write the sheet refuses isn't retried in
+  // a loop.
+  const autoTried = useRef(new Set());
+  useEffect(() => {
+    if (!googleCanWrite() || editing || filling.current) return;
+    const rows = fill.changes.filter((c) => !autoTried.current.has(`${market.sheetId}|${c.tab}|${c.cell}|${c.to}`));
+    if (!rows.length) return;
+    rows.forEach((c) => autoTried.current.add(`${market.sheetId}|${c.tab}|${c.cell}|${c.to}`));
+    fillDeliveryLinks(rows, { auto: true });
+    // fillDeliveryLinks is rebuilt each render; the plan is what matters.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [fill, editing]);
 
   const applyEdits = async () => {
     const ok = await confirmAction({
@@ -624,8 +653,8 @@ export default function MarketView({ market, kind, filmTitle, clientId, filmKey,
                 Edit
               </button>
               {fill.changes.length > 0 && (
-                <HoverLabel label="Copy the delivery links on these orders' Wrike tasks into the sheet's Delivery Link column. You see the rows first.">
-                  <button onClick={fillDeliveryLinks} disabled={applying} className={`group ${sweepClass} ${linkButtonClass} disabled:opacity-60`}>
+                <HoverLabel label="Copy the delivery links on these orders' Wrike tasks into the sheet's empty Delivery Link cells. After the first time, markets you open fill them by themselves.">
+                  <button onClick={() => fillDeliveryLinks()} disabled={applying} className={`group ${sweepClass} ${linkButtonClass} disabled:opacity-60`}>
                     <Sweep />
                     {applying ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Link2 className="w-3.5 h-3.5 text-[#1cc1a5] transition-colors duration-300 group-hover/s:!text-white" />}
                     Fill {fill.changes.length} {fill.changes.length === 1 ? "link" : "links"}

@@ -17,7 +17,7 @@ import { HoverLabel } from "./shared/FloatingCard";
 import { loadFilm, loadMarketOf, listFilms } from "../lib/orderForms/loadFilm";
 import { clientFor, driveStaleness } from "../lib/orderForms/driveTree";
 import { makeMatcher, indexParents, orderKey } from "../lib/orderForms/wrikeMatch";
-import { applySetAside, fileChanges, marketChanges, mergeChanges, teamNews } from "../lib/orderForms/status";
+import { applySetAside, fileChanges, filmDelivered, marketChanges, mergeChanges, teamNews } from "../lib/orderForms/status";
 import { confirmAction } from "../lib/confirm";
 import { notify } from "../lib/toast";
 import { isoToday } from "../utils/dates";
@@ -79,6 +79,9 @@ export default function OrderForms({ wrikeData }) {
   const dragDepth = useRef(0);
   const today = isoToday();
   const matcher = useMemo(() => makeMatcher(wrikeData), [wrikeData]);
+  // Films whose every market is delivered in Wrike, for the film picker's ticks.
+  const deliveredFilms = useMemo(() => new Set((files || []).filter((f) => filmDelivered(f, (file, m) =>
+    matcher.match(m.orders, file.links?.[m.name], file.briefed?.[m.name], m.kind || file.kind))).map((f) => f.id)), [files, matcher]);
   const wrikeParents = useMemo(() => indexParents(wrikeData), [wrikeData]);
 
   // `local` is true when the shared store couldn't be reached and the page is
@@ -412,7 +415,7 @@ export default function OrderForms({ wrikeData }) {
 
         {files && files.length > 0 && !partial && (
           <>
-            <FilmBar files={files} selectedId={file?.id} onSelect={(id) => { setEditingSheets(false); go(id, null); }} onRemove={dropFile} staleness={stalenessOf} onAdd={() => setAdding((v) => !v)} adding={adding}>
+            <FilmBar files={files} selectedId={file?.id} onSelect={(id) => { setEditingSheets(false); go(id, null); }} onRemove={dropFile} staleness={stalenessOf} delivered={(f) => deliveredFilms.has(f.id)} onAdd={() => setAdding((v) => !v)} adding={adding}>
               {/* A film loaded before the page read Drive folders has no client to
                   read again from; it is loaded afresh with the plus beside the switcher. */}
               {file?.source?.clientId && (

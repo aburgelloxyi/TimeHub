@@ -151,6 +151,13 @@ const taskDone = (task) => taskDelivered(task) || taskCancelled(task);
 // the orders). `done` once every order's task is delivered or cancelled, with
 // at least one delivered: a cancelled order will never be delivered, and
 // shouldn't hold its market open for ever.
+// A whole film delivered: every market that has orders is (marketDelivery),
+// and there is at least one. `matchFor(file, market)` is the page's matching.
+export function filmDelivered(file, matchFor) {
+  const markets = (applySetAside(file)?.markets || []).filter((m) => !m.unreadable && m.orders?.length);
+  return markets.length > 0 && markets.every((m) => marketDelivery(matchFor(file, m), m.orders.length).done);
+}
+
 export function marketDelivery(matches, total) {
   const delivered = (matches || []).filter((m) => taskDelivered(m?.task)).length;
   const cancelled = (matches || []).filter((m) => taskCancelled(m?.task)).length;

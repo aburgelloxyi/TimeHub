@@ -1,6 +1,6 @@
 import React, { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { ChevronDown, Search, Trash2 } from "lucide-react";
+import { Check, ChevronDown, Search, Trash2 } from "lucide-react";
 import { HoverLabel } from "../shared/FloatingCard";
 
 // Client Orders' dropdown: a button that opens a list of rows, each a name
@@ -8,8 +8,9 @@ import { HoverLabel } from "../shared/FloatingCard";
 // group headings. Used for picking a film to load and for switching between
 // the films loaded, and for the dropdowns in a market's table.
 //
-// `items` are { id, label, tag, tagClass, note, alert, group }; `alert` is a
-// note that needs noticing, shown in place of `note`. `trigger` replaces the
+// `items` are { id, label, tag, tagClass, note, alert, group, done }; `alert`
+// is a note that needs noticing, shown in place of `note`; `done` puts a grey
+// tick before the name (a film delivered). `trigger` replaces the
 // default button with the caller's own, given ({ open, toggle }). `onRemove`
 // adds a remove button to each row. `compact` is the default button sized for
 // a table cell, and `changed` outlines it. `onOpen` is told when it opens.
@@ -162,6 +163,11 @@ export default function PickerMenu({
                         onClick={() => { onChange(item.id); setOpen(false); }}
                         className="flex-1 min-w-0 flex items-center gap-2 pl-4 pr-3 py-2 text-left"
                       >
+                        {item.done && (
+                          <span title="Delivered" className="w-4 h-4 shrink-0 flex items-center justify-center rounded-full bg-slate-400 text-white">
+                            <Check className="w-2.5 h-2.5" strokeWidth={3.5} />
+                          </span>
+                        )}
                         <span className={`text-sm truncate ${compact ? "" : "font-bold"} ${active ? "text-sky-600" : "text-[#122027]"}`}>{item.label}</span>
                         {item.tag && <span className={tagClass(item)}>{item.tag}</span>}
                         {item.alert

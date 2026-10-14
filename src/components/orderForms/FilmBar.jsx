@@ -1,5 +1,5 @@
 import React from "react";
-import { ChevronDown, ChevronRight, Film, Plus } from "lucide-react";
+import { Check, ChevronDown, ChevronRight, Film, Plus } from "lucide-react";
 import { motion } from "framer-motion";
 import PickerMenu from "./PickerMenu";
 import { CLIENTS, clientFor } from "../../lib/orderForms/driveTree";
@@ -31,7 +31,9 @@ const describe = (file) => {
 // `staleness(file)` says whether a film's sheets have left Drive (see
 // driveStaleness); those are marked in the list.
 // `onAdd` opens and closes the film loader (`adding` says which it is).
-export default function FilmBar({ files, selectedId, onSelect, onRemove, staleness, onAdd, adding = false, children }) {
+// `delivered(file)` says a film's every market is delivered (filmDelivered):
+// a grey tick in the list, and "Delivered" beside the one shown.
+export default function FilmBar({ files, selectedId, onSelect, onRemove, staleness, delivered, onAdd, adding = false, children }) {
   const current = files.find((f) => f.id === selectedId) || files[0];
   const now = describe(current);
   const twin = files.find((f) => f.id !== current.id && f.source?.clientId && f.source.clientId === current.source?.clientId
@@ -42,7 +44,7 @@ export default function FilmBar({ files, selectedId, onSelect, onRemove, stalene
   const items = files
     .map((file) => {
       const { client, film } = describe(file);
-      return { id: file.id, label: film, kind: file.kind, tag: MEDIUM[file.kind] || "Motion", tagClass: MEDIUM_CLASS[file.kind] || MEDIUM_CLASS.motion, note: loadedAgo(file.loadedAt), alert: staleNote(staleness?.(file)), group: client };
+      return { id: file.id, label: film, kind: file.kind, tag: MEDIUM[file.kind] || "Motion", tagClass: MEDIUM_CLASS[file.kind] || MEDIUM_CLASS.motion, note: loadedAgo(file.loadedAt), alert: staleNote(staleness?.(file)), done: !!delivered?.(file), group: client };
     })
     .sort((a, b) => studioRank(a.group) - studioRank(b.group) || a.label.localeCompare(b.label) || (a.kind === "motion" ? -1 : 1) - (b.kind === "motion" ? -1 : 1));
 
@@ -65,6 +67,12 @@ export default function FilmBar({ files, selectedId, onSelect, onRemove, stalene
             <span className="text-sm font-bold text-[#768994] shrink-0">{now.client}</span>
             <ChevronRight className="w-3.5 h-3.5 text-[#b6c3cc] shrink-0" />
             <span className="font-display text-lg font-bold tracking-tight leading-none text-[#122027] truncate">{now.film}</span>
+            {delivered?.(current) && (
+              <span className="flex items-center gap-1 px-1.5 py-0.5 rounded-md bg-slate-100 text-[10px] font-black uppercase tracking-wider text-slate-600 shrink-0">
+                <Check className="w-3 h-3" strokeWidth={3} />
+                Delivered
+              </span>
+            )}
             {files.length > 1 && <span className="px-1.5 py-0.5 rounded-full bg-slate-100 text-[10px] font-black text-[#768994] shrink-0">{files.length}</span>}
             <ChevronDown className={`w-4 h-4 text-[#768994] shrink-0 transition-transform duration-200 ${open ? "rotate-180" : ""}`} />
           </button>

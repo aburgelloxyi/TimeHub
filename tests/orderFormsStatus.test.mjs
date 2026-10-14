@@ -194,3 +194,14 @@ check("a request past its deadline is overdue", orderUrgency(order("requested", 
   const got = ordersByMarket([file], "2026-10-12", (f, m) => m.orders.map((_, i) => ({ task: { customStatusName: statuses[i] } })));
   check("delivering and prep for delivery still count; delivered and cancelled don't", got.dueSoon[0].orders.map((x) => x.row), [1, 2]);
 }
+
+// A whole film delivered.
+{
+  const { filmDelivered } = await import("../src/lib/orderForms/status.js");
+  const o = (row) => ({ tab: "T", row, status: "confirmed", xyi: { title: `A_${row}` } });
+  const film = { id: "f", markets: [{ name: "NZ", orders: [o(1), o(2)] }, { name: "AU", orders: [o(3)] }, { name: "FJ", orders: [] }] };
+  const says = (statuses) => (file, m) => m.orders.map((x) => ({ task: { customStatusName: statuses[x.row] } }));
+  check("a film is delivered when every market with orders is",
+    [filmDelivered(film, says({ 1: "Delivered", 2: "Delivered", 3: "Delivered" })), filmDelivered(film, says({ 1: "Delivered", 2: "Delivering", 3: "Delivered" })), filmDelivered({ id: "e", markets: [] }, says({}))],
+    [true, false, false]);
+}

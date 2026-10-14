@@ -342,13 +342,18 @@ html.dark-theme { --page-tint-strength: 0.14; }
 }
 html.dark-theme .glass-bar { background-color: rgb(var(--dk-raised-rgb) / 0.78); }
 
-/* Dark cards: the top edge a step lighter than the sides and a faint light
-   falling from it, as if lit from above. On a white card neither would show,
-   so the light theme is left as it is. */
+/* Dark cards: a faint light falling from the top edge, as if lit from above,
+   and (below) that edge a step lighter than the sides. On a white card
+   neither would show, so the light theme is left as it is. */
 html.dark-theme .bg-white.border:is(.rounded-2xl, .rounded-3xl):not([class*="bg-gradient"]) {
-  border-top-color: var(--dk-line-strong) !important;
   background-image: linear-gradient(to bottom, rgb(255 255 255 / 0.035), transparent 7rem);
   background-repeat: no-repeat;
+}
+/* The lighter top edge only on a card with the plain hairline. A card whose
+   border is a colour is saying something with it (the open Canvas tool is
+   outlined orange), and a grey top edge cut that outline off at the corners. */
+html.dark-theme .bg-white.border:is(.rounded-2xl, .rounded-3xl):is(.border-\[\#dce4ec\], .border-slate-200):not([class*="bg-gradient"]) {
+  border-top-color: var(--dk-line-strong) !important;
 }
 
 /* Light cards: lifted off the page by a tight contact shadow and a wide soft

@@ -14,7 +14,8 @@ export const STUDIOS = [
   { studio: "Warner",    client: "Warner Bros",        keywords: ["warner", "warnerbros", "wbros", "wb"] },
   { studio: "Netflix",   client: "Netflix",            keywords: ["netflix"] },
   { studio: "Apple",     client: "Apple",              keywords: ["apple"] },
-  { studio: "Amazon",    client: "Amazon",             keywords: ["amazon", "mgm"] },
+  // "amazonmgm": the studio folder is "AmazonMGM", one token, as with Warner.
+  { studio: "Amazon",    client: "Amazon",             keywords: ["amazon", "mgm", "amazonmgm"] },
   { studio: "Lionsgate", client: "Lionsgate",          keywords: ["lionsgate"] },
   { studio: "XYi",       client: "XYi Internal",       keywords: ["xyi"] },
 ];

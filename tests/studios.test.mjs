@@ -34,6 +34,7 @@ const dict = (...fs) => Object.fromEntries(fs.map((f) => [f.id, f]));
   check('"MWB_INTL" is not Warner', studioNameOf("MWB_INTL__Digital_1Sheets_UK"), null);
   check('"NEWBUILD" is not Warner', studioNameOf("NEWBUILD"), null);
   check("a bare WB folder still is Warner", studioNameOf("WB Assets"), "Warner");
+  check("the studio folders written as one word", ["AmazonMGM", "WarnerBros_Archive", "Amazon_MGM"].map(studioNameOf), ["Amazon", "Warner", "Amazon"]);
 }
 
 // ── one list, so the two sides cannot disagree ──────────────────────────────

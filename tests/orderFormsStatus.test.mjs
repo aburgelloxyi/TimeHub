@@ -169,3 +169,18 @@ check("a request past its deadline is overdue", orderUrgency(order("requested", 
     ["Keeley Jones loaded Universal · Forgotten Island · Motion.", "Paramount · Focker In Law · Print was removed from Client Orders."]);
   check("nothing happened", texts([film()], [film()]), []);
 }
+
+// Delivered markets.
+{
+  const { taskDelivered, marketDelivery } = await import("../src/lib/orderForms/status.js");
+  check("what counts as delivered", [
+    { customStatusName: "Delivered" }, { status: "Completed", customStatusName: "Approved" }, { customStatusName: "Delivering" },
+    { customStatusName: "Prep for Delivery" }, { customStatusName: "On hold" }, null,
+  ].map(taskDelivered), [true, true, false, false, false, false]);
+  const t = (name) => ({ task: { customStatusName: name } });
+  check("a market is delivered once every order is",
+    [marketDelivery([t("Delivered"), t("Delivered")], 2), marketDelivery([t("Delivered"), null], 2), marketDelivery([], 0)],
+    [{ delivered: 2, done: true }, { delivered: 1, done: false }, { delivered: 0, done: false }]);
+  check("a cancelled order doesn't hold its market open, but a market of nothing but cancelled ones isn't delivered",
+    [marketDelivery([t("Delivered"), t("Cancelled")], 2).done, marketDelivery([t("Cancelled")], 1).done], [true, false]);
+}

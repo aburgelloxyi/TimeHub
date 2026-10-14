@@ -141,6 +141,22 @@ export const LONG_OVERDUE_DAYS = 14;
 const taskDone = (task) =>
   !!task && (task.status === "Completed" || task.status === "Cancelled" || /deliver|complete|cancel/i.test(task.customStatusName || ""));
 
+// A task whose work has gone out: Wrike's Completed group or a Delivered or
+// Completed status. "Delivering" and "Prep for Delivery" are still under way.
+export const taskDelivered = (task) =>
+  !!task && (task.status === "Completed" || /^deliver(ed)?$|complete/i.test(String(task.customStatusName || "").trim()));
+
+// How far a market is delivered, from its orders' matched tasks (aligned with
+// the orders). `done` once every order's task is delivered or cancelled, with
+// at least one delivered: a cancelled order will never be delivered, and
+// shouldn't hold its market open for ever.
+const taskCancelled = (task) => !!task && (task.status === "Cancelled" || /cancel/i.test(task.customStatusName || ""));
+export function marketDelivery(matches, total) {
+  const delivered = (matches || []).filter((m) => taskDelivered(m?.task)).length;
+  const cancelled = (matches || []).filter((m) => taskCancelled(m?.task)).length;
+  return { delivered, done: total > 0 && delivered > 0 && delivered + cancelled === total };
+}
+
 export function ordersByMarket(files, todayIso, matchFor = () => []) {
   // toBrief and waitingArtwork cut across the others: an order due this week
   // and not yet in Wrike is in both dueSoon and toBrief.

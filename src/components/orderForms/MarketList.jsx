@@ -1,7 +1,7 @@
 import React, { useMemo, useRef, useState } from "react";
 import { HoverLabel } from "../shared/FloatingCard";
-import { ArrowDown, ArrowUp, ChevronRight } from "lucide-react";
-import { marketSummary, fileTotals, sortMarkets, changesNote } from "../../lib/orderForms/status";
+import { ArrowDown, ArrowUp, Check, ChevronRight } from "lucide-react";
+import { marketSummary, fileTotals, sortMarkets, changesNote, marketDelivery } from "../../lib/orderForms/status";
 import MarketFlag from "./MarketFlag";
 import { formatDay, undatedNote, pillClass, STATUS_CLASS, STATUS_LABEL, URGENCY_TEXT } from "./format";
 
@@ -16,7 +16,8 @@ const FILTERS = [
   { id: "due", label: "Due or overdue", test: (m) => !!m.urgency, on: "bg-rose-600 text-white border-rose-600" },
   { id: "notStarted", label: "Not started", test: (m) => m.status === "notStarted", on: "bg-slate-600 text-white border-slate-600" },
   // Tested against the file, not the summary: see `changedIn` below.
-  { id: "changed", label: "Changed", test: (m, changedIn) => !!changedIn(m.name), on: "bg-indigo-600 text-white border-indigo-600" },
+  { id: "changed", label: "Changed", test: (m, { changedIn }) => !!changedIn(m.name), on: "bg-indigo-600 text-white border-indigo-600" },
+  { id: "delivered", label: "Delivered", test: (m, { wrike }) => !!wrike.get(m.name)?.done, on: "bg-slate-600 text-white border-slate-600" },
 ];
 
 const STATUS_ORDER = { requested: 0, pending: 1, unconfirmed: 2, confirmed: 3, notStarted: 4, unreadable: 5 };
@@ -75,14 +76,18 @@ export default function MarketList({ file, today, matcher, onOpen, arriving = fa
   const totals = useMemo(() => fileTotals(file, today), [file, today]);
   const summaries = useMemo(() => sortMarkets(file.markets.map((m) => marketSummary(m, today))), [file, today]);
 
-  // How many of each market's orders are already tasks in Wrike.
-  const inWrike = useMemo(
-    () => new Map(file.markets.map((m) => [
-      m.name,
-      matcher ? matcher.match(m.orders, file.links?.[m.name], file.briefed?.[m.name], m.kind || file.kind).filter(Boolean).length : 0,
-    ])),
+  // How many of each market's orders are already tasks in Wrike, and how many
+  // of those tasks are delivered (marketDelivery). From the task cache, which
+  // the webhooks keep current.
+  const wrike = useMemo(
+    () => new Map(file.markets.map((m) => {
+      const matches = matcher ? matcher.match(m.orders, file.links?.[m.name], file.briefed?.[m.name], m.kind || file.kind) : [];
+      return [m.name, { inWrike: matches.filter(Boolean).length, ...marketDelivery(matches, m.orders.length) }];
+    })),
     [file, matcher]
   );
+  const inWrike = useMemo(() => new Map([...wrike].map(([name, w]) => [name, w.inWrike])), [wrike]);
+  const [showDelivered, setShowDelivered] = useState(false);
 
   // What the last Refresh changed in a market and hasn't been looked at.
   const changedIn = useMemo(() => {
@@ -92,11 +97,11 @@ export default function MarketList({ file, today, matcher, onOpen, arriving = fa
 
   const rows = useMemo(() => {
     const test = FILTERS.find((f) => f.id === filter)?.test;
-    const shown = test ? summaries.filter((m) => test(m, changedIn)) : summaries;
+    const shown = test ? summaries.filter((m) => test(m, { changedIn, wrike })) : summaries;
     if (!sort) return shown;
     const sorted = [...shown].sort(COMPARE[sort.by]);
     return sort.desc ? sorted.reverse() : sorted;
-  }, [summaries, filter, sort, changedIn]);
+  }, [summaries, filter, sort, changedIn, wrike]);
 
   // Third click on a column returns to the default order.
   const onSort = (by) =>
@@ -104,10 +109,15 @@ export default function MarketList({ file, today, matcher, onOpen, arriving = fa
 
   // Markets with no orders yet get a list of their own under the table, so
   // they don't sit between the ones a PM has something to read in.
-  const active = rows.filter((m) => m.status !== "notStarted");
+  // Delivered markets, every order's task done in Wrike, go in a table of
+  // their own too, folded away: they need nothing more.
+  const isDelivered = (m) => !!wrike.get(m.name)?.done;
+  const active = rows.filter((m) => m.status !== "notStarted" && !isDelivered(m));
   const idle = rows.filter((m) => m.status === "notStarted");
+  const delivered = rows.filter((m) => m.status !== "notStarted" && isDelivered(m));
+  const deliveredOpen = showDelivered || filter === "delivered";
 
-  const counts = { changed: Object.keys(file.changes || {}).length, requested: totals.requested, confirmed: totals.confirmed, pending: totals.pending, unconfirmed: totals.unconfirmed, due: totals.due, notStarted: totals.notStarted };
+  const counts = { delivered: summaries.filter(isDelivered).length, changed: Object.keys(file.changes || {}).length, requested: totals.requested, confirmed: totals.confirmed, pending: totals.pending, unconfirmed: totals.unconfirmed, due: totals.due, notStarted: totals.notStarted };
 
   return (
     // Keyed by film so the fade plays again when another one is picked.
@@ -148,6 +158,11 @@ export default function MarketList({ file, today, matcher, onOpen, arriving = fa
         {rows.length === 0 && (
           <p className="px-5 py-10 text-center text-sm text-[#768994]">No markets match this filter.</p>
         )}
+        {rows.length > 0 && active.length === 0 && delivered.length > 0 && (
+          <p className="px-5 py-8 text-center text-sm text-[#768994]">
+            {filter === "delivered" ? "The delivered markets are listed below." : "Every market with orders here is delivered. They're listed below."}
+          </p>
+        )}
 
         {active.map((m) => {
           if (m.status === "unreadable") {
@@ -160,6 +175,9 @@ export default function MarketList({ file, today, matcher, onOpen, arriving = fa
             );
           }
           const pct = m.total ? Math.round((m.confirmed / m.total) * 100) : 0;
+          // Delivered orders show as a darker stretch at the start of the bar.
+          const sent = wrike.get(m.name)?.delivered || 0;
+          const sentPct = m.total ? Math.round((sent / m.total) * 100) : 0;
           return (
             <button
               key={m.name}
@@ -170,8 +188,9 @@ export default function MarketList({ file, today, matcher, onOpen, arriving = fa
               <MarketName name={m.name} undated={m.undated} changed={changedIn(m.name)} />
               <span><span className={`${pillClass} ${STATUS_CLASS[m.status]}`}>{STATUS_LABEL[m.status]}</span></span>
               <span className="flex items-center gap-3 min-w-0">
-                <span className="groove flex-1 h-2 rounded-full bg-slate-100 overflow-hidden">
+                <span className="groove relative flex-1 h-2 rounded-full bg-slate-100 overflow-hidden">
                   <span className={`groove-fill block h-full rounded-full bg-[#1cc1a5] ${arriving ? "bar-fill" : ""}`} style={{ width: `${pct}%` }} />
+                  {sentPct > 0 && <span className="absolute inset-y-0 left-0 rounded-full bg-[#0f7f6c]" style={{ width: `${sentPct}%` }} />}
                 </span>
                 <span className="text-xs text-[#768994] tabular-nums shrink-0 w-14 text-right">{m.confirmed} of {m.total}</span>
               </span>
@@ -184,12 +203,60 @@ export default function MarketList({ file, today, matcher, onOpen, arriving = fa
               </span>
               <span className={`tabular-nums ${inWrike.get(m.name) ? "text-[#122027]" : "text-[#b6c3cc]"}`}>
                 {inWrike.get(m.name) ? `${inWrike.get(m.name)} of ${m.total}` : "—"}
+                {sent > 0 && <span className="block text-[11px] font-bold text-[#0f7f6c]">{sent} delivered</span>}
               </span>
               <ChevronRight className="w-4 h-4 text-[#b6c3cc] group-hover:text-[#122027] group-hover:translate-x-0.5 transition-[color,transform]" />
             </button>
           );
         })}
       </div>
+
+      {delivered.length > 0 && (
+        <div className="bg-white border border-[#dce4ec] rounded-2xl shadow-sm overflow-hidden">
+          <button
+            onClick={() => setShowDelivered((v) => !v)}
+            aria-expanded={deliveredOpen}
+            className="w-full flex items-center gap-2 px-5 py-3 bg-slate-50/60 tray text-left hover:bg-slate-50 transition-colors"
+          >
+            <ChevronRight className={`w-4 h-4 text-[#768994] transition-transform duration-200 ${deliveredOpen ? "rotate-90" : ""}`} />
+            <span className="flex items-center justify-center w-4 h-4 rounded-full bg-slate-500 text-white"><Check className="w-2.5 h-2.5" strokeWidth={3} /></span>
+            <h3 className="text-[10px] font-black uppercase tracking-widest text-[#768994]">Delivered</h3>
+            <p className="text-xs text-[#768994]">
+              {delivered.length} {delivered.length === 1 ? "market" : "markets"} with every order delivered in Wrike
+            </p>
+          </button>
+          {deliveredOpen && (
+            <div className="border-t border-[#dce4ec] animate-in fade-in slide-in-from-top-1 duration-200">
+              {delivered.map((m) => (
+                <button
+                  key={m.name}
+                  onClick={() => onOpen?.(m.name)}
+                  disabled={arriving}
+                  className={`${GRID} w-full py-2.5 border-b border-slate-100 last:border-b-0 text-sm text-left text-[#768994] hover:bg-slate-50 focus:outline-none focus-visible:bg-slate-50 transition-colors group`}
+                >
+                  <span className="opacity-75"><MarketName name={m.name} changed={changedIn(m.name)} /></span>
+                  <span>
+                    <span className={`${pillClass} gap-1 bg-slate-100 text-slate-600`}>
+                      <Check className="w-3 h-3" strokeWidth={3} />
+                      Delivered
+                    </span>
+                  </span>
+                  <span className="flex items-center gap-3 min-w-0">
+                    <span className="groove flex-1 h-2 rounded-full bg-slate-100 overflow-hidden">
+                      <span className="block h-full w-full rounded-full bg-slate-400" />
+                    </span>
+                    <span className="text-xs tabular-nums shrink-0 w-14 text-right">{m.total} of {m.total}</span>
+                  </span>
+                  <span className="tabular-nums">{m.nextDeadline ? formatDay(m.nextDeadline, today) : "—"}</span>
+                  <span className="tabular-nums">{m.mediaApproved} of {m.total}</span>
+                  <span className="tabular-nums">{m.total} of {m.total}</span>
+                  <ChevronRight className="w-4 h-4 text-[#b6c3cc] group-hover:text-[#122027] group-hover:translate-x-0.5 transition-[color,transform]" />
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
 
       {idle.length > 0 && (
         <div className="bg-white border border-[#dce4ec] rounded-2xl shadow-sm overflow-hidden">

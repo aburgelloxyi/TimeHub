@@ -97,7 +97,10 @@ Canvas, so their tasks aren't kept), if its title matches certain keywords
 it has a subtask that meets one of those. Every subtask of a kept task is kept
 too, however deep, because people are usually assigned to the parent and the
 per-size or per-market subtasks under it are left unassigned (`keepForCache` in
-`src/lib/wrikeEnrich.js`). The title keywords predate that rule and are not the
+`src/lib/wrikeEnrich.js`). Anything filed in a folder under a film's
+`…_INTL_DIGITAL_Outdoor_Campaign_Markets` or `…_INTL_PRINT_…` folder is kept
+too, assigned or not: those are the clients' order tasks, and a PM makes a
+market's batch before handing it out. The title keywords predate that rule and are not the
 way to bring a new department's tasks in: tag its people and give it a board. Team membership comes from each
 person's department in their profile, matched by Wrike id. When a task stops
 qualifying, for example because it's reassigned to someone in PM, it is

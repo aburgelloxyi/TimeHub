@@ -12,7 +12,7 @@ import {
   countedStatusFor,
   jobQuickFiltersFor,
 } from "../src/lib/departments.js";
-import { filterToTeams, keepForCache } from "../src/lib/wrikeEnrich.js";
+import { filterToTeams, keepForCache, marketFolderIds } from "../src/lib/wrikeEnrich.js";
 
 const NOBODY = "NOT_A_MANAGER";
 
@@ -79,4 +79,22 @@ check(
   check("cache: a parent that stops qualifying no longer keeps its subtasks in",
     ids([{ ...parent, responsibleIds: ["U_PM"] }, s1], [parent]), []);
   check("cache: a subtask with no title is still left out", ids([parent, { ...s1, title: "" }]), ["p"]);
+}
+
+// Client orders' tasks: anything filed in a market's folder, assigned or not.
+{
+  const folders = {
+    M: { id: "M", title: "XY026292_INTL_DIGITAL_Outdoor_Campaign_Markets", childIds: ["ZA", "CZ"] },
+    ZA: { id: "ZA", title: "South Africa", childIds: ["ZA2"] },
+    ZA2: { id: "ZA2", title: "Batch folder", childIds: [] },
+    CZ: { id: "CZ", title: "Czechia", childIds: [] },
+    OTHER: { id: "OTHER", title: "Print", childIds: [] },
+  };
+  check("the folders inside a Markets folder", [...marketFolderIds(folders)].sort(), ["CZ", "ZA", "ZA2"]);
+  const batch = { id: "b", title: "EBZR_Batch1_ZA", responsibleIds: [], parentIds: ["ZA"], subTaskIds: ["s"] };
+  const sub = { id: "s", title: "EBZR_INTL__DFOH__1920x1080px_10s_ZA", responsibleIds: [], parentIds: ["ROOT"] };
+  const elsewhere = { id: "x", title: "Unassigned elsewhere", responsibleIds: [], parentIds: ["OTHER"] };
+  check("an unassigned batch in a market's folder is kept, with its subtasks; the same elsewhere isn't",
+    [...keepForCache([batch, sub, elsewhere], [], folders, new Set()).keys()], ["b", "s"]);
+  check("no folder tree: nothing extra", [...keepForCache([batch], [], {}, new Set()).keys()], []);
 }

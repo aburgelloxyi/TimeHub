@@ -410,8 +410,32 @@ export function filterToTeams(tasks, folderDictionary, teamIds) {
   });
 }
 
+// Every folder inside a film's "…_INTL_DIGITAL_Outdoor_Campaign_Markets" or
+// "…_INTL_PRINT_Outdoor_Campaign_Markets" folder (the country folders and
+// anything under them). Worked out once per folder tree.
+const MARKETS_FOLDER = /_INTL_(DIGITAL|PRINT)_Outdoor_Campaign_Markets$/i;
+const marketFoldersOf = new WeakMap();
+export function marketFolderIds(folderDictionary) {
+  if (!folderDictionary || typeof folderDictionary !== "object") return new Set();
+  if (marketFoldersOf.has(folderDictionary)) return marketFoldersOf.get(folderDictionary);
+  const inside = new Set();
+  const walk = (id, depth) => {
+    if (depth > 6 || inside.has(id)) return;
+    inside.add(id);
+    for (const child of folderDictionary[id]?.childIds || []) walk(child, depth + 1);
+  };
+  for (const folder of Object.values(folderDictionary)) {
+    if (MARKETS_FOLDER.test((folder?.title || "").trim())) {
+      for (const child of folder.childIds || []) walk(child, 0);
+    }
+  }
+  marketFoldersOf.set(folderDictionary, inside);
+  return inside;
+}
+
 // What the shared cache keeps out of a batch from Wrike: whatever filterToTeams
-// keeps, plus every subtask of a kept task, however deep. People are usually
+// keeps, anything filed in a market's folder (see marketFolderIds), plus every
+// subtask of a kept task, however deep. People are usually
 // assigned to a parent task and its per-size or per-market subtasks left bare,
 // so without this a team's own subtasks were missing.
 //
@@ -422,6 +446,13 @@ export function filterToTeams(tasks, folderDictionary, teamIds) {
 // after its first page, so one of the two can be missing).
 export function keepForCache(batch, cached, folderDictionary, teamIds) {
   const kept = new Map(filterToTeams(batch, folderDictionary, teamIds).map((t) => [t.id, t]));
+  // Anything filed in a market's folder is a client order's task, assigned or
+  // not: a PM makes a market's batch before handing it out, and until then
+  // it would otherwise be missing from Client Orders' counts.
+  const markets = marketFolderIds(folderDictionary);
+  for (const t of batch) {
+    if (t.title && !kept.has(t.id) && t.parentIds?.some((id) => markets.has(id))) kept.set(t.id, t);
+  }
   const inBatch = new Set(batch.map((t) => t.id));
   const keptIds = new Set();
   const childIds = new Set();

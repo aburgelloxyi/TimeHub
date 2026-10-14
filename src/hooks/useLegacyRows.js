@@ -39,6 +39,7 @@ export function useLegacyRows(triggerToast, wrikeUserId = null) {
     updateTask,
     deleteTasks,
     justSaved,
+    history,
   } = useTasks(triggerToast, null, wrikeUserId, weekStart);
 
   // Add a single blank row (from the + button, or from the Generate Today's
@@ -102,5 +103,7 @@ export function useLegacyRows(triggerToast, wrikeUserId = null) {
     // id → nonce for rows whose write to Supabase just landed; the grid flashes
     // the row so an optimistic edit is visibly confirmed.
     justSaved,
+    // The last five weeks' rows as first read (useTasks), for quick additions.
+    history,
   };
 }

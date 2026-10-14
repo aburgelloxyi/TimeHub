@@ -104,6 +104,10 @@ const fromDb = (row) => ({
 export function useTasks(triggerToast, source = null, wrikeUserId = null, weekStart = null) {
   const [tasks, setTasks] = useState([]);
   const [loading, setLoading] = useState(true);
+  // With a weekStart: the last five weeks' rows as read, earlier weeks
+  // included, for what is entered most (the timesheet's quick additions).
+  // Read with the week's rows, so it costs no request of its own.
+  const [history, setHistory] = useState([]);
 
   // Prop takes priority; localStorage is the fast-path for subsequent loads
   // (already set by setWrikeUserId() on a previous visit).
@@ -153,6 +157,8 @@ export function useTasks(triggerToast, source = null, wrikeUserId = null, weekSt
             const iso = t.workDate || toIsoDate(t.date);
             return iso && iso >= weekStart;
           }));
+          const since = new Date(Date.now() - 35 * 864e5).toISOString().slice(0, 10);
+          setHistory(mapped.filter((t) => (t.workDate || toIsoDate(t.date) || "") >= since));
         } else {
           setTasks(mapped);
         }
@@ -314,6 +320,6 @@ export function useTasks(triggerToast, source = null, wrikeUserId = null, weekSt
   return {
     tasks, setTasks, loading,
     addTask, addTasks, updateTask, updateTasks, deleteTasks, importTasks,
-    justSaved,
+    justSaved, history,
   };
 }

@@ -81,6 +81,7 @@ import UnloggedReminderModal from "./legacy/UnloggedReminderModal";
 import BatchEditBar from "./legacy/BatchEditBar";
 import { useContextMenu } from "./shared/ContextMenu";
 import { wrikeLinkForId } from "../lib/wrikeLink";
+import { quickEntries } from "../utils/quickEntries";
 import DayTabs from "./legacy/DayTabs";
 import TimesheetActionBar from "./legacy/TimesheetActionBar";
 import { newRowId } from "../utils/rowId";
@@ -220,6 +221,42 @@ const ROW_TOOLS_GUTTER = "w-0 group-hover/tools:w-6 group-focus-within/tools:w-6
 const ROW_TOOLS_INSET = "pl-1 group-hover/tools:pl-6 group-focus-within/tools:pl-6 [@media(hover:none)]:pl-6";
 const ROW_TOOLS_DELETE =
   "w-0 mr-0 opacity-0 group-hover/tools:w-5 group-hover/tools:mr-2 group-hover/tools:opacity-70 group-focus-within/tools:w-5 group-focus-within/tools:mr-2 group-focus-within/tools:opacity-70 [@media(hover:none)]:w-5 [@media(hover:none)]:mr-2 [@media(hover:none)]:opacity-70";
+
+// ── Quick additions beside Add row ───────────────────────────────────────────
+// Hidden until the Add row line is pointed at, then each eases outward from
+// it, nearest first (`step`). `from` is the side, so it slides away from the
+// button. They stay a little faded beside the button, and come up to full
+// when pointed at themselves. No .press on them: its own transition rule
+// would replace this one, and they would snap in instead of easing.
+const QUICK_REVEAL =
+  "opacity-0 pointer-events-none transition-[opacity,transform] duration-300 ease-out motion-reduce:transition-none " +
+  "group-hover/addrow:opacity-75 group-hover/addrow:translate-x-0 group-hover/addrow:pointer-events-auto " +
+  "group-hover/addrow:[transition-delay:calc(120ms+var(--i)*60ms)]";
+const QUICK_LABEL = `shrink-0 text-[9px] font-black uppercase tracking-widest text-[#9aabb5] ${QUICK_REVEAL}`;
+
+function QuickChip({ entry, step, from, onAdd }) {
+  const [code, ...rest] = String(entry.jobNumber).split(",");
+  const name = entry.filmTitle || rest.join(",").trim() || code.trim();
+  const label = [entry.jobNumber, entry.category, entry.territory].filter(Boolean).join(" · ")
+    + (entry.projectDescription ? ` — ${entry.projectDescription}` : "")
+    + ` (${entry.uses === 1 ? "once" : `${entry.uses} times`} in the last five weeks). Click to add it, hours blank.`;
+  return (
+    <HoverLabel label={label} delay={500}>
+      <button
+        type="button"
+        style={{ "--i": step }}
+        onClick={(ev) => { ev.stopPropagation(); onAdd(entry); }}
+        // Enter here is this chip, not the Add row line around it.
+        onKeyDown={(ev) => ev.stopPropagation()}
+        className={`${QUICK_REVEAL} ${from === "left" ? "translate-x-3" : "-translate-x-3"} hover:!opacity-100 hover:[transition-delay:0ms] active:scale-[0.97] shrink min-w-0 max-w-[15rem] inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full border border-[#dce4ec] bg-white text-[11px] text-[#122027] shadow-sm hover:border-[#12a0e1] hover:text-[#12a0e1] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#12a0e1]/40`}
+      >
+        <span className="font-bold truncate">{name}</span>
+        {entry.category && <span className="text-[#768994] truncate">{entry.category}</span>}
+        {entry.territory && <span className="shrink-0 px-1 rounded bg-slate-100 text-[9px] font-black text-[#768994]">{entry.territory}</span>}
+      </button>
+    </HoverLabel>
+  );
+}
 
 export default function LegacyTimesheet({ wrikeData, isAdmin = false }) {
   // Drag-resizable column configs (persisted per table).
@@ -392,6 +429,7 @@ export default function LegacyTimesheet({ wrikeData, isAdmin = false }) {
     deleteRows,
     weekStart,
     justSaved,
+    history,
   } = useLegacyRows(showToast, wrikeUserId);
 
   // Job Book lookup — lets guessed job/film/client be overridden by admin-curated
@@ -488,6 +526,35 @@ export default function LegacyTimesheet({ wrikeData, isAdmin = false }) {
       projectDescription: "",
       territory: "",
       category: "",
+      clientAmends: false,
+      notes: "",
+      is3D: false,
+      timeSpent: "none",
+      additionalTime: "none",
+    });
+  };
+
+  // The quick additions beside Add row (quickEntries): what this person has
+  // entered lately and most, over the last five weeks and this one, leaving
+  // out what is already on the day in view. One click adds it, hours blank.
+  const quick = useMemo(() => {
+    const ids = new Set(rows.map((r) => r.id));
+    return quickEntries([...rows, ...(history || []).filter((h) => !ids.has(h.id))], rows.filter((r) => r.dayOfWeek === activeDay));
+  }, [rows, history, activeDay]);
+  const addQuickEntry = (entry) => {
+    if (frozenDays[activeDay]) return;
+    const id = newRowId();
+    welcome([{ id }]);
+    addRow({
+      id,
+      taskId: null,
+      dayOfWeek: activeDay,
+      jobNumber: entry.jobNumber,
+      client: entry.client,
+      filmTitle: entry.filmTitle,
+      projectDescription: entry.projectDescription,
+      territory: entry.territory,
+      category: entry.category,
       clientAmends: false,
       notes: "",
       is3D: false,
@@ -3478,10 +3545,27 @@ export default function LegacyTimesheet({ wrikeData, isAdmin = false }) {
                     colSpan={COLUMNS.length + 1}
                     className="px-4 py-2.5 text-center"
                   >
-                    <span className="inline-flex items-center justify-center gap-1.5 px-3 py-1 rounded-full border border-transparent text-[11px] font-bold text-[#768994] transition-[color,background-color,border-color,box-shadow,transform] duration-200 ease-out group-hover/addrow:text-[#12a0e1] group-hover/addrow:bg-white group-hover/addrow:border-[#12a0e1]/40 group-hover/addrow:shadow-sm group-hover/addrow:-translate-y-px group-active/addrow:translate-y-0 group-active/addrow:scale-[0.97] group-focus-visible/addrow:text-[#12a0e1] group-focus-visible/addrow:border-[#12a0e1]/60 motion-reduce:transition-none">
+                    {/* Pointed at, the quick additions fan out from Add row:
+                        recent to the left, most used to the right, each one
+                        click to add again (addQuickEntry). */}
+                    <div className="flex items-center justify-center gap-2">
+                    <div className="flex-1 min-w-0 flex items-center justify-end gap-1.5">
+                      {quick.recent.length > 0 && <span className={`${QUICK_LABEL} mr-1`} style={{ "--i": quick.recent.length }}>Recent</span>}
+                      {[...quick.recent].reverse().map((e, k) => (
+                        <QuickChip key={e.key} entry={e} step={quick.recent.length - 1 - k} from="left" onAdd={addQuickEntry} />
+                      ))}
+                    </div>
+                    <span className="shrink-0 inline-flex items-center justify-center gap-1.5 px-3 py-1 rounded-full border border-transparent text-[11px] font-bold text-[#768994] transition-[color,background-color,border-color,box-shadow,transform] duration-200 ease-out group-hover/addrow:text-[#12a0e1] group-hover/addrow:bg-white group-hover/addrow:border-[#12a0e1]/40 group-hover/addrow:shadow-sm group-hover/addrow:-translate-y-px group-active/addrow:translate-y-0 group-active/addrow:scale-[0.97] group-focus-visible/addrow:text-[#12a0e1] group-focus-visible/addrow:border-[#12a0e1]/60 motion-reduce:transition-none">
                       <Plus className="w-3.5 h-3.5 transition-transform duration-300 ease-out group-hover/addrow:rotate-90" />
                       Add row
                     </span>
+                    <div className="flex-1 min-w-0 flex items-center justify-start gap-1.5">
+                      {quick.frequent.map((e, k) => (
+                        <QuickChip key={e.key} entry={e} step={k} from="right" onAdd={addQuickEntry} />
+                      ))}
+                      {quick.frequent.length > 0 && <span className={`${QUICK_LABEL} ml-1`} style={{ "--i": quick.frequent.length }}>Most used</span>}
+                    </div>
+                    </div>
                   </td>
                 </tr>
               )}

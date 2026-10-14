@@ -83,8 +83,8 @@ check("no parent loaded", taskSummary(sub, undefined), {
 
   check("sizes written differently are the same", titleSimilarity("A_B_118,5x175_C", "A_B_118.5x175cm_C"), 1);
   check("the key moves with the row", orderKey(o("X_Y_Z_W", 4)) === orderKey(o("X_Y_Z_W", 5)), false);
-  check("a cached task still has a link", [taskLink({ id: "IEAB" }), taskLink({ id: "IEAB", permalink: "https://x/y" }), taskLink(null)],
-    ["https://www.wrike.com/open.htm?id=IEAB", "https://x/y", ""]);
+  check("a cached task still has a link, by its number", [taskLink({ id: "MAAAAAERNTTf" }), taskLink({ id: "IEAB", permalink: "https://x/y" }), taskLink(null)],
+    ["https://www.wrike.com/open.htm?id=4583666911", "https://x/y", ""]);
 }
 
 // ── Motion and print are kept apart ───────────────────────────────────────────

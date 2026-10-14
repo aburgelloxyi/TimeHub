@@ -57,6 +57,7 @@ import {
   PenTool,
   MessageSquareWarning,
 } from "lucide-react";
+import { wrikeLink } from "../lib/wrikeLink";
 
 // --- DOOH country → region grouping ---
 const COUNTRY_REGION = {
@@ -2252,7 +2253,7 @@ const parseHubNotes = (notesText) => {
   return { gdLink, paths, checklist };
 };
 
-const wrikeTaskLink = (t) => t.permalink || `https://www.wrike.com/open.htm?id=${t.id}`;
+const wrikeTaskLink = (t) => wrikeLink(t);
 
 // One chip per MARKET (not per subtask — digital waves carry several requests
 // per market, and a wall of five separate DE chips read as noise). Aggregate
@@ -3032,7 +3033,7 @@ function CampaignCanvasForDepartment({ department, wrikeData = [], folderCampaig
         wrikeGroupedCampaigns[campaignTitle] = {
           id: `wrike-${campaignTitle.toLowerCase().replace(/\s+/g, "-")}`,
           title: campaignTitle,
-          wrikeLink: task.permalink || `https://www.wrike.com/open.htm?id=${task.id}`,
+          wrikeLink: wrikeTaskLink(task),
           notes: [],
           matrices: [],
           links: [],

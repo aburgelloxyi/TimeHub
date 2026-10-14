@@ -34,6 +34,7 @@ import MultiCountrySelect from "./shared/MultiCountrySelect";
 import { parsePdfDeliverySpecs } from "../utils/pdfTableParser";
 import DeliverySpecsModal from "./DeliverySpecsModal";
 import { logTimeToWrike } from "../lib/wrikeApi";
+import { wrikeLink } from "../lib/wrikeLink";
 
 // ── Local presentational helpers ──────────────────────────────────────────────
 
@@ -1171,7 +1172,7 @@ export default function TaskDetailModal({
             title: s.title,
             status: s.status,
             statusName: s.customStatusId ? (statusDict[s.customStatusId] || s.status) : s.status,
-            permalink: s.permalink || `https://www.wrike.com/open.htm?id=${s.id}`,
+            permalink: wrikeLink(s),
           }))
         );
       } catch (_) {
@@ -1302,7 +1303,7 @@ export default function TaskDetailModal({
   const campaignName = task.campaignName || task.projectName || "";
   const tag = task.tag || task.customStatusName || task.status;
   const permalink =
-    task.permalink || `https://www.wrike.com/open.htm?id=${task.id}`;
+    wrikeLink(task);
 
   return createPortal(
     <>

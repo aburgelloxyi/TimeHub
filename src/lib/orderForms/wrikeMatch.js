@@ -3,10 +3,12 @@
 // already loaded. Nothing is sent anywhere and nothing in Wrike changes.
 // makeMatcher (below) is what the screens use.
 //
-// It can only say yes. The shared cache keeps what is assigned to a team with
-// a board and the subtasks under those (see keepForCache), so a task that
-// exists but isn't in the cache, such as one nobody on a team is assigned to
-// at any level, finds no match. The screens show "In Wrike" for a match and stay silent otherwise.
+// It can only say yes: a task TimeHub hasn't loaded finds no match. The shared
+// cache keeps what teams are assigned to and everything filed in a market's
+// folder (see keepForCache), and a market's page also reads its own folder.
+// The screens show "In Wrike" for a match and stay silent otherwise.
+
+import { wrikeLink } from "../wrikeLink.js";
 
 // A PM tidies the name when making the task: the sheet leaves a doubled
 // underscore where a market gave no site name, and spaces become underscores.
@@ -80,7 +82,7 @@ export function taskSummary(task, parent) {
 
 
 // Wrike strips nothing from this; the cached copy of a task just doesn't carry it.
-export const taskLink = (task) => task?.permalink || (task?.id ? `https://www.wrike.com/open.htm?id=${task.id}` : "");
+export const taskLink = (task) => wrikeLink(task);
 
 // ── Close matches ─────────────────────────────────────────────────────────────
 // A task is rarely named exactly as the sheet builds it: a size is briefed with

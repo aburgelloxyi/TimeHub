@@ -37,6 +37,7 @@ import { fetchAllFolders } from "../lib/wrikeCampaign";
 import { fetchWrikeMeta } from "../lib/wrikeMeta";
 import { usesTeamBoard } from "../lib/departments";
 import { hasLeft } from "../lib/people";
+import { wrikeLinkForId } from "../lib/wrikeLink";
 
 const FIELDS_FILTER = encodeURIComponent(
   "[customFields,parentIds,responsibleIds,subTaskIds,superTaskIds,description]"
@@ -69,9 +70,9 @@ const STUDIO_PROBE_EVERY_MS = 24 * 60 * 60 * 1000;
 // without it every dev reload downloaded the Supabase cache twice.
 let bootStarted = false;
 
-// A task's permalink is always https://www.wrike.com/open.htm?id=<id>, so it's
-// stripped from the stored copy (~1.4 MB across the cache). Memory and the local
-// mirror keep it.
+// A task's permalink can be rebuilt from its id (wrikeLink in
+// src/lib/wrikeLink.js), so it's stripped from the stored copy (~1.4 MB across
+// the cache). Memory and the local mirror keep it.
 const stripForStorage = ({ permalink, ...rest }) => rest;
 
 // ---------------------------------------------------------------------------
@@ -212,7 +213,7 @@ function deriveFolderCampaigns(folderDictionary) {
         id: `folder-${childId}`,
         folderId: childId,
         title,
-        wrikeLink: `https://www.wrike.com/open.htm?id=${childId}`,
+        wrikeLink: wrikeLinkForId(childId),
         studioHint: "Others",
         isFolder: true,
         notes: [],

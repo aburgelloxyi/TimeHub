@@ -28,6 +28,7 @@ import { mapPool, fetchRetrying } from "../lib/fetchPool";
 // has already rendered.
 const ATTACHMENT_FETCH_CONCURRENCY = 4;
 import TaskDetailModal, { FilePreviewLightbox } from "./TaskDetailModal";
+import { wrikeLink as wrikeLinkOf } from "../lib/wrikeLink";
 
 gsap.registerPlugin(useGSAP);
 
@@ -578,7 +579,7 @@ export default function TodaysList({ wrikeData, triggerToast: _triggerToast, isA
     // inline logic over every weekday x timeframe x due-date combination.
     boardTasks.forEach((task) => {
       if (!isBoardTask(task, targetTimeframe)) return;
-      const wrikeLink = task.permalink || `https://www.wrike.com/open.htm?id=${task.id}`;
+      const wrikeLink = wrikeLinkOf(task);
       const card = {
         id: task.id, title: task.title,
         campaignId: task.parentIds?.[0] || "unknown",
@@ -711,7 +712,7 @@ export default function TodaysList({ wrikeData, triggerToast: _triggerToast, isA
                           {task.projectName || ""}
                         </p>
                         <a
-                          href={task.permalink || `https://www.wrike.com/open.htm?id=${task.id}`}
+                          href={wrikeLinkOf(task)}
                           target="_blank"
                           rel="noreferrer"
                           className="text-[10px] font-bold text-[#122027] hover:text-[#12a0e1] truncate max-w-[200px] block transition-colors"

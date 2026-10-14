@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { ChevronDown, Copy, Merge, Search, Tag, X } from "lucide-react";
+import { ChevronDown, Copy, Merge, Search, Split, Tag, X } from "lucide-react";
 import { HoverLabel } from "../shared/FloatingCard";
 import { CATEGORIES } from "../../constants.js";
 
@@ -104,7 +104,7 @@ function BatchCategoryPicker({ onPick, pinned = [] }) {
 // timesheet's own (LegacyTimesheets.js), passed in.
 export default function BatchEditBar({
   activeDay, applyToSelected, clearSelection, duplicateSelected, isMerging, mergeSelected,
-  mergeState, rowsAreEditable, selectedCount, topCategories,
+  mergeState, rowsAreEditable, selectedCount, topCategories, unmergeCount = 0, unmergeSelected,
 }) {
   return (
     <div className="relative z-20 -mb-4 flex justify-center pointer-events-none">
@@ -154,6 +154,23 @@ export default function BatchEditBar({
             {isMerging ? "Merging…" : "Merge"}
           </button>
         </HoverLabel>
+        {/* Only for ticked entries that were merged and remember their parts:
+            those merged before the parts were kept can't be split. */}
+        {unmergeCount > 0 && (
+          <HoverLabel label={rowsAreEditable ? `Split back into one row per market, with each market's own time` : `${activeDay} is locked`}>
+            <button
+              onClick={unmergeSelected}
+              aria-disabled={!rowsAreEditable || isMerging}
+              aria-label="Unmerge the ticked entries"
+              className={`flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] font-bold transition-colors ${
+                !rowsAreEditable || isMerging ? "text-white/80 opacity-40 cursor-not-allowed" : "text-white/80 hover:text-white hover:bg-white/10"
+              }`}
+            >
+              <Split className="w-3.5 h-3.5" />
+              {unmergeCount > 1 ? `Unmerge ${unmergeCount}` : "Unmerge"}
+            </button>
+          </HoverLabel>
+        )}
         <span className="w-px h-4 bg-white/20 shrink-0" />
         <button
           onClick={clearSelection}

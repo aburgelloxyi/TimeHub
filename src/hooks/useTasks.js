@@ -58,6 +58,9 @@ const toDb = (task) => ({
   client_amends: task.clientAmends ?? false,
   is_3d: task.is3D ?? false,
   task_id: task.taskId ?? null,
+  // The rows a merged entry was made from, so it can be split back (see
+  // unmergeRow in utils/mergeMultiCountry.js).
+  merged_from: task.mergedFrom ?? null,
 });
 
 const fromDb = (row) => ({
@@ -85,6 +88,7 @@ const fromDb = (row) => ({
   clientAmends: row.client_amends ?? false,
   is3D: row.is_3d ?? false,
   taskId: row.task_id,
+  mergedFrom: row.merged_from ?? null,
 });
 
 /**
@@ -233,6 +237,7 @@ export function useTasks(triggerToast, source = null, wrikeUserId = null, weekSt
       projectDescription: "project_description",
       timeSpent: "time_spent", additionalTime: "additional_time",
       clientAmends: "client_amends", is3D: "is_3d",
+      mergedFrom: "merged_from",
     };
 
     // Persist from the synced seconds, so the column always lands as "H:MM"

@@ -37,6 +37,7 @@ import { hmToHours, getCurrentWeekStart } from "../../hooks/useLegacyRows";
 import { secondsToHM } from "../../utils/timeHelpers";
 import { isoToday, toIsoDate } from "../../utils/dates";
 import { newRowId } from "../../utils/rowId";
+import { mergeIntoSheet } from "../../utils/mergeMultiCountry";
 
 // "Where did my day go?" — suggests timesheet rows from your Wrike activity:
 // the tasks you were handed (assigned, or moved into a new status by someone
@@ -138,6 +139,9 @@ export default function CommentTrailModal({
   jobOptions = [],
   getJob,
   defaultCategory = "",
+  // The timesheet's "Merge markets into one entry": rows added here are merged
+  // the way a pull's are, and the footer says so before Add is pressed.
+  mergeMarkets = false,
 }) {
   const days = useMemo(daysSoFar, []);
   const [dayIso, setDayIso] = useState(
@@ -502,8 +506,9 @@ export default function CommentTrailModal({
   // The day's normal time once the ticked rows are added.
   const dayRegular = view ? view.loggedRegular + pickedRegular : 0;
 
-  const handleAdd = () => {
-    if (!toAdd || isFrozen) return;
+  // The rows Add would put on the sheet, before any merging (the timesheet
+  // merges; see onAddRows).
+  const buildRows = () => {
     const date = day.date.toLocaleDateString("en-GB");
     const newRows = picked.map((s) => ({
       id: newRowId(),
@@ -542,6 +547,21 @@ export default function CommentTrailModal({
         additionalTime: secondsToHM(m.extra * 3600),
       })
     );
+    return newRows;
+  };
+
+  // With markets merged, what Add will actually leave on the sheet: the rows
+  // for one job and category become one entry, joining one already there.
+  const mergePreview = (() => {
+    if (!mergeMarkets || !toAdd || !day) return null;
+    const built = buildRows();
+    const { rows: entries, replaces } = mergeIntoSheet(built, (rows || []).filter((r) => r.dayOfWeek === day.name));
+    return entries.length < built.length || replaces.length ? { rows: built.length, entries: entries.length, joining: replaces.length } : null;
+  })();
+
+  const handleAdd = () => {
+    if (!toAdd || isFrozen) return;
+    const newRows = buildRows();
     onAddRows(newRows, day.name);
     if (pickedMarks.length) {
       const counts = { ...markJobs };
@@ -837,6 +857,12 @@ export default function CommentTrailModal({
               <span>Tick the tasks you want to add.</span>
             ) : null}
           </div>
+          {mergePreview && (
+            <span className="text-[11px] text-sky-300 text-right">
+              Merge markets is on: {plural(mergePreview.rows, "row")} go in as {mergePreview.entries} {mergePreview.entries === 1 ? "entry" : "entries"}
+              {mergePreview.joining ? `, joining ${mergePreview.joining} already on ${day.name}` : ""}.
+            </span>
+          )}
           <div className="flex gap-2">
             <button
               onClick={onClose}

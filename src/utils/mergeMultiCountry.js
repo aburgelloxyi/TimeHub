@@ -102,6 +102,21 @@ export function mergeCheck(rows) {
  *   is3D            kept if any row had it
  *   taskId          the first row's: the link back to Wrike can only be one
  */
+// What a row was, kept on the entry it is merged into (`mergedFrom`), so the
+// entry can be split back into exactly these rows later (unmergeRow). A row
+// that was itself a merge contributes its own parts, so merging twice still
+// remembers every original. A freshly pulled row's time is its unrounded one.
+const PART_FIELDS = [
+  "taskId", "territory", "timeSpent", "additionalTime", "notes", "wrikeTimelogId",
+  "projectDescription", "clientAmends", "is3D", "filmTitle", "client",
+];
+const partsOf = (row) => {
+  if (row.mergedFrom?.length) return row.mergedFrom;
+  const part = Object.fromEntries(PART_FIELDS.map((k) => [k, row[k] ?? null]));
+  if (row._rawHours != null) part.timeSpent = secondsToHM(row._rawHours * 3600);
+  return [part];
+};
+
 export function mergeRows(rows) {
   const [first] = rows;
   const firstOf = (key) => rows.map((r) => r[key]).find((v) => v) || "";
@@ -138,6 +153,31 @@ export function mergeRows(rows) {
     client: firstOf("client"),
     filmTitle: firstOf("filmTitle"),
     clientAmends: rows.some((r) => r.clientAmends),
+    mergedFrom: rows.flatMap(partsOf),
     is3D: rows.some((r) => r.is3D),
   };
+}
+
+// ── Unmerging ────────────────────────────────────────────────────────────────
+// An entry merged since its parts began to be recorded can be split back into
+// the rows it was made from, each with its own market, time, notes and
+// timelog link, on the entry's day, job and category. Entries merged before
+// that have no parts and can't be.
+
+export const canUnmerge = (row) => (row?.mergedFrom?.length || 0) > 1;
+
+/**
+ * The rows `entry` was merged from, without ids (the caller adds them).
+ * `edited` is true when the entry's time no longer adds up to its parts': it
+ * was changed after merging, and unmerging puts the parts' times back.
+ */
+export function unmergeRow(entry) {
+  if (!canUnmerge(entry)) return { rows: [], edited: false };
+  const { id: _id, mergedFrom, rawSeconds: _raw, additionalSeconds: _extra, ...base } = entry;
+  const rows = mergedFrom.map((part) => ({ ...base, ...part, mergedFrom: null }));
+  const total = (key) => rows.reduce((s, r) => s + parseTimeToSeconds(r[key]), 0);
+  const roughly = (a, b) => Math.abs(a - b) < 60;
+  const edited = !roughly(total("timeSpent"), parseTimeToSeconds(entry.timeSpent))
+    || !roughly(total("additionalTime"), parseTimeToSeconds(entry.additionalTime));
+  return { rows, edited };
 }

@@ -57,7 +57,8 @@ import {
   toTimesheetTerritories,
 } from "../utils/territories";
 import { useTimesheetPrefs } from "../hooks/useTimesheetPrefs";
-import { mergeIntoSheet, mergeCheck, mergeRows } from "../utils/mergeMultiCountry";
+import { mergeIntoSheet, mergeCheck, mergeRows, canUnmerge, unmergeRow } from "../utils/mergeMultiCountry";
+import { confirmAction } from "../lib/confirm";
 import { categoryForTaskWithSource } from "../utils/categoryFamily";
 import { countryPullSource, categoryPullSource } from "../utils/pullSource";
 import CommentTrailModal from "./legacy/CommentTrailModal";
@@ -1762,13 +1763,25 @@ export default function LegacyTimesheet({ wrikeData, isAdmin = false }) {
     []
   );
 
-  const handleAddCommentRows = (newRows, dayName) => {
+  const handleAddCommentRows = async (newRows, dayName) => {
     // Registered only now, for rows actually added — same as a pull does.
     newRows.forEach((r) =>
       jobLookup?.ensureJob?.(r.jobNumber, { filmTitle: r.filmTitle, client: r.client })
     );
-    addRows(newRows);
     setActiveDay(dayName);
+    // "Merge markets into one entry" applies here as it does to a pull: rows
+    // arrive the way the person asked for them, whichever button brought them.
+    const { rows: added, replaces } = groupMultiCountry
+      ? mergeIntoSheet(newRows, rows.filter((r) => !frozenDays[r.dayOfWeek]))
+      : { rows: newRows, replaces: [] };
+    if (!(await addRows(added))) {
+      showToast("Those rows couldn't be saved, so nothing was added. Add them again.");
+      return;
+    }
+    if (replaces.length) await deleteRows(replaces);
+    if (added.length < newRows.length + replaces.length) {
+      showToast(`Added as ${added.length} ${added.length === 1 ? "entry" : "entries"}, with markets merged.`, "success");
+    }
   };
 
   const handlePullTimes = async (dateStr = null) => {
@@ -2642,6 +2655,32 @@ export default function LegacyTimesheet({ wrikeData, isAdmin = false }) {
     [rows, selectedRowIds]
   );
   const mergeState = useMemo(() => mergeCheck(selectedRows), [selectedRows]);
+
+  // Ticked entries that were made by merging and remember their parts.
+  const unmergeable = useMemo(() => selectedRows.filter(canUnmerge), [selectedRows]);
+  const unmergeSelected = useCallback(async () => {
+    if (frozenDays[activeDay] || isMerging || !unmergeable.length) return;
+    const split = unmergeable.map((entry) => ({ entry, ...unmergeRow(entry) }));
+    // An entry changed after it was merged no longer adds up to its parts, and
+    // unmerging puts the parts' own times back. Said before it happens.
+    const edited = split.filter((s) => s.edited).length;
+    if (edited && !(await confirmAction({
+      title: "Unmerge and go back to the original times?",
+      message: `${edited === 1 ? "This entry's time was changed" : `${edited} of these entries' times were changed`} after merging. Unmerging puts each market's own time back as it was when merged.`,
+      confirmLabel: "Unmerge",
+    }))) return;
+    setIsMerging(true);
+    try {
+      const parts = split.flatMap((s) => s.rows.map((r) => ({ ...r, id: newRowId() })));
+      if (!(await addRows(parts))) return;
+      await deleteRows(unmergeable.map((e) => e.id));
+      clearSelection();
+      showToast(`Unmerged into ${parts.length} rows, one per market.`, "success");
+    } finally {
+      setIsMerging(false);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [unmergeable, activeDay, frozenDays, isMerging, addRows, deleteRows, clearSelection]);
   const [isMerging, setIsMerging] = useState(false);
   const mergeSelected = useCallback(async () => {
     if (frozenDays[activeDay] || isMerging) return;
@@ -2738,6 +2777,7 @@ export default function LegacyTimesheet({ wrikeData, isAdmin = false }) {
           jobOptions={jobOptions}
           getJob={jobLookup?.getJob}
           defaultCategory={defaultCategory}
+          mergeMarkets={groupMultiCountry}
         />
       )}
 
@@ -3419,6 +3459,7 @@ export default function LegacyTimesheet({ wrikeData, isAdmin = false }) {
             activeDay={activeDay} applyToSelected={applyToSelected} clearSelection={clearSelection}
             duplicateSelected={duplicateSelected} isMerging={isMerging} mergeSelected={mergeSelected}
             mergeState={mergeState} rowsAreEditable={rowsAreEditable} selectedCount={selectedCount}
+            unmergeCount={unmergeable.length} unmergeSelected={unmergeSelected}
             topCategories={topCategories}
           />
         )}

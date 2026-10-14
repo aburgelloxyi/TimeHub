@@ -192,3 +192,29 @@ check("pull merge: a different category is left alone", pull.rows.find((r) => r.
 check("pull merge: rows on another day aren't touched", pull.replaces.includes("s-other-day"), false);
 check("pull merge: no unrounded hours leak onto a row", pull.rows.some((r) => "_rawHours" in r), false);
 check("pull merge: nothing on the sheet, nothing replaced", mergeIntoSheet([pulled("Chile", "XY026066")], []).replaces, []);
+
+// ── Remembering the parts, and unmerging ──────────────────────────────────────
+{
+  const { mergeRows: merge, unmergeRow, canUnmerge } = await import("../src/utils/mergeMultiCountry.js");
+  const row = (id, territory, timeSpent, extra = {}) => ({
+    id, dayOfWeek: "Monday", date: "12/10/2026", jobNumber: "XY026065", category: "Print - Artwork",
+    territory, timeSpent, additionalTime: "none", notes: `${territory} note`, wrikeTimelogId: `L${id}`, taskId: `T${id}`, ...extra,
+  });
+  const merged = { ...merge([row(1, "Brazil", "2:00"), row(2, "Denmark", "0:30")]), id: 9 };
+  check("a merged entry keeps each row it was made from",
+    merged.mergedFrom.map((p) => [p.territory, p.timeSpent, p.notes, p.wrikeTimelogId, p.taskId]),
+    [["Brazil", "2:00", "Brazil note", "L1", "T1"], ["Denmark", "0:30", "Denmark note", "L2", "T2"]]);
+  check("and can be unmerged", canUnmerge(merged), true);
+  check("a plain row can't", canUnmerge(row(3, "Spain", "1:00")), false);
+
+  const back = unmergeRow(merged);
+  check("unmerging gives the rows back: market, time, notes, timelog, on the entry's day and job",
+    back.rows.map((r) => [r.territory, r.timeSpent, r.notes, r.wrikeTimelogId, r.dayOfWeek, r.jobNumber, r.mergedFrom, "id" in r]),
+    [["Brazil", "2:00", "Brazil note", "L1", "Monday", "XY026065", null, false], ["Denmark", "0:30", "Denmark note", "L2", "Monday", "XY026065", null, false]]);
+  check("an entry left as merged isn't reported as edited", back.edited, false);
+  check("an entry whose time was changed after merging is", unmergeRow({ ...merged, timeSpent: "3:00" }).edited, true);
+
+  const twice = merge([merged, row(4, "Spain", "1:00")]);
+  check("merging a merged entry again remembers every original", twice.mergedFrom.map((p) => p.territory), ["Brazil", "Denmark", "Spain"]);
+  check("a pulled row's part keeps its exact time", merge([row(5, "Italy", "0:00", { _rawHours: 0.25 }), row(6, "France", "0:15")]).mergedFrom[0].timeSpent, "0:15");
+}

@@ -78,9 +78,13 @@ function GetBookmark({ afterCopy }) {
 
   return (
     <div className="mt-2">
-      <button onClick={() => setOpen((v) => !v)} aria-expanded={open} className="block text-left text-[11px] font-bold text-[#12a0e1] hover:underline whitespace-nowrap">
-        Missing or out of date? Get the latest
-      </button>
+      {/* One line: the question is kept short so the card's width holds it. */}
+      <p className="text-[11px] text-[#768994] whitespace-nowrap">
+        Out of date?{" "}
+        <button onClick={() => setOpen((v) => !v)} aria-expanded={open} className="font-bold text-[#12a0e1] hover:underline">
+          Click me to get the latest!
+        </button>
+      </p>
       {open && (
         <div className="mt-2 rounded-lg border border-[#dce4ec] bg-slate-50 p-2.5 space-y-2.5">
           <div>

@@ -113,6 +113,10 @@ const PART_FIELDS = [
 const partsOf = (row) => {
   if (row.mergedFrom?.length) return row.mergedFrom;
   const part = Object.fromEntries(PART_FIELDS.map((k) => [k, row[k] ?? null]));
+  // Which row it was, so something that remembers adding that row (a meeting
+  // in Where did my day go?) can still find it inside the entry, and so an
+  // unmerge can give it its id back.
+  part.fromId = row.id ?? null;
   if (row._rawHours != null) part.timeSpent = secondsToHM(row._rawHours * 3600);
   return [part];
 };

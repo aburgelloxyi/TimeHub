@@ -218,3 +218,9 @@ check("pull merge: nothing on the sheet, nothing replaced", mergeIntoSheet([pull
   check("merging a merged entry again remembers every original", twice.mergedFrom.map((p) => p.territory), ["Brazil", "Denmark", "Spain"]);
   check("a pulled row's part keeps its exact time", merge([row(5, "Italy", "0:00", { _rawHours: 0.25 }), row(6, "France", "0:15")]).mergedFrom[0].timeSpent, "0:15");
 }
+
+{
+  const { mergeRows: merge } = await import("../src/utils/mergeMultiCountry.js");
+  const r = (id, territory) => ({ id, dayOfWeek: "Monday", jobNumber: "XY026065", category: "C", territory, timeSpent: "1:00", additionalTime: "none" });
+  check("each part says which row it was", merge([r(11, "Brazil"), r(12, "Denmark")]).mergedFrom.map((p) => p.fromId), [11, 12]);
+}

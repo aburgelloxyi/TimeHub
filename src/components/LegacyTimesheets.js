@@ -2715,7 +2715,14 @@ export default function LegacyTimesheet({ wrikeData, isAdmin = false }) {
     }))) return;
     setIsMerging(true);
     try {
-      const parts = split.flatMap((s) => s.rows.map((r) => ({ ...r, id: newRowId() })));
+      // Each part gets its old id back where it is free, so whatever
+      // remembered adding that row (Where did my day go?) still finds it.
+      const taken = new Set(rows.map((r) => r.id));
+      const parts = split.flatMap((s) => s.rows.map(({ fromId, ...r }) => {
+        const id = fromId != null && !taken.has(fromId) ? fromId : newRowId();
+        taken.add(id);
+        return { ...r, id };
+      }));
       if (!(await addRows(parts))) return;
       await deleteRows(unmergeable.map((e) => e.id));
       clearSelection();
@@ -2724,7 +2731,7 @@ export default function LegacyTimesheet({ wrikeData, isAdmin = false }) {
       setIsMerging(false);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [unmergeable, activeDay, frozenDays, isMerging, addRows, deleteRows, clearSelection]);
+  }, [unmergeable, rows, activeDay, frozenDays, isMerging, addRows, deleteRows, clearSelection]);
 
   const textAreaClass = `w-full bg-transparent border border-transparent hover:border-slate-300 focus:border-[#12a0e1] focus:ring-2 focus:ring-[#12a0e1]/20 outline-none text-[12px] text-[#122027] font-medium p-2 transition-[border-color,box-shadow] rounded-xl resize-none overflow-hidden leading-tight placeholder:text-slate-500 ${
     !rowsAreEditable ? "opacity-60 cursor-not-allowed" : ""

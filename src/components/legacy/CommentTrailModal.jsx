@@ -484,11 +484,24 @@ export default function CommentTrailModal({
   const patchMark = (id, patch) => setDayMarks((list) => list.map((m) => (m.id === id ? { ...m, ...patch } : m)));
   const removeMark = (id) => setDayMarks((list) => list.filter((m) => m.id !== id));
 
+  // Whether a meeting marked as added is still on the timesheet. The flag
+  // alone was kept forever, so a meeting whose row had since been deleted
+  // from the grid still said "Added to the timesheets". Now the row it became
+  // is looked for: by its id, or inside an entry it was merged into. Marks
+  // added before the id was kept fall back to any row on the day for its job.
+  const daysRows = (rows || []).filter((r) => r.dayOfWeek === day?.name);
+  const stillOnSheet = (m) => {
+    if (!m.added) return false;
+    if (m.addedRowId == null) return daysRows.some((r) => r.jobNumber === m.jobNumber);
+    return daysRows.some((r) => r.id === m.addedRowId || r.mergedFrom?.some((p) => p.fromId === m.addedRowId));
+  };
+
   const markRows = (marks[dayIso] || [])
     .map((m) => {
       const known = m.jobNumber ? getJob?.(m.jobNumber) : null;
       return {
         ...m,
+        added: stillOnSheet(m),
         ...splitMarked(m),
         key: `${dayIso}:mark:${m.id}`,
         client: known?.client || "",
@@ -507,8 +520,9 @@ export default function CommentTrailModal({
   const dayRegular = view ? view.loggedRegular + pickedRegular : 0;
 
   // The rows Add would put on the sheet, before any merging (the timesheet
-  // merges; see onAddRows).
-  const buildRows = () => {
+  // merges; see onAddRows). `markIds` gives a meeting's row its id, so the
+  // meeting can remember which row it became.
+  const buildRows = (markIds = {}) => {
     const date = day.date.toLocaleDateString("en-GB");
     const newRows = picked.map((s) => ({
       id: newRowId(),
@@ -529,9 +543,9 @@ export default function CommentTrailModal({
       _countrySource: s.fields.guessed.countrySource,
       _categorySource: s.fields.guessed.categorySource,
     }));
-    pickedMarks.forEach((m, i) =>
+    pickedMarks.forEach((m) =>
       newRows.push({
-        id: Date.now() + 200000 + i,
+        id: markIds[m.id] ?? newRowId(),
         dayOfWeek: day.name,
         date,
         jobNumber: m.jobNumber,
@@ -561,7 +575,8 @@ export default function CommentTrailModal({
 
   const handleAdd = () => {
     if (!toAdd || isFrozen) return;
-    const newRows = buildRows();
+    const markIds = Object.fromEntries(pickedMarks.map((m) => [m.id, newRowId()]));
+    const newRows = buildRows(markIds);
     onAddRows(newRows, day.name);
     if (pickedMarks.length) {
       const counts = { ...markJobs };
@@ -570,7 +585,7 @@ export default function CommentTrailModal({
       writeStored(MARK_JOBS_KEY, counts);
     }
     // Kept, as added: it still holds its time against the estimates.
-    setDayMarks((list) => list.map((m) => (pickedMarks.some((x) => x.id === m.id) ? { ...m, added: true } : m)));
+    setDayMarks((list) => list.map((m) => (markIds[m.id] != null ? { ...m, added: true, addedRowId: markIds[m.id] } : m)));
     // The suggestions recompute against the new rows; drop what was typed for
     // them so a leftover shortfall starts from the fresh figure.
     setEdits((p) => {

@@ -9,9 +9,10 @@ import { clientFor, filmsIn, isTestFolder } from "./driveTree";
 import { sheetsFromBuffer } from "./readXlsx";
 import { marketFromSheets } from "./parseWorkbook";
 
-// Enough to finish a 60-market film in well under a minute without tripping
-// Drive's per-user rate limit.
-const IN_FLIGHT = 4;
+// Sheets read at once. Drive allows thousands of requests a minute a person;
+// turning a sheet into .xlsx is heavier, and a "slow down" from Google is
+// waited out and retried (gfetch), so this is well inside what it takes.
+const IN_FLIGHT = 8;
 
 const REASONS = {
   "not-found": "The sheet is no longer in this market's folder",
@@ -47,13 +48,31 @@ async function loadMarket({ name, folderId, sheet }) {
   }
 }
 
-// One market of a film, read again. The folders are still listed first, so a
-// sheet the market has replaced is the one read. null when the market's folder
-// no longer holds a sheet for the film. `loadedAt` is set because the film it
-// goes back into was read at another time.
-export async function loadMarketOf({ clientId, filmKey }, marketName, now = new Date()) {
-  const film = (await listFilms(clientId)).find((f) => f.key === filmKey);
-  const row = film?.markets.find((m) => m.name === marketName);
+// The folder a saved market was read from, from its folderUrl.
+export const folderIdOf = (market) => /\/folders\/([^/?#]+)/.exec(market?.folderUrl || "")?.[1] || "";
+
+// The film's sheet in one market folder, as filmsIn would find it in the
+// whole tree: the newest sheet there for that film. null when there is none.
+export function marketRowIn(folderId, name, sheets, filmKey) {
+  const film = filmsIn([{ id: folderId, name }], sheets, FILM_MAPPINGS).find((f) => f.key === filmKey);
+  return film?.markets[0] ? { ...film.markets[0], name } : null;
+}
+
+// One market of a film, read again. `market` is the saved one: its own folder
+// is listed, not the client's whole tree, so a sheet the market has replaced
+// is still the one read, in one request instead of several. The whole tree is
+// listed only when the folder isn't known or no longer holds the film's
+// sheet (moved or renamed). null when the market has no sheet for the film.
+// `loadedAt` is set because the film it goes back into was read at another
+// time.
+export async function loadMarketOf({ clientId, filmKey }, market, now = new Date()) {
+  const name = market?.name;
+  const folderId = folderIdOf(market);
+  let row = folderId ? marketRowIn(folderId, name, await listSheetsIn([folderId]), filmKey) : null;
+  if (!row) {
+    const film = (await listFilms(clientId)).find((f) => f.key === filmKey);
+    row = film?.markets.find((m) => m.name === name) || null;
+  }
   if (!row) return null;
   return { ...(await loadMarket(row)), loadedAt: now.toISOString() };
 }

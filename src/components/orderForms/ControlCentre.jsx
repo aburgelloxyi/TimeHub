@@ -155,7 +155,7 @@ export default function ControlCentre({ wrikeData }) {
     setBusy(key);
     try {
       if (!googleConnected()) await connectGoogle();
-      const fresh = await loadMarketOf(file.source, group.market);
+      const fresh = await loadMarketOf(file.source, file.markets.find((m) => m.name === group.market) || { name: group.market });
       if (!fresh) return notify(`${group.market}'s folder no longer holds a sheet for this film.`);
       const was = file.markets.find((m) => m.name === group.market);
       const changed = fresh.unreadable ? file.changes?.[group.market] : mergeChanges(file.changes?.[group.market], marketChanges(was, fresh));

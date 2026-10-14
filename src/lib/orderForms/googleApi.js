@@ -17,7 +17,8 @@ import { cellRange } from "./cells";
 // only works from the origins registered for it in Google Cloud. The Calendar
 // sign-in (googleCalendar.js) still uses it with Google's in-browser library.
 export const CLIENT_ID =
-  import.meta.env.VITE_GOOGLE_CLIENT_ID ||
+  // Optional: the tests run this file outside Vite, where there is no env.
+  import.meta.env?.VITE_GOOGLE_CLIENT_ID ||
   "1047837005704-h04jm219u2mm5rojhpv1vo797rei5v3a.apps.googleusercontent.com";
 const GSI_SRC = "https://accounts.google.com/gsi/client";
 const WRITE_SCOPE = "https://www.googleapis.com/auth/spreadsheets";
@@ -256,13 +257,12 @@ export async function listFolders(parentId) {
 const PARENTS_PER_QUERY = 20;
 
 // The spreadsheets directly inside any of these folders, each with `parents`.
+// The queries go at once, not one after another.
 export async function listSheetsIn(folderIds) {
-  const sheets = [];
-  for (let i = 0; i < folderIds.length; i += PARENTS_PER_QUERY) {
-    const anyOf = folderIds.slice(i, i + PARENTS_PER_QUERY).map((id) => `'${id}' in parents`).join(" or ");
-    sheets.push(...(await listAll(anyOf)).filter(isSheet));
-  }
-  return sheets;
+  const groups = [];
+  for (let i = 0; i < folderIds.length; i += PARENTS_PER_QUERY) groups.push(folderIds.slice(i, i + PARENTS_PER_QUERY));
+  const found = await Promise.all(groups.map((ids) => listAll(ids.map((id) => `'${id}' in parents`).join(" or "))));
+  return found.flat().filter(isSheet);
 }
 
 // A spreadsheet's bytes as .xlsx. Through Drive, not the Sheets API: one call

@@ -276,7 +276,7 @@ export default function OrderForms({ wrikeData }) {
         setSignedInTick((n) => n + 1);
       }
       if (market) {
-        const fresh = await loadMarketOf(current.source, market.name);
+        const fresh = await loadMarketOf(current.source, market);
         if (!fresh) {
           setError(`${market.name}'s folder no longer holds a sheet for this film.`);
           return;

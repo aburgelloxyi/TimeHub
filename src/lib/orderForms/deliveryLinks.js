@@ -77,11 +77,14 @@ export function planDeliveryFill(orders, tasks, links) {
 let fieldsOnce = null;
 const filePathFields = () => (fieldsOnce ||= fetchCustomFields().then(pickFilePathFields).catch(() => { fieldsOnce = null; return []; }));
 
-// Reads the delivery links on `taskIds` from Wrike. { field, links }, where
-// field is null when the account has no such custom field.
+// Reads the delivery links on `taskIds` from Wrike, and each task's status
+// while it is there. { field, links, statusIds }, where field is null when
+// the account has no such custom field.
 export async function readDeliveryLinks(taskIds) {
   const fields = await filePathFields();
   const field = fields[0] || null;
-  if (!fields.length || !taskIds.length) return { field, links: {} };
-  return { field, links: linksFromTasks(await fetchTasksById(taskIds), fields.map((f) => f.id)) };
+  if (!taskIds.length) return { field, links: {}, statusIds: {} };
+  const tasks = await fetchTasksById(taskIds);
+  const statusIds = Object.fromEntries(tasks.filter((t) => t.customStatusId).map((t) => [t.id, t.customStatusId]));
+  return { field, links: fields.length ? linksFromTasks(tasks, fields.map((f) => f.id)) : {}, statusIds };
 }

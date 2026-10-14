@@ -58,6 +58,9 @@ export async function fetchTasksById(taskIds) {
 // Every custom field in the account, for a caller that picks its own by title.
 export const fetchCustomFields = () => wrikeGet("/customfields");
 
+// Every workflow in the account, with its custom statuses.
+export const fetchWorkflows = () => wrikeGet("/workflows");
+
 // Find the "Job Number" custom field by title rather than a hardcoded id, so it
 // survives the field being recreated. Exact "Job Number" wins; looser matches
 // ("Job No.", "Job Code") are fallbacks.

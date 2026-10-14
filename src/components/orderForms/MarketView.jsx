@@ -7,6 +7,7 @@ import { makeMatcher } from "../../lib/orderForms/wrikeMatch";
 import { marketSummary, orderUrgency, changeKeys, changesNote } from "../../lib/orderForms/status";
 import { orderKey, taskLink } from "../../lib/orderForms/wrikeMatch";
 import { deliveryLinkOf, planDeliveryFill, readDeliveryLinks } from "../../lib/orderForms/deliveryLinks";
+import { readStatuses, taskStatus } from "../../lib/orderForms/wrikeStatus";
 import OrderDetail from "./OrderDetail";
 import PickerMenu from "./PickerMenu";
 import DateField from "../shared/DateField";
@@ -44,14 +45,16 @@ const columnsFor = (kind, editing) => (editing ? [
   { id: "artwork", label: "Artwork", width: "10%", field: true },
   { id: "wrike", label: "Wrike", width: "6%" },
 ] : [
-  { id: "status", label: "Status", width: "11%" },
+  { id: "status", label: "Status", width: "10%" },
   { id: "deliveryDeadline", label: "Deadline", width: "9%" },
   { id: "placement", label: "Placement", width: "9%" },
   { id: "siteName", label: "Site name" },
-  { id: "size", label: "Size", width: "13%" },
-  kind === "print" ? { id: "type", label: "Type", width: "11%" } : { id: "duration", label: "Duration", width: "8%" },
-  { id: "artwork", label: "Artwork", width: "14%" },
+  { id: "size", label: "Size", width: "12%" },
+  kind === "print" ? { id: "type", label: "Type", width: "9%" } : { id: "duration", label: "Duration", width: "7%" },
+  { id: "artwork", label: "Artwork", width: "12%" },
   { id: "wrike", label: "Wrike", width: "9%" },
+  // Read-only only: editing is about the sheet, and needs the room.
+  { id: "wrikeStatus", label: "Wrike status", width: "11%" },
 ]);
 const DETAIL_FIELDS = ["translations", "notes", "specs"];
 
@@ -208,15 +211,25 @@ export default function MarketView({ market, kind, filmTitle, clientId, filmKey,
   // The delivery link on each matched task, read from Wrike as the market
   // opens and again after a Refresh. A failed read shows no links; it is not
   // worth an error on a page that works without them.
+  // Each task's status comes back with the same read, fresher than the
+  // cache's copy.
   const [delivery, setDelivery] = useState({});
+  const [freshStatus, setFreshStatus] = useState({});
   const taskIds = tasks.map((t) => t?.id || "").join(",");
   useEffect(() => {
     const ids = taskIds.split(",").filter(Boolean);
     if (!ids.length) { setDelivery({}); return undefined; }
     let live = true;
-    readDeliveryLinks(ids).then(({ links }) => { if (live) setDelivery(links); }).catch(() => { if (live) setDelivery({}); });
+    readDeliveryLinks(ids)
+      .then(({ links, statusIds }) => { if (live) { setDelivery(links); setFreshStatus(statusIds); } })
+      .catch(() => { if (live) setDelivery({}); });
     return () => { live = false; };
   }, [taskIds, orders]);
+  // Names and colours of Wrike's statuses, for the Wrike status column and
+  // the row tint: a row takes its task's status colour, as Wrike shows it.
+  const [statuses, setStatuses] = useState({});
+  useEffect(() => { let live = true; readStatuses().then((s) => { if (live) setStatuses(s); }); return () => { live = false; }; }, []);
+  const statusFor = (i) => taskStatus(tasks[i], statuses, freshStatus[tasks[i]?.id]);
   // Wrike's link where it could be read, else the one already in the sheet:
   // the field is one not everybody can see in Wrike.
   const linkFor = (i) => (tasks[i] && delivery[tasks[i].id]) || deliveryLinkOf(orders[i].xyi?.deliveryLink);
@@ -581,6 +594,22 @@ export default function MarketView({ market, kind, filmTitle, clientId, filmKey,
             )}
           </span>
         ) : <span className="text-[#b6c3cc]">—</span>;
+      case "wrikeStatus": {
+        const st = statusFor(i);
+        return st ? (
+          <a
+            href={taskLink(tasks[i])}
+            target="_blank"
+            rel="noreferrer"
+            onClick={(e) => e.stopPropagation()}
+            title={`${st.name} in Wrike: open the task`}
+            className={`${pillClass} max-w-full gap-1.5 ${st.style.pill} hover:underline`}
+          >
+            <span aria-hidden className={`w-1 h-3 rounded-full shrink-0 ${st.style.bar}`} />
+            <span className="truncate">{st.name}</span>
+          </a>
+        ) : <span className="text-[#b6c3cc]">—</span>;
+      }
       default:
         return <span className="block truncate" title={o[col.id]}>{o[col.id]}</span>;
     }
@@ -877,7 +906,9 @@ export default function MarketView({ market, kind, filmTitle, clientId, filmKey,
                       onClick={() => { if (!editing) toggleRow(i); setSelected(i); }}
                       title={editing ? undefined : "Open this order's details"}
                       style={{ "--i": i }}
-                      className={`list-row-in group ${editing ? "" : "cursor-pointer"} ${open ? "bg-[#12a0e1]/10" : "hover:bg-slate-50"}`}
+                      className={`list-row-in group ${editing ? "" : "cursor-pointer"} ${
+                        open ? "bg-[#12a0e1]/10" : statusFor(i)?.style.row ? `${statusFor(i).style.row} hover:brightness-[0.97]` : "hover:bg-slate-50"
+                      }`}
                     >
                       <td className="px-3 py-2 border-b border-slate-100">
                         <span className="flex items-center gap-2">

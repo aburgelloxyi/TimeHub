@@ -7,7 +7,7 @@ import { FILM_MAPPINGS } from "../../constants";
 import { listFolders, listSheetsIn, downloadSheet, GoogleError, GOOGLE_SHEET } from "./googleApi";
 import { clientFor, filmsIn, isTestFolder } from "./driveTree";
 import { sheetsFromBuffer } from "./readXlsx";
-import { marketFromSheets } from "./parseWorkbook";
+import { marketFromSheets, READ_VERSION } from "./parseWorkbook";
 
 // Sheets read at once. Drive allows thousands of requests a minute a person;
 // turning a sheet into .xlsx is heavier, and a "slow down" from Google is
@@ -30,8 +30,27 @@ export async function listFilms(clientId) {
   return filmsIn(folders, await listSheetsIn(folders.map((f) => f.id)), FILM_MAPPINGS);
 }
 
-async function loadMarket({ name, folderId, sheet }) {
+// A saved market stands in for reading its sheet again when it is provably
+// the same: the same file, unchanged in Drive since (modifiedTime), read by
+// this version of the reader, and read fine. Drive's modifiedTime misses
+// values a sheet pulls from elsewhere (IMPORTRANGE) or works out from the
+// date (TODAY), so a sheet is still read at least once a day whatever it
+// says.
+const READ_AT_LEAST = 24 * 60 * 60 * 1000;
+export function stillCurrent(saved, row, now = Date.now()) {
+  return !!saved && !saved.unreadable
+    && saved.readVersion === READ_VERSION
+    && saved.sheetId === row.sheet?.id
+    && !!saved.sheetModified && saved.sheetModified === row.sheet?.modifiedTime
+    && !!saved.readAt && now - Date.parse(saved.readAt) < READ_AT_LEAST;
+}
+
+async function loadMarket({ name, folderId, sheet }, now = new Date()) {
   const from = {
+    // What stillCurrent compares against next time.
+    sheetModified: sheet.modifiedTime || "",
+    readVersion: READ_VERSION,
+    readAt: now.toISOString(),
     sheetName: sheet.name,
     sheetUrl: sheet.webViewLink || "",
     sheetId: sheet.id,
@@ -74,7 +93,7 @@ export async function loadMarketOf({ clientId, filmKey }, market, now = new Date
     row = film?.markets.find((m) => m.name === name) || null;
   }
   if (!row) return null;
-  return { ...(await loadMarket(row)), loadedAt: now.toISOString() };
+  return { ...(await loadMarket(row, now)), loadedAt: now.toISOString() };
 }
 
 // Returns an OrderFile whose `source` is what Refresh needs to read it again,
@@ -82,18 +101,27 @@ export async function loadMarketOf({ clientId, filmKey }, market, now = new Date
 // folders are listed afresh each time, so a market added since shows up.
 // `onMarket` is told about each market as its sheet is read, in the order
 // they finish, so the page can show them arriving instead of a counter.
-export async function loadFilm({ clientId, filmKey, onProgress, onMarket }, now = new Date()) {
+// `previous` is the film as last read: a market whose sheet is still current
+// (stillCurrent) is kept from it instead of read again. `tally`, when given,
+// is filled with how many sheets were read and how many kept.
+export async function loadFilm({ clientId, filmKey, onProgress, onMarket, previous, tally }, now = new Date()) {
   const film = (await listFilms(clientId)).find((f) => f.key === filmKey);
   if (!film) return null;
 
+  const before = new Map((previous?.markets || []).map((m) => [m.name, m]));
   let done = 0;
+  let kept = 0;
   onProgress?.(0, film.markets.length);
   const markets = await mapPool(film.markets, IN_FLIGHT, async (row) => {
-    const market = await loadMarket(row);
+    const saved = before.get(row.name);
+    const fresh = stillCurrent(saved, row, now.getTime());
+    if (fresh) kept++;
+    const market = fresh ? saved : await loadMarket(row, now);
     onProgress?.(++done, film.markets.length);
     onMarket?.(market);
     return market;
   });
+  if (tally) Object.assign(tally, { read: markets.length - kept, kept });
 
   return {
     id: `${now.getTime().toString(36)}-${Math.random().toString(36).slice(2, 8)}`,

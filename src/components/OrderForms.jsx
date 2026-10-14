@@ -206,7 +206,8 @@ export default function OrderForms({ wrikeData }) {
 
   // Take a parsed file into the page and the store. `replaces` is the loaded
   // file it supersedes (same name), already agreed to by the caller.
-  const adopt = useCallback(async (read, replaces, keepMarket) => {
+  // `tally` is a Refresh's count of sheets read and kept (loadFilm).
+  const adopt = useCallback(async (read, replaces, keepMarket, tally) => {
     // A film has one id for everyone (fileKey), so a newer read replaces the
     // older one wherever it was loaded. What was decided about the older read
     // carries over, and what the newer one changed is kept until looked at.
@@ -222,7 +223,8 @@ export default function OrderForms({ wrikeData }) {
     setFiles((prev) => [parsed, ...(prev || []).filter((f) => f.id !== replaces?.id)]);
     go(parsed.id, keepMarket || null, { replace: !!replaces });
     const readable = parsed.markets.filter((m) => !m.unreadable).length;
-    if (kept) notify(`${readable} of ${parsed.markets.length} markets read`, "success");
+    if (kept && tally?.kept) notify(`${tally.read} ${tally.read === 1 ? "sheet" : "sheets"} read, ${tally.kept} unchanged since the last read`, "success");
+    else if (kept) notify(`${readable} of ${parsed.markets.length} markets read`, "success");
     else notify("Loaded in this browser, but it couldn't be shared with the team. Refresh it later to try again.", "error");
     setLocal(storeReach() === "local");
   }, [go]);
@@ -266,7 +268,10 @@ export default function OrderForms({ wrikeData }) {
   // is the confirmation, so the old read is replaced without a second prompt.
   // With a market open only that market's sheet is read, and it is put back
   // into the film where it was.
-  const refresh = async () => {
+  // A whole-film Refresh skips sheets unchanged since they were last read
+  // (loadFilm); with ⌥ (Alt) held it reads every one.
+  const refresh = async (event) => {
+    const everything = !!event?.altKey;
     const current = file;
     setError("");
     setRefreshing({ done: 0, total: market ? 1 : 0 });
@@ -296,11 +301,14 @@ export default function OrderForms({ wrikeData }) {
         else notify("Read in this browser, but it couldn't be shared with the team.", "error");
         return;
       }
+      const tally = {};
       const loaded = await loadFilm({
         ...current.source,
+        previous: everything ? null : current,
+        tally,
         onProgress: (done, total) => setRefreshing({ done, total }),
       });
-      if (loaded) await adopt(loaded, current, market?.name);
+      if (loaded) await adopt(loaded, current, market?.name, tally);
       else setError("That film's order sheets are no longer in the market folders.");
     } catch (err) {
       setError(googleMessage(err));
@@ -419,7 +427,7 @@ export default function OrderForms({ wrikeData }) {
               {/* A film loaded before the page read Drive folders has no client to
                   read again from; it is loaded afresh with the plus beside the switcher. */}
               {file?.source?.clientId && (
-                <HoverLabel label={`Read from Google at ${readAt(lastRead)}`}>
+                <HoverLabel label={market ? `Read from Google at ${readAt(lastRead)}` : `Read from Google at ${readAt(lastRead)}. Sheets unchanged since are kept; hold ⌥ (Alt) to read every one.`}>
                   <button
                     onClick={refresh}
                     disabled={working}

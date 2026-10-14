@@ -8,6 +8,12 @@
 
 import { a1 } from "./cells";
 
+// Which version of this reading a saved market was made with. Bump it
+// whenever anything here (or readXlsx.js) starts reading a sheet differently
+// or reads something new: a Refresh only skips a sheet read by the current
+// version (loadFilm.js), so the bump makes the next Refresh read every sheet.
+export const READ_VERSION = 1;
+
 const norm = (v) => String(v ?? "").replace(/\s+/g, " ").trim().toLowerCase();
 
 // What an untouched template cell says. They read as empty everywhere.

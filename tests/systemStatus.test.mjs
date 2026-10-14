@@ -19,7 +19,11 @@ check("status: Sunday isn't", isWorkingHours(sundayNoon), false);
 {
   const input = { lastSyncedAt: ago(tuesdayNoon, 300), dictionariesAt: ago(tuesdayNoon, 60), lastEventAt: ago(tuesdayNoon, 300), webhook: { status: "Active" } };
   check("status: a stale sync warns in working hours", level(statusLines(input, tuesdayNoon), "sync"), "warn");
-  check("status: no events for hours warns in working hours", level(statusLines(input, tuesdayNoon), "event"), "warn");
+  check("status: no events for an hour or more in working hours is bad", level(statusLines(input, tuesdayNoon), "event"), "bad");
+  check("status: twenty quiet minutes is worth a look", level(statusLines({ ...input, lastEventAt: ago(tuesdayNoon, 30) }, tuesdayNoon), "event"), "warn");
+  check("status: none in the last hour in working hours is bad, some is fine",
+    [level(statusLines({ ...input, eventsLastHour: 0 }, tuesdayNoon), "eventsHour"), level(statusLines({ ...input, eventsLastHour: 412 }, tuesdayNoon), "eventsHour")], ["bad", "ok"]);
+  check("status: no count, no line", statusLines(input, tuesdayNoon).some((l) => l.id === "eventsHour"), false);
   const weekend = { ...input, lastSyncedAt: ago(sundayNoon, 300), lastEventAt: ago(sundayNoon, 300) };
   check("status: ...but not at the weekend", level(statusLines(weekend, sundayNoon), "event"), "info");
 }

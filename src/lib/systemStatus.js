@@ -35,7 +35,15 @@ function freshness(iso, now, staleAfter) {
 
 // webhook: { status: "Active" | "Suspended" | ... } for ours, null when Wrike
 // has none pointing here, undefined when Wrike couldn't be asked.
-export function statusLines({ lastSyncedAt, dictionariesAt, peopleSyncedAt, lastEventAt, webhook, cacheRows, removedRecently }, now = new Date()) {
+// Live updates in the working day: Wrike sends several hundred an hour, so
+// twenty quiet minutes is worth a look and an hour means they have stopped.
+function liveness(iso, now) {
+  const age = ageOf(iso, now);
+  if (!isWorkingHours(now)) return age <= 2 * HOUR ? "ok" : "info";
+  return age <= 20 * MIN ? "ok" : age <= HOUR ? "warn" : "bad";
+}
+
+export function statusLines({ lastSyncedAt, dictionariesAt, peopleSyncedAt, lastEventAt, eventsLastHour, webhook, cacheRows, removedRecently }, now = new Date()) {
   const lines = [
     {
       id: "sync",
@@ -62,8 +70,15 @@ export function statusLines({ lastSyncedAt, dictionariesAt, peopleSyncedAt, last
       id: "event",
       label: "Last live update from Wrike",
       value: timeAgo(lastEventAt, now),
-      level: freshness(lastEventAt, now, 2 * HOUR),
+      level: liveness(lastEventAt, now),
     },
+    // undefined when it couldn't be counted.
+    ...(eventsLastHour == null ? [] : [{
+      id: "eventsHour",
+      label: "Live updates in the last hour",
+      value: eventsLastHour.toLocaleString("en-GB"),
+      level: eventsLastHour > 0 ? "ok" : isWorkingHours(now) ? "bad" : "info",
+    }]),
   ];
 
   let hook;

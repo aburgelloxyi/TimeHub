@@ -14,9 +14,11 @@ const DOT = {
 
 async function loadStatus() {
   const since = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
-  const [meta, event, cache, removed, hooks] = await Promise.all([
+  const hourAgo = new Date(Date.now() - 60 * 60 * 1000).toISOString();
+  const [meta, event, hour, cache, removed, hooks] = await Promise.all([
     supabase.from("wrike_sync_meta").select("last_synced_at,dictionaries_refreshed_at,people_synced_at").eq("wrike_user_id", "shared").maybeSingle(),
     supabase.from("wrike_webhook_events").select("occurred_at").order("occurred_at", { ascending: false }).limit(1).maybeSingle(),
+    supabase.from("wrike_webhook_events").select("id", { count: "exact", head: true }).gt("occurred_at", hourAgo),
     supabase.from("wrike_tasks_cache").select("id", { count: "estimated", head: true }),
     supabase.from("wrike_tasks_cache_removed").select("id", { count: "exact", head: true }).gt("removed_at", since),
     fetch("/api/wrike/webhooks").then((r) => (r.ok ? r.json() : null)).catch(() => null),
@@ -26,6 +28,7 @@ async function loadStatus() {
     dictionariesAt: meta.data?.dictionaries_refreshed_at ?? null,
     peopleSyncedAt: meta.data?.people_synced_at,
     lastEventAt: event.data?.occurred_at ?? null,
+    eventsLastHour: hour.error ? null : hour.count,
     webhook: hooks ? findOurWebhook(hooks.data, window.location.origin) : undefined,
     cacheRows: cache.error ? null : cache.count,
     removedRecently: removed.error ? null : removed.count,
@@ -89,6 +92,13 @@ export function SystemStatusCard() {
             </li>
           ))}
         </ul>
+      )}
+      {/* Registered, but nothing arriving in the working day: Wrike may have
+          suspended it after failed deliveries without saying so. */}
+      {hookLine?.level !== "bad" && lines.some((l) => (l.id === "event" || l.id === "eventsHour") && l.level === "bad") && (
+        <p className="mt-3 text-xs text-rose-600">
+          No live updates from Wrike for an hour in the working day. Boards only catch up on the 15-minute sync meanwhile. If it lasts, register live updates again from "Enable live task sync".
+        </p>
       )}
       {hookLine?.level === "bad" && (
         <div className="mt-3 flex items-center gap-3 text-xs">

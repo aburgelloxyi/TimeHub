@@ -237,9 +237,11 @@ const QUICK_LABEL = `shrink-0 text-[9px] font-black uppercase tracking-widest te
 function QuickChip({ entry, step, from, onAdd }) {
   const [code, ...rest] = String(entry.jobNumber).split(",");
   const name = entry.filmTitle || rest.join(",").trim() || code.trim();
-  // The hover card: the job's number (XY014384) and the category, no more.
+  // The hover card: the job's number (XY014384) with what the job is (the
+  // part after the comma, "Showreel"), and the category, no more.
   const number = /\bXY\d+/i.exec(entry.jobNumber)?.[0] || code.trim();
-  const label = [number, entry.category].filter(Boolean).join(" · ");
+  const job = rest.join(",").trim() || entry.projectDescription;
+  const label = [[number, job].filter(Boolean).join(", "), entry.category].filter(Boolean).join(" · ");
   return (
     <HoverLabel label={label} delay={500}>
       <button

@@ -1,7 +1,8 @@
 import React, { useEffect, useState } from "react";
-import { ChevronRight, Clapperboard, CloudDownload, Loader2, Link2, Search } from "lucide-react";
+import { ChevronRight, Clapperboard, CloudDownload, Link2, Loader2, Search, X } from "lucide-react";
+import { motion } from "framer-motion";
 import { MEDIUM_LABEL, MEDIUM_CLASS } from "./format";
-import { connectGoogle, disconnectGoogle, googleConnected, onGoogleChange } from "../../lib/orderForms/googleApi";
+import { connectGoogle, googleConnected, onGoogleChange } from "../../lib/orderForms/googleApi";
 import { CLIENTS, clientFor } from "../../lib/orderForms/driveTree";
 import { listFilms, loadFilm } from "../../lib/orderForms/loadFilm";
 
@@ -79,7 +80,9 @@ function ListingFilms({ studio }) {
 }
 
 // `onPartial` gets the markets read so far while a film loads, then null.
-export default function GoogleSource({ onLoaded, onBusy, onPartial, signedInTick }) {
+// `onClose` puts a Close button at the card's top right, when the card was
+// opened beside films already loaded.
+export default function GoogleSource({ onLoaded, onBusy, onPartial, signedInTick, onClose }) {
   const [connected, setConnected] = useState(googleConnected);
   const [clientId, setClientId] = useState(""); // nothing picked: the studio is the first question
   const [films, setFilms] = useState(null); // the picked client's, null until listed
@@ -133,8 +136,8 @@ export default function GoogleSource({ onLoaded, onBusy, onPartial, signedInTick
   useEffect(() => {
     if (signedInTick && googleConnected()) setConnected(true);
   }, [signedInTick]);
-  // The header's Google button can connect or disconnect while this is open.
-  // Disconnecting there clears what was picked here, as Disconnect here does.
+  // The header's Google button, the one place to disconnect, can connect or
+  // disconnect while this is open. Disconnecting clears what was picked here.
   useEffect(() => onGoogleChange(() => {
     const now = googleConnected();
     setConnected(now);
@@ -177,7 +180,6 @@ export default function GoogleSource({ onLoaded, onBusy, onPartial, signedInTick
   const busy = !!working || !!progress;
   const wanted = query.trim().toLowerCase();
   const shownFilms = (films || []).filter((f) => !wanted || f.label.toLowerCase().includes(wanted));
-  const signOut = () => { disconnectGoogle(); setConnected(false); setClientId(""); setFilms(null); setFilmKey(""); setError(""); };
   const tileClass =
     "group relative overflow-hidden rounded-2xl border border-[#dce4ec] bg-white text-left transition-[border-color,box-shadow] hover:border-transparent hover:shadow-lg focus:outline-none focus-visible:ring-4 focus-visible:ring-[#12a0e1]/30 disabled:opacity-60";
   const sweepClass =
@@ -205,10 +207,25 @@ export default function GoogleSource({ onLoaded, onBusy, onPartial, signedInTick
               )}
           </p>
         </div>
-        {connected && (
-          <button onClick={signOut} disabled={busy} className="text-[11px] text-[#768994] hover:text-[#122027] underline underline-offset-2 disabled:opacity-50">
-            Sign out of Google
-          </button>
+        {/* The film bar's + bubble shrinks away as this one grows in its
+            place's stead, turning the opposite way, and opens out to its name
+            on hover as the + does. */}
+        {onClose && (
+          <motion.button
+            initial={{ scale: 0, opacity: 0, rotate: -90 }}
+            animate={{ scale: 1, opacity: 1, rotate: 0 }}
+            // Starts as the + is most of the way gone (0.36s), and overshoots
+            // a touch as it lands.
+            transition={{ duration: 0.45, ease: [0.34, 1.4, 0.64, 1], delay: 0.24 }}
+            onClick={onClose}
+            aria-label="Close the film loader"
+            className="group/close key press flex items-center p-2.5 rounded-xl border shadow-sm text-sm font-bold transition-colors focus:outline-none focus-visible:ring-4 focus-visible:ring-[#12a0e1]/30 bg-white border-[#dce4ec] text-[#122027] hover:border-[#12a0e1]"
+          >
+            <X className="w-4 h-4 shrink-0 transition-transform duration-300 ease-out group-hover/close:rotate-90" />
+            <span className="max-w-0 overflow-hidden whitespace-nowrap opacity-0 transition-[max-width,opacity,margin] duration-300 ease-out [@media(hover:hover)]:group-hover/close:max-w-[6rem] [@media(hover:hover)]:group-hover/close:opacity-100 [@media(hover:hover)]:group-hover/close:ml-2">
+              Close
+            </span>
+          </motion.button>
         )}
       </div>
 

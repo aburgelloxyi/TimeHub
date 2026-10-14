@@ -400,7 +400,7 @@ export default function OrderForms({ wrikeData }) {
         )}
 
         {files && googleConfigured() && (empty || adding || partial) && (
-          <GoogleSource onLoaded={addFilm} onBusy={setGoogleBusy} onPartial={setPartial} signedInTick={signedInTick} />
+          <GoogleSource onLoaded={addFilm} onBusy={setGoogleBusy} onPartial={setPartial} signedInTick={signedInTick} onClose={adding && !empty ? () => setAdding(false) : undefined} />
         )}
         {adding && !empty && !partial && (
           <p className="text-sm text-[#768994] px-1">

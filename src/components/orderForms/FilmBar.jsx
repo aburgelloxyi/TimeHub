@@ -1,6 +1,6 @@
 import React from "react";
 import { Check, ChevronDown, ChevronRight, Film, Plus } from "lucide-react";
-import { motion } from "framer-motion";
+import { AnimatePresence, motion } from "framer-motion";
 import PickerMenu from "./PickerMenu";
 import { CLIENTS, clientFor } from "../../lib/orderForms/driveTree";
 import { loadedAgo, MEDIUM_LABEL as MEDIUM, MEDIUM_CLASS, MEDIUM_SOLID } from "./format";
@@ -106,23 +106,27 @@ export default function FilmBar({ files, selectedId, onSelect, onRemove, stalene
       )}
 
       {/* Loading another film belongs with the films. An icon that opens out
-          to its name on hover, like the timesheet's tools; a plus that turns
-          to a cross while the loader is open. */}
-      {onAdd && (
-        <button
+          to its name on hover, like the timesheet's tools. While the loader
+          is open it shrinks away into its centre, as the loader's own close
+          bubble grows from its centre (GoogleSource), and back on close. */}
+      <AnimatePresence initial={false}>
+        {onAdd && !adding && (
+        <motion.button
+          key="add"
+          initial={{ scale: 0, opacity: 0 }}
+          animate={{ scale: 1, opacity: 1, transition: { duration: 0.42, ease: [0.34, 1.4, 0.64, 1], delay: 0.12 } }}
+          exit={{ scale: 0, opacity: 0, rotate: 90, transition: { duration: 0.36, ease: [0.55, 0, 0.75, 0.2] } }}
           onClick={onAdd}
-          aria-expanded={adding}
-          aria-label={adding ? "Close the film loader" : "Load another film"}
-          className={`group/add key press flex items-center p-2.5 rounded-xl border shadow-sm text-sm font-bold transition-colors focus:outline-none focus-visible:ring-4 focus-visible:ring-[#12a0e1]/30 ${
-            adding ? "bg-[#122027] border-[#122027] text-white" : "bg-white border-[#dce4ec] text-[#122027] hover:border-[#12a0e1]"
-          }`}
+          aria-label="Load another film"
+          className="group/add key press flex items-center p-2.5 rounded-xl border shadow-sm text-sm font-bold transition-colors focus:outline-none focus-visible:ring-4 focus-visible:ring-[#12a0e1]/30 bg-white border-[#dce4ec] text-[#122027] hover:border-[#12a0e1]"
         >
-          <Plus className={`w-4 h-4 shrink-0 transition-transform duration-300 ease-out ${adding ? "rotate-45" : "group-hover/add:rotate-90"}`} />
+          <Plus className="w-4 h-4 shrink-0 transition-transform duration-300 ease-out group-hover/add:rotate-90" />
           <span className="max-w-0 overflow-hidden whitespace-nowrap opacity-0 transition-[max-width,opacity,margin] duration-300 ease-out [@media(hover:hover)]:group-hover/add:max-w-[10rem] [@media(hover:hover)]:group-hover/add:opacity-100 [@media(hover:hover)]:group-hover/add:ml-2 group-focus-visible/add:max-w-[10rem] group-focus-visible/add:opacity-100 group-focus-visible/add:ml-2">
-            {adding ? "Close" : "Load another film"}
+            Load another film
           </span>
-        </button>
-      )}
+        </motion.button>
+        )}
+      </AnimatePresence>
 
       <div className="ml-auto flex items-center gap-2">{children}</div>
     </div>

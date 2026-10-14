@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { Check, ChevronRight, ExternalLink, FileSpreadsheet, Link2, Loader2, PencilLine, Send } from "lucide-react";
+import { Check, ChevronRight, Copy, ExternalLink, EyeOff, FileSpreadsheet, Link2, Loader2, PencilLine, Send } from "lucide-react";
+import { useContextMenu } from "../shared/ContextMenu";
 import { AnimatePresence, motion } from "framer-motion";
 import { checkMarketFolder } from "../../lib/orderForms/wrikeMarketFolder";
 import { fetchTasksUnderFolder } from "../../lib/wrikeCampaign";
@@ -292,9 +293,10 @@ export default function MarketView({ market, kind, filmTitle, clientId, filmKey,
   const firstTicked = orders[[...ticked][0]];
   const bulkChoices = bulkField && !bulkField.type ? choicesFor(firstTicked?.cells?.[bulk.field]) : null;
 
-  const startBriefing = async () => {
-    // Everything ready to brief starts ticked: that is usually the batch.
-    const fresh = new Set(orders.map((_, i) => i).filter(briefable));
+  // `only` is the orders to tick (a row's "Brief just this order"); otherwise
+  // everything ready to brief starts ticked, which is usually the batch.
+  const startBriefing = async (only) => {
+    const fresh = new Set((Array.isArray(only) ? only : orders.map((_, i) => i)).filter(briefable));
     setTicked(fresh);
     setExpanded(null);
     setBriefing({ loading: true });
@@ -307,6 +309,39 @@ export default function MarketView({ market, kind, filmTitle, clientId, filmKey,
     }
   };
   const stopBriefing = () => { setBriefing(null); setTicked(new Set()); };
+
+  // Right-click (or a long press) on an order: what isn't already a click
+  // away on the row. Opening it, Wrike and the delivery link are on the row
+  // itself; copying, briefing just this one and setting it aside aren't.
+  const rowMenu = useContextMenu();
+  const copy = (text, what) =>
+    navigator.clipboard.writeText(text).then(() => notify(`${what} copied`, "success")).catch(() => notify("Couldn't copy from here."));
+  const itemsFor = (i) => {
+    const o = orders[i];
+    const task = tasks[i];
+    const link = linkFor(i);
+    const name = o.xyi?.title || o.deliveryName;
+    return [
+      name && { label: "Copy task name", icon: Copy, onSelect: () => copy(name, "Task name") },
+      task && { label: "Copy Wrike link", icon: Copy, onSelect: () => copy(taskLink(task), "Wrike link") },
+      link && { label: "Copy delivery link", icon: Copy, onSelect: () => copy(link, "Delivery link") },
+      "-",
+      !task && hasArtwork(o) && filmTitle && !editing && !briefing && { label: "Brief just this order", icon: Send, onSelect: () => startBriefing([i]) },
+      decide && !editing && { label: "Set aside", icon: EyeOff, onSelect: () => decide.onSetAside(o) },
+    ];
+  };
+  // Said once, the first time someone has a market's orders in front of them.
+  useEffect(() => {
+    if (!orders.length) return;
+    try {
+      if (localStorage.getItem("xyi_tip_order_menu")) return;
+      localStorage.setItem("xyi_tip_order_menu", "1");
+    } catch { return; }
+    const t = setTimeout(() => notify("Tip: right-click an order for its quick actions.", "info"), 1200);
+    return () => clearTimeout(t);
+    // Once, on the first market opened.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Arrived to brief: start once the market is on screen, then forget the
   // instruction so a reload doesn't start it again.
@@ -645,6 +680,7 @@ export default function MarketView({ market, kind, filmTitle, clientId, filmKey,
 
   return (
     <div className="view-in bg-white border border-[#dce4ec] rounded-2xl shadow-sm overflow-hidden">
+      {rowMenu.menu}
       <div className="flex flex-wrap items-center gap-3 px-5 py-4 border-b border-[#dce4ec]">
         <nav aria-label="Where you are" className="flex items-center gap-1.5 min-w-0">
           <button
@@ -743,7 +779,7 @@ export default function MarketView({ market, kind, filmTitle, clientId, filmKey,
               ) : (
                 <HoverLabel label={wrikeFolder?.state === "missing" ? "Add this market's folder to Wrike first" : undefined}>
                   <button
-                    onClick={startBriefing}
+                    onClick={() => startBriefing()}
                     className={`group press flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg text-sm font-bold transition-[box-shadow,opacity] ${
                       wrikeFolder?.state === "missing"
                         ? "border border-[#dce4ec] text-[#768994]"
@@ -978,6 +1014,7 @@ export default function MarketView({ market, kind, filmTitle, clientId, filmKey,
                   <React.Fragment key={orderKey(o)}>
                     <tr
                       data-order-row={o.row}
+                      {...rowMenu.bind(() => itemsFor(i))}
                       onClick={() => { if (!editing) toggleRow(i); setSelected(i); }}
                       title={editing ? undefined : "Open this order's details"}
                       style={{ "--i": i }}

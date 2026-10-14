@@ -98,3 +98,11 @@ check(
     [...keepForCache([batch, sub, elsewhere], [], folders, new Set()).keys()], ["b", "s"]);
   check("no folder tree: nothing extra", [...keepForCache([batch], [], {}, new Set()).keys()], []);
 }
+
+// Deleted tasks (Wrike's recycle bin) are never kept, however they qualified.
+{
+  const team = new Set(["U1"]);
+  const live = { id: "a", title: "Live", responsibleIds: ["U1"], parentIds: [] };
+  const gone = { id: "b", title: "Gone", responsibleIds: ["U1"], parentIds: [], scope: "RbTask" };
+  check("a recycled task isn't kept, so the sync purges it", [...keepForCache([live, gone], [], {}, team).keys()], ["a"]);
+}

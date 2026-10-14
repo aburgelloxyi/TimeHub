@@ -433,6 +433,8 @@ export function marketFolderIds(folderDictionary) {
   return inside;
 }
 
+export const isRecycled = (task) => /^Rb/i.test(task?.scope || "");
+
 // What the shared cache keeps out of a batch from Wrike: whatever filterToTeams
 // keeps, anything filed in a market's folder (see marketFolderIds), plus every
 // subtask of a kept task, however deep. People are usually
@@ -444,7 +446,11 @@ export function marketFolderIds(folderDictionary) {
 // keep its subtasks in. A subtask is recognised from either side: the parent's
 // subTaskIds, or its own superTaskIds (the list endpoint drops optional fields
 // after its first page, so one of the two can be missing).
-export function keepForCache(batch, cached, folderDictionary, teamIds) {
+export function keepForCache(everything, cached, folderDictionary, teamIds) {
+  // A task in Wrike's recycle bin (scope "Rb…") is deleted, whatever it was:
+  // Wrike still returns it when asked by id. Never kept, so the callers purge
+  // it like any task no longer needed.
+  const batch = (everything || []).filter((t) => !isRecycled(t));
   const kept = new Map(filterToTeams(batch, folderDictionary, teamIds).map((t) => [t.id, t]));
   // Anything filed in a market's folder is a client order's task, assigned or
   // not: a PM makes a market's batch before handing it out, and until then
@@ -460,7 +466,7 @@ export function keepForCache(batch, cached, folderDictionary, teamIds) {
     keptIds.add(t.id);
     for (const id of t.subTaskIds || []) childIds.add(id);
   };
-  for (const t of cached || []) if (!inBatch.has(t.id)) keep(t);
+  for (const t of cached || []) if (!inBatch.has(t.id) && !isRecycled(t)) keep(t);
   for (const t of kept.values()) keep(t);
 
   let grew = true;

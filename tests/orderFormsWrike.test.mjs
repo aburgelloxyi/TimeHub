@@ -99,3 +99,14 @@ check("no parent loaded", taskSummary(sub, undefined), {
   check("a motion order is offered only motion tasks", makeMatcher(za).candidates(order, "motion").map((c) => c.task.id), ["m1"]);
   check("without a kind, everything for the film and market", makeMatcher(za).candidates(order).map((c) => c.task.id).sort(), ["m1", "p1"]);
 }
+
+// A deleted task (in Wrike's recycle bin) is never a match.
+{
+  const { makeMatcher } = await import("../src/lib/orderForms/wrikeMatch.js");
+  const tasks = [
+    { id: "live", title: "SF_INTL_StaticLegendary_DOOH_DigitalCityLights_1080x1920px_10s_AT", scope: "WsTask" },
+    { id: "gone", title: "SF_INTL_StaticLegendary_DOOH_DigitalCityLights_1080x1920px_10s_AT", scope: "RbTask" },
+  ];
+  const o = (row) => ({ tab: "T", row, xyi: { title: "SF_INTL_StaticLegendary_DOOH_DigitalCityLights_1080x1920px_10s_AT" } });
+  check("two orders, one live task and one deleted: the second order matches nothing", makeMatcher(tasks).match([o(4), o(5)]).map((m) => m?.task.id || null), ["live", null]);
+}

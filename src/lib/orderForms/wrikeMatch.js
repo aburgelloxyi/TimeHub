@@ -179,7 +179,10 @@ export const orderKey = (order) => `${order.tab || ""}|${order.row}|${taskKey(or
 // permalink } }. Those are known even while TimeHub hasn't loaded them, which
 // it won't until someone on a team is assigned.
 // A task is given to one order only, exact names first, then the closest.
-export function makeMatcher(tasks) {
+export function makeMatcher(everything) {
+  // A task in Wrike's recycle bin is deleted, even if a browser's copy of the
+  // cache still has it (the cache drops them; see keepForCache).
+  const tasks = (everything || []).filter((t) => !/^Rb/i.test(t?.scope || ""));
   const exact = indexTasks(tasks);
   const byId = new Map((tasks || []).map((t) => [t.id, t]));
   const buckets = new Map();

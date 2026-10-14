@@ -20,6 +20,8 @@ import { googleMessage } from "./GoogleSource";
 import { applyCellChanges, connectGoogleForWriting, googleCanWrite, googleConnected, readCellChoices } from "../../lib/orderForms/googleApi";
 import { cellRange, editChanges, reversed } from "../../lib/orderForms/corrections";
 import { readMarketForBriefing, suggestBatchName, suggestDue, planBatch, createBatch, hasArtwork } from "../../lib/orderForms/wrikeBatch";
+import { planFields } from "../../lib/orderForms/wrikeFields";
+import BriefPreview from "./BriefPreview";
 import { confirmAction } from "../../lib/confirm";
 import { notify } from "../../lib/toast";
 import { formatDay, pillClass, undatedNote, STATUS_CLASS, STATUS_LABEL, URGENCY_TEXT } from "./format";
@@ -318,19 +320,30 @@ export default function MarketView({ market, kind, filmTitle, clientId, filmKey,
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [briefOnOpen]);
 
-  const createInWrike = async () => {
+  // The brief as it stands: what would be made, and the fields each task
+  // gets. Worked out live, so the preview follows the ticks, name and date.
+  const brief = useMemo(() => {
+    if (!briefing?.ok) return null;
     const chosen = [...ticked].sort((a, b) => a - b).map((i) => orders[i]);
     const plan = planBatch({ name: briefing.name, due: briefing.due, orders: chosen });
+    const fields = planFields(chosen, { fields: briefing.fields || {}, jobNumber: briefing.jobNumber, keyOf: orderKey, overrides: briefing.overrides || {} });
+    const titles = Object.fromEntries(Object.entries(briefing.fields || {}).map(([title, f]) => [f.id, title]));
+    return { plan, fields, titles };
+  }, [briefing, ticked, orders]);
+  const pastDue = !!briefing?.due && briefing.due < today;
+
+  const previewBrief = () => {
+    if (!brief.plan.ok) return notify(brief.plan.problems[0]);
+    setBriefing((b) => ({ ...b, previewing: true }));
+  };
+
+  // From the preview, which is the confirmation: it shows every task first.
+  const createInWrike = async () => {
+    const { plan, fields } = brief;
     if (!plan.ok) return notify(plan.problems[0]);
-    const ok = await confirmAction({
-      title: `Create "${plan.name}" and ${plan.tasks.length} ${plan.tasks.length === 1 ? "subtask" : "subtasks"} in Wrike?`,
-      message: `In ${briefing.film} › ${briefing.parentFolder.title} › ${briefing.folder.title}, due ${formatDay(plan.due, today)}${briefing.status ? `, starting as ${briefing.status.name}` : ""}.\n\n${plan.tasks.slice(0, 6).map((t) => t.title).join("\n")}${plan.tasks.length > 6 ? `\nand ${plan.tasks.length - 6} more` : ""}\n\nNobody is assigned; do that in Wrike.`,
-      confirmLabel: "Create in Wrike",
-    });
-    if (!ok) return;
     setCreating({ done: 0, total: plan.tasks.length });
     try {
-      const result = await createBatch({ folder: briefing.folder, status: briefing.status, plan, onProgress: (done, total) => setCreating({ done, total }) });
+      const result = await createBatch({ folder: briefing.folder, status: briefing.status, plan, fields, onProgress: (done, total) => setCreating({ done, total }) });
       if (result.made.length) decide?.onBriefed(result.made);
       notify(
         result.failed.length
@@ -760,9 +773,48 @@ export default function MarketView({ market, kind, filmTitle, clientId, filmKey,
             <p role="alert" className="text-sm font-medium text-amber-700">{briefing.reason}</p>
           ) : (
             <>
+              {/* Where the brief is: setting it up, then checking it. */}
+              <ol className="flex items-center gap-2 mb-3 text-[10px] font-black uppercase tracking-widest">
+                {["Choose orders", "Check what's made", "Create in Wrike"].map((step, n) => {
+                  const at = briefing.previewing ? 1 : 0;
+                  return (
+                    <li key={step} className="flex items-center gap-2">
+                      {n > 0 && <span aria-hidden className={`w-6 h-px ${n <= at ? "bg-[#12a0e1]" : "bg-[#dce4ec]"}`} />}
+                      <span className={`flex items-center gap-1.5 ${n === at ? "text-[#122027]" : n < at ? "text-[#12a0e1]" : "text-[#b6c3cc]"}`}>
+                        <span className={`w-4 h-4 flex items-center justify-center rounded-full text-[9px] ${
+                          n === at ? "bg-gradient-to-br from-[#12a0e1] to-[#1cc1a5] text-white" : n < at ? "bg-[#12a0e1]/15 text-[#12a0e1]" : "bg-slate-100 text-[#b6c3cc]"
+                        }`}>{n < at ? <Check className="w-2.5 h-2.5" /> : n + 1}</span>
+                        {step}
+                      </span>
+                    </li>
+                  );
+                })}
+              </ol>
+
+              {briefing.previewing && brief?.plan.ok ? (
+                <BriefPreview
+                  path={`${briefing.film} › ${briefing.parentFolder.title} › ${briefing.folder.title}`}
+                  plan={brief.plan}
+                  fields={brief.fields}
+                  titles={brief.titles}
+                  status={briefing.status}
+                  today={today}
+                  creating={creating}
+                  onBack={() => setBriefing((b) => ({ ...b, previewing: false }))}
+                  overrides={briefing.overrides || {}}
+                  onOverride={(title, set) => setBriefing((b) => {
+                    const next = { ...b.overrides };
+                    if (set) next[title] = set; else delete next[title];
+                    return { ...b, overrides: next };
+                  })}
+                  onCreate={createInWrike}
+                />
+              ) : (
+              <>
               <div className="flex flex-wrap items-end gap-3">
-                <p className="text-sm font-bold text-[#122027] pb-2 mr-1">
-                  {ticked.size} {ticked.size === 1 ? "order" : "orders"} to brief
+                <p className="pb-2 mr-1 text-sm text-[#768994]">
+                  <span className="font-bold text-[#122027]">{ticked.size} {ticked.size === 1 ? "order" : "orders"}</span>
+                  {ticked.size > 0 && <> → a batch task with {ticked.size} {ticked.size === 1 ? "subtask" : "subtasks"}</>}
                 </p>
                 <label className="w-72">
                   <span className="block mb-1 text-[10px] font-black uppercase tracking-widest text-[#768994]">Batch task name</span>
@@ -777,24 +829,31 @@ export default function MarketView({ market, kind, filmTitle, clientId, filmKey,
                   <DateField floating compact value={briefing.due} onChange={(due) => setBriefing((b) => ({ ...b, due }))} ariaLabel="Batch due date" placeholder="Pick a date" allowClear={false} />
                 </div>
                 <button
-                  onClick={createInWrike}
-                  disabled={!!creating || ticked.size === 0}
-                  className="press flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-bold transition-colors disabled:opacity-50"
+                  onClick={previewBrief}
+                  disabled={ticked.size === 0}
+                  className="group press flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-bold transition-colors disabled:opacity-50"
                 >
-                  {creating ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Send className="w-3.5 h-3.5" />}
-                  {creating ? `Creating ${creating.done} of ${creating.total}` : `Create ${ticked.size + 1} tasks in Wrike`}
+                  Check what's made
+                  <ChevronRight className="w-3.5 h-3.5 transition-transform duration-200 group-hover:translate-x-0.5" />
                 </button>
               </div>
+              {pastDue && (
+                <p className="mt-2 text-[11px] font-bold text-amber-700">
+                  The due date, {formatDay(briefing.due, today)}, has already passed. Pick the date the batch is due.
+                </p>
+              )}
               {waitingForArtwork > 0 && (
                 <p className="mt-2 text-[11px] font-bold text-amber-700">
                   {waitingForArtwork} {waitingForArtwork === 1 ? "order has" : "orders have"} no artwork selected, so {waitingForArtwork === 1 ? "it can't" : "they can't"} be briefed yet. Choose the artwork in the sheet (or with Edit), then brief {waitingForArtwork === 1 ? "it" : "them"}.
                 </p>
               )}
               <p className="mt-2 text-[11px] text-[#768994]">
-                One batch task in {briefing.film} › {briefing.parentFolder.title} › <span className="font-bold text-[#122027]">{briefing.folder.title}</span>, with a subtask for each ticked order, named as the sheet names it.{" "}
-                {briefing.status ? `They start as ${briefing.status.name} in the ${briefing.status.workflow} workflow.` : "No Backlog status was found in the Studio workflow, so they start in Wrike's default status."}{" "}
-                You're shown the full list before anything is created.
+                Into <span className="font-bold text-[#122027]">{briefing.folder.title}</span>, named as the sheet names each order,{" "}
+                {briefing.status ? `starting as ${briefing.status.name}.` : "in Wrike's default status (no Backlog status was found in the Studio workflow)."}{" "}
+                Nothing is created until you've checked it.
               </p>
+              </>
+              )}
             </>
           )}
         </div>

@@ -1,25 +1,24 @@
 // Google sign-in and the Drive and Sheets reads behind Client Orders.
 //
-// Reading is by drive.readonly: the signed-in person's own access, used to
-// read files and nothing else. Writing (the Corrections section) is a second,
-// separate sign-in that asks for spreadsheet edit access only when someone
-// applies a correction, so nobody who only reads is asked for it. Both tokens
-// go to googleapis.com and nowhere else, so the Worker and Supabase never see
-// them or anything they read.
+// The sign-in is kept by the Worker (worker/googleAuth.js), as Wrike's is: a
+// member approves TimeHub once on Google's page, and the Worker holds the
+// refresh token and hands this page an access token whenever it asks. One
+// approval covers reading Drive and editing sheets (Corrections, Fill links),
+// and it lasts until it is disconnected or revoked in Google. The page calls
+// Google itself with the token, so what it reads goes from Google to the
+// browser and nowhere else.
 //
-// The token is kept in sessionStorage so a reload doesn't sign the PM out. It
-// lasts an hour at most and goes when the tab closes. After that, the next
-// click that needs Google asks again without the account or consent screens,
-// because Google remembers the grant.
+// The access token is kept in sessionStorage so a reload has it at once, and
+// the Worker is asked for the next one shortly before it lapses.
 
 import { cellRange } from "./cells";
 
 // Public by design, like the Supabase anon key: it names the app to Google and
-// only works from the origins registered for it in Google Cloud.
+// only works from the origins registered for it in Google Cloud. The Calendar
+// sign-in (googleCalendar.js) still uses it with Google's in-browser library.
 export const CLIENT_ID =
   import.meta.env.VITE_GOOGLE_CLIENT_ID ||
   "1047837005704-h04jm219u2mm5rojhpv1vo797rei5v3a.apps.googleusercontent.com";
-const SCOPE = "https://www.googleapis.com/auth/drive.readonly";
 const GSI_SRC = "https://accounts.google.com/gsi/client";
 const WRITE_SCOPE = "https://www.googleapis.com/auth/spreadsheets";
 const DRIVE = "https://www.googleapis.com/drive/v3";
@@ -34,15 +33,14 @@ export const googleConfigured = () => !!CLIENT_ID;
 
 let token = null;
 let expiresAt = 0;
+let scopes = "";
+let email = "";
 let gsiLoading = null;
 
 const TOKEN_KEY = "xyi_google_token";
-// Set once Google has granted access in this browser. It only decides whether
-// to ask Google quietly next time; it is not a credential.
-const GRANTED_KEY = "xyi_google_granted";
 
-// Whoever shows whether this tab is connected asks to be told when that
-// changes: the sign-in can happen from several places on the page.
+// Whoever shows whether this page is connected asks to be told when that
+// changes: it can change from several places on the page.
 const listeners = new Set();
 const changed = () => listeners.forEach((fn) => fn());
 export function onGoogleChange(fn) {
@@ -51,40 +49,112 @@ export function onGoogleChange(fn) {
 }
 
 function remember() {
+  scheduleRenewal();
   changed();
   try {
-    sessionStorage.setItem(TOKEN_KEY, JSON.stringify({ token, expiresAt }));
-    localStorage.setItem(GRANTED_KEY, "1");
+    sessionStorage.setItem(TOKEN_KEY, JSON.stringify({ token, expiresAt, scopes, email }));
   } catch {
-    // Storage off: the sign-in still works for this page view.
+    // Storage off: the token still works for this page view.
   }
 }
 
 function forget() {
   token = null;
   expiresAt = 0;
+  clearTimeout(renewTimer);
   try { sessionStorage.removeItem(TOKEN_KEY); } catch { /* nothing stored */ }
   changed();
 }
 
 try {
   const saved = JSON.parse(sessionStorage.getItem(TOKEN_KEY) || "null");
-  if (saved?.token && saved.expiresAt > Date.now()) ({ token, expiresAt } = saved);
+  if (saved?.token && saved.expiresAt > Date.now()) ({ token, expiresAt, scopes = "", email = "" } = saved);
   else sessionStorage.removeItem(TOKEN_KEY);
 } catch {
-  // Unreadable or no storage: start signed out.
+  // Unreadable or no storage: ask the Worker below.
 }
 
 export const googleConnected = () => !!token && Date.now() < expiresAt;
+// The Google account connected, while it is.
+export const googleAccount = () => (googleConnected() ? email : "");
 
-// Drops this tab's sign-in. Google still remembers the grant; removing that is
-// done from the person's Google account.
-// The edit access a correction asked for goes too: "disconnected" should not
-// leave this tab still able to write to sheets.
+// `reason` is what the page shows a message for; nothing read from a sheet is
+// ever put in one of these.
+export class GoogleError extends Error {
+  constructor(reason, status) {
+    super(reason);
+    this.reason = reason;
+    this.status = status;
+  }
+}
+
+// Asks the Worker for an access token. true when it gave one; false when this
+// person hasn't connected Google, or isn't signed in to TimeHub. Throws when
+// the Worker couldn't answer, which is not the same as signed out. Callers at
+// the same moment share one request.
+let asking = null;
+export function refreshGoogle() {
+  asking ||= (async () => {
+    try {
+      const res = await fetch("/api/google/token", { cache: "no-store" });
+      if (res.status === 401 || res.status === 404) {
+        if (token) forget();
+        return false;
+      }
+      if (!res.ok) throw new GoogleError("failed", res.status);
+      const body = await res.json();
+      token = body.accessToken;
+      // A minute early, so a read never starts on a token about to lapse.
+      expiresAt = Date.parse(body.expiresAt) - 60 * 1000;
+      scopes = body.scopes || "";
+      email = body.email || "";
+      remember();
+      return true;
+    } catch (err) {
+      throw err instanceof GoogleError ? err : new GoogleError("failed");
+    } finally {
+      asking = null;
+    }
+  })();
+  return asking;
+}
+
+// The next token is asked for 30 seconds before this one counts as lapsed,
+// which is inside the two minutes in which the Worker renews rather than
+// handing back the same one. A page left open stays connected.
+let renewTimer = null;
+function scheduleRenewal() {
+  clearTimeout(renewTimer);
+  if (!token) return;
+  renewTimer = setTimeout(() => refreshGoogle().catch(() => {}), Math.max(expiresAt - Date.now() - 30 * 1000, 5000));
+}
+
+// Google's page sends people back here with google_connected=1 or
+// google_error=…, read once and taken out of the address.
+let returned = null;
+export const googleReturn = () => returned;
+if (typeof window !== "undefined") {
+  try {
+    const u = new URL(window.location.href);
+    const ok = u.searchParams.get("google_connected");
+    const error = u.searchParams.get("google_error");
+    if (ok || error) {
+      returned = { connected: !!ok, error: error || "" };
+      u.searchParams.delete("google_connected");
+      u.searchParams.delete("google_error");
+      window.history.replaceState(window.history.state, "", `${u.pathname}${u.search}${u.hash}`);
+    }
+  } catch { /* an address we can't read is left alone */ }
+  // Whether this person is connected, asked quietly when the page loads.
+  if (googleConnected()) scheduleRenewal();
+  else refreshGoogle().catch(() => {});
+}
+
+// Drops the connection everywhere: the Worker deletes it and revokes it at
+// Google.
 export function disconnectGoogle() {
-  writeToken = null;
-  writeExpiresAt = 0;
   forget();
+  fetch("/api/google/oauth/disconnect", { method: "POST" }).catch(() => {});
 }
 
 export function loadGsi() {
@@ -102,61 +172,45 @@ export function loadGsi() {
   return gsiLoading;
 }
 
-// `reason` is what the page shows a message for; nothing read from a sheet is
-// ever put in one of these.
-export class GoogleError extends Error {
-  constructor(reason, status) {
-    super(reason);
-    this.reason = reason;
-    this.status = status;
-  }
+// Off to Google's approval page through the Worker, and back to this page.
+// The page is left, so the promise is never settled.
+function goApprove() {
+  const back = `${window.location.pathname}${window.location.hash}`;
+  window.location.assign(`/api/google/oauth/start?return=${encodeURIComponent(back)}`);
+  return new Promise(() => {});
 }
 
-// Opens Google's own sign-in window. Must be called from a click, or the
-// browser blocks the popup.
-//
-// Once access has been granted in this browser the request is made with an
-// empty prompt, which Google answers without showing the account chooser or
-// the consent screen when it can. If that quiet request fails, the next one
-// asks in full.
+// Connects this person's Google. Connected already (on another browser, or
+// with a token that had lapsed): straight back. Otherwise Google's page, once.
 export async function connectGoogle() {
   if (!CLIENT_ID) throw new GoogleError("not-configured");
-  await loadGsi();
-  const quiet = localStorage.getItem(GRANTED_KEY) === "1";
-  const failed = (reason) => {
-    if (quiet) localStorage.removeItem(GRANTED_KEY);
-    return new GoogleError(reason);
-  };
-  return new Promise((resolve, reject) => {
-    const client = window.google.accounts.oauth2.initTokenClient({
-      client_id: CLIENT_ID,
-      scope: SCOPE,
-      callback: (res) => {
-        if (res.error || !res.access_token) return reject(failed("denied"));
-        token = res.access_token;
-        // A minute early, so a load never starts on a token about to lapse.
-        expiresAt = Date.now() + (Number(res.expires_in) - 60) * 1000;
-        remember();
-        resolve();
-      },
-      error_callback: (err) => reject(failed(err?.type === "popup_closed" ? "cancelled" : "popup")),
-    });
-    client.requestAccessToken(quiet ? { prompt: "" } : {});
-  });
+  if (googleConnected()) return;
+  if (await refreshGoogle()) return;
+  return goApprove();
 }
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-async function gfetch(url, tries = 4) {
-  if (!googleConnected()) throw new GoogleError("signed-out");
-  const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
+// A token to call Google with: this page's, or the next one from the Worker.
+async function bearer() {
+  if (googleConnected() || (await refreshGoogle())) return token;
+  throw new GoogleError("signed-out");
+}
+
+async function gfetch(url, tries = 4, renewed = false) {
+  const res = await fetch(url, { headers: { Authorization: `Bearer ${await bearer()}` } });
   if (res.ok) return res;
-  if (res.status === 401) { forget(); throw new GoogleError("signed-out", 401); }
+  // Google turned the token down: one more try with a fresh one first.
+  if (res.status === 401) {
+    forget();
+    if (!renewed && (await refreshGoogle().catch(() => false))) return gfetch(url, tries, true);
+    throw new GoogleError("signed-out", 401);
+  }
   // Google answers 429, or 403 with a rate reason, when reads come too fast.
   const limited = res.status === 429 || (res.status === 403 && /rateLimit|quota/i.test(await res.clone().text()));
   if ((limited || res.status >= 500) && tries > 1) {
     await sleep((5 - tries) * 1500 + Math.random() * 500);
-    return gfetch(url, tries - 1);
+    return gfetch(url, tries - 1, renewed);
   }
   throw new GoogleError(res.status === 404 ? "not-found" : res.status === 403 ? "no-access" : "failed", res.status);
 }
@@ -256,39 +310,21 @@ export async function readCellChoices(spreadsheetId, tab, cells) {
 
 // ── Writing a correction ──────────────────────────────────────────────────────
 
-// Kept in memory only: an hour at most, and gone on reload.
-let writeToken = null;
-let writeExpiresAt = 0;
+// Editing sheets is part of the one approval. A connection made without it
+// goes back through Google's page to add it.
+export const googleCanWrite = () => googleConnected() && scopes.includes(WRITE_SCOPE);
 
-export const googleCanWrite = () => !!writeToken && Date.now() < writeExpiresAt;
-
-// Asks Google for edit access to spreadsheets. Must be called from a click.
 export async function connectGoogleForWriting() {
-  if (!CLIENT_ID) throw new GoogleError("not-configured");
-  await loadGsi();
-  return new Promise((resolve, reject) => {
-    const client = window.google.accounts.oauth2.initTokenClient({
-      client_id: CLIENT_ID,
-      scope: WRITE_SCOPE,
-      callback: (res) => {
-        // Granted the sign-in but not the scope: Google returns a token that can't write.
-        const granted = window.google.accounts.oauth2.hasGrantedAllScopes(res, WRITE_SCOPE);
-        if (res.error || !res.access_token || !granted) return reject(new GoogleError("denied"));
-        writeToken = res.access_token;
-        writeExpiresAt = Date.now() + (Number(res.expires_in) - 60) * 1000;
-        resolve();
-      },
-      error_callback: (err) => reject(new GoogleError(err?.type === "popup_closed" ? "cancelled" : "popup")),
-    });
-    client.requestAccessToken();
-  });
+  if (googleCanWrite()) return;
+  if ((await refreshGoogle()) && googleCanWrite()) return;
+  return goApprove();
 }
 
 async function wfetch(url, init) {
-  if (!googleCanWrite()) throw new GoogleError("signed-out");
-  const res = await fetch(url, { ...init, headers: { Authorization: `Bearer ${writeToken}`, "Content-Type": "application/json" } });
+  if (!googleCanWrite() && !((await refreshGoogle()) && googleCanWrite())) throw new GoogleError("signed-out");
+  const res = await fetch(url, { ...init, headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" } });
   if (res.ok) return res.json();
-  if (res.status === 401) { writeToken = null; throw new GoogleError("signed-out", 401); }
+  if (res.status === 401) { forget(); throw new GoogleError("signed-out", 401); }
   throw new GoogleError(res.status === 404 ? "not-found" : res.status === 403 ? "no-access" : "failed", res.status);
 }
 

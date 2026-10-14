@@ -8,8 +8,8 @@ import { listFilms, loadFilm } from "../../lib/orderForms/loadFilm";
 // Loading a film straight from Google, as one question at a time filling the
 // card: connect, which studio, which film. Picking the film loads it. What has
 // been answered sits in the card's header as a trail that steps back. The films are
-// whatever has an order sheet in the studio's market folders. The sign-in
-// lasts for this tab; nothing here writes to Google.
+// whatever has an order sheet in the studio's market folders. Nothing here
+// writes to Google.
 
 export const GOOGLE_MESSAGES = {
   "not-configured": "Google sign-in isn't set up for this copy of TimeHub.",
@@ -17,7 +17,14 @@ export const GOOGLE_MESSAGES = {
   denied: "Google didn't grant access. Use your xyi.com account and allow read access.",
   cancelled: "Sign-in was closed before it finished.",
   popup: "The Google sign-in window was blocked. Allow pop-ups for this site and retry.",
-  "signed-out": "Your Google sign-in has lapsed. Connect again.",
+  "signed-out": "Google needs connecting again. Use the G at the top of the page.",
+  // Sent back from Google's approval page by the Worker (googleAuth.js).
+  not_signed_in: "Sign in to TimeHub with Wrike first, then connect Google.",
+  access_denied: "Google didn't grant access. Use your xyi.com account and allow it.",
+  invalid_state: "That Google sign-in had expired or been opened twice. Connect again.",
+  token_exchange_failed: "Google's sign-in didn't complete. Connect again.",
+  no_refresh_token: "Google didn't grant lasting access. Connect again.",
+  save_failed: "The Google connection couldn't be saved. Try again in a moment.",
   "not-found": "That client's Drive folder couldn't be found.",
   "no-access": "Your Google account can't open that client's Drive folder.",
   failed: "Google couldn't be reached. Try again in a moment.",

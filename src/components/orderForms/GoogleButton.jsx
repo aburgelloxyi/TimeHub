@@ -1,14 +1,13 @@
 import React, { useEffect, useState } from "react";
 import { Loader2 } from "lucide-react";
-import { connectGoogle, disconnectGoogle, googleConnected, onGoogleChange } from "../../lib/orderForms/googleApi";
+import { connectGoogle, disconnectGoogle, googleAccount, googleConnected, googleReturn, onGoogleChange } from "../../lib/orderForms/googleApi";
 import { googleMessage } from "./GoogleSource";
 import { notify } from "../../lib/toast";
 
-// The Google sign-in, always in reach in the page header. A round button with
-// Google's G that widens when pointed at (or focused) to say whether this tab
-// is connected and offer the one thing to do about it. The sign-in itself was
-// only reachable from the "add a film" panel, and whether you were connected
-// wasn't shown anywhere.
+// The Google connection, always in reach in the page header. A round button
+// with Google's G that widens when pointed at (or focused) to say whether
+// Google is connected and offer the one thing to do about it. Connecting is
+// once (the Worker keeps it; see googleApi.js), so green is the usual state.
 
 // Google's mark in one colour: the chip's own text colour, so it is white when
 // off and green when on.
@@ -34,13 +33,21 @@ export default function GoogleButton() {
   const [connected, setConnected] = useState(googleConnected);
   const [working, setWorking] = useState(false);
 
-  // The sign-in can change from anywhere on the page (Refresh, saving a
-  // correction, the add-a-film panel), and it lapses by itself after an hour.
+  // The connection can change from anywhere on the page (the add-a-film
+  // panel, a read Google turned down), and the page asks the Worker for it
+  // as it loads.
   useEffect(() => {
     const sync = () => setConnected(googleConnected());
     const off = onGoogleChange(sync);
     const timer = setInterval(sync, 30000);
     return () => { off(); clearInterval(timer); };
+  }, []);
+
+  // Back from Google's approval page: say how it went, once.
+  useEffect(() => {
+    const back = googleReturn();
+    if (back?.connected) notify("Google connected. It stays connected until you disconnect it.", "success");
+    else if (back?.error) notify(googleMessage({ reason: back.error }), "error");
   }, []);
 
   const connect = async () => {
@@ -70,7 +77,7 @@ export default function GoogleButton() {
         {icon}
         <span className={reveal}>
           <span className="overflow-hidden">
-            <span className="block whitespace-nowrap text-sm font-bold pr-4">{working ? "Waiting for Google…" : "Connect Google"}</span>
+            <span className="block whitespace-nowrap text-sm font-bold pr-4">{working ? "Opening Google…" : "Connect Google"}</span>
           </span>
         </span>
       </button>
@@ -83,7 +90,7 @@ export default function GoogleButton() {
       <span className={reveal}>
         <span className="overflow-hidden">
           <span className="flex items-center gap-3 whitespace-nowrap pr-1.5">
-            <span className="text-sm font-bold text-white">Connected</span>
+            <span className="text-sm font-bold text-white">{googleAccount() || "Connected"}</span>
             <button
               onClick={disconnectGoogle}
               className="press px-3 py-1.5 rounded-full bg-white/15 hover:bg-white/25 text-xs font-bold text-white transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-white/70"

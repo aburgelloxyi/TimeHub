@@ -4,6 +4,8 @@
 import worker from "../worker/index.js";
 import { authorizeUrl, emailFromIdToken, safeReturn } from "../worker/googleAuth.js";
 
+// Put back after, so the stand-in doesn't answer for the tests that follow.
+const realFetch = globalThis.fetch;
 const env = { SUPABASE_URL: "https://sb.test", SUPABASE_SERVICE_ROLE_KEY: "srk", GOOGLE_CLIENT_ID: "cid", GOOGLE_CLIENT_SECRET: "sec" };
 const ctx = { waitUntil: () => {} };
 const json = (body, status = 200) => new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
@@ -80,3 +82,5 @@ check("only paths on this site to go back to", ["/#orderforms", "//evil.com", "h
   const res = await worker.fetch(req("/api/google/token"), env, ctx);
   check("Google having a bad moment is not a sign-out", res.status, 503);
 }
+
+globalThis.fetch = realFetch;

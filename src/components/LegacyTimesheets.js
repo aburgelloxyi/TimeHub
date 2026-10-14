@@ -68,7 +68,7 @@ import { BOOKMARKLET_VERSION } from "../lib/bookmarkletVersion";
 
 import { HoverLabel } from "./shared/FloatingCard";
 import { Rolling, Tick, prefersReducedMotion } from "./shared/motion";
-import { snapshotRows, glideRows, sweepRows, nudge, picturesOf } from "./legacy/rowMotion";
+import { snapshotRows, glideRows, sweepRows, nudge, picturesOf, arriveRows } from "./legacy/rowMotion";
 import WrikeHubModal from "./legacy/WrikeHubModal";
 import UnloggedReminderModal from "./legacy/UnloggedReminderModal";
 import BatchEditBar from "./legacy/BatchEditBar";
@@ -249,6 +249,11 @@ export default function LegacyTimesheet({ wrikeData, isAdmin = false }) {
   // so a narrow laptop scales the table down instead of pushing the last
   // columns off the right where nobody finds them.
   const consolScrollRef = useRef(null);
+  // Rows just added, to animate in once they are drawn (arriveRows). Display
+  // only: noted before the save, played after the table has the rows, and
+  // dropped either way, so a failed save simply has nothing to show.
+  const arriving = useRef([]);
+  const welcome = (added) => { arriving.current.push(...added.map((r) => r.id)); };
   const { widths: consolWidths, resizeHandle: consolHandle } = useColumnResize(
     "legacy-consol-cols",
     CONSOL_COLS,
@@ -462,8 +467,10 @@ export default function LegacyTimesheet({ wrikeData, isAdmin = false }) {
   // --- Add blank row ---
   const handleAddRow = () => {
     if (frozenDays[activeDay]) return;
+    const id = newRowId();
+    welcome([{ id }]);
     addRow({
-      id: newRowId(),
+      id,
       taskId: null,
       dayOfWeek: activeDay,
       jobNumber: "",
@@ -485,8 +492,10 @@ export default function LegacyTimesheet({ wrikeData, isAdmin = false }) {
   // This is what lets you add times without leaving consolidated view.
   const addEntryToGroup = (g, extra = {}) => {
     if (frozenDays[activeDay]) return;
+    const id = newRowId();
+    welcome([{ id }]);
     addRow({
-      id: newRowId(),
+      id,
       taskId: null,
       dayOfWeek: activeDay,
       jobNumber: g.jobNumber || "",
@@ -1774,6 +1783,7 @@ export default function LegacyTimesheet({ wrikeData, isAdmin = false }) {
     const { rows: added, replaces } = groupMultiCountry
       ? mergeIntoSheet(newRows, rows.filter((r) => !frozenDays[r.dayOfWeek]))
       : { rows: newRows, replaces: [] };
+    welcome(added);
     if (!(await addRows(added))) {
       showToast("Those rows couldn't be saved, so nothing was added. Add them again.");
       return;
@@ -1934,6 +1944,7 @@ export default function LegacyTimesheet({ wrikeData, isAdmin = false }) {
         : { rows: newRows.map(({ _rawHours, ...r }) => r), replaces: [] };
 
       if (pulledRows.length > 0) {
+        welcome(pulledRows);
         if (!(await addRows(pulledRows))) {
           showToast("The pulled rows couldn't be saved, so nothing was added. Pull again.");
           return;
@@ -2169,6 +2180,13 @@ export default function LegacyTimesheet({ wrikeData, isAdmin = false }) {
   // The first cell is animated too, with the same frames. A sub-row's first
   // cell has a fill of its own that would cover the row's background there, and
   // both share the row's left edge, so the two passes line up as one.
+  useEffect(() => {
+    if (!arriving.current.length) return;
+    const ids = arriving.current;
+    arriving.current = [];
+    requestAnimationFrame(() => arriveRows(consolScrollRef.current, ids));
+  }, [rows]);
+
   const shownSaves = useRef({});
   useEffect(() => {
     const saved = justSaved || {};
@@ -2635,6 +2653,7 @@ export default function LegacyTimesheet({ wrikeData, isAdmin = false }) {
       });
     }
     if (!copies.length) return;
+    welcome(copies);
     addRows(copies);
     clearSelection();
     showToast(
@@ -2685,6 +2704,7 @@ export default function LegacyTimesheet({ wrikeData, isAdmin = false }) {
       // part-way leaves both rather than neither.
       const originals = selectedRows;
       const undo = async () => {
+        welcome(originals);
         if (!(await addRows(originals))) return;
         await deleteRows([merged.id]);
         showToast(`Unmerged: the ${originals.length} rows are back.`, "success");
@@ -2723,6 +2743,7 @@ export default function LegacyTimesheet({ wrikeData, isAdmin = false }) {
         taken.add(id);
         return { ...r, id };
       }));
+      welcome(parts);
       if (!(await addRows(parts))) return;
       await deleteRows(unmergeable.map((e) => e.id));
       clearSelection();
@@ -3383,18 +3404,31 @@ export default function LegacyTimesheet({ wrikeData, isAdmin = false }) {
                 </tr>
                 );
               })}
-              {/* Ghost Add Row */}
+              {/* Ghost Add Row. The whole width is the target; on hover it
+                  answers like something to press: the row takes a tint of the
+                  timesheet's blue, the label becomes a pill, the plus turns,
+                  and it gives a little under the click. Reachable by
+                  keyboard too. */}
               {rowsAreEditable && (
                 <tr
-                  className="group/addrow border-t border-dashed border-[#dce4ec] cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#12a0e1]/40"
+                  role="button"
+                  tabIndex={0}
+                  aria-label="Add a row"
+                  className="group/addrow border-t border-dashed border-[#dce4ec] cursor-pointer transition-colors duration-200 hover:bg-[#12a0e1]/[0.04] focus-visible:outline-none focus-visible:bg-[#12a0e1]/[0.06]"
                   onClick={handleAddRow}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" || e.key === " ") {
+                      e.preventDefault();
+                      handleAddRow();
+                    }
+                  }}
                 >
                   <td
                     colSpan={COLUMNS.length + 1}
-                    className="px-4 py-3 text-center"
+                    className="px-4 py-2.5 text-center"
                   >
-                    <span className="flex items-center justify-center gap-1.5 text-[11px] font-bold text-[#768994] group-hover/addrow:text-[#12a0e1] transition-colors">
-                      <Plus className="w-3.5 h-3.5" />
+                    <span className="inline-flex items-center justify-center gap-1.5 px-3 py-1 rounded-full border border-transparent text-[11px] font-bold text-[#768994] transition-[color,background-color,border-color,box-shadow,transform] duration-200 ease-out group-hover/addrow:text-[#12a0e1] group-hover/addrow:bg-white group-hover/addrow:border-[#12a0e1]/40 group-hover/addrow:shadow-sm group-hover/addrow:-translate-y-px group-active/addrow:translate-y-0 group-active/addrow:scale-[0.97] group-focus-visible/addrow:text-[#12a0e1] group-focus-visible/addrow:border-[#12a0e1]/60 motion-reduce:transition-none">
+                      <Plus className="w-3.5 h-3.5 transition-transform duration-300 ease-out group-hover/addrow:rotate-90" />
                       Add row
                     </span>
                   </td>

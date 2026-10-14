@@ -1,5 +1,5 @@
 // Movement for the timesheet's rows when the table rearranges itself: turning
-// Consolidated on or off, merging rows, locking the day.
+// Consolidated on or off, merging rows, locking the day, rows arriving.
 //
 // Everything here is display only. It reads where rows are on screen and
 // animates them, or pictures of them; it never reads a row's data, never calls
@@ -69,6 +69,28 @@ export function sweepRows(container) {
     });
   } catch {
     // No sweep.
+  }
+}
+
+// Rows that have just been added coming into place: each drops in from a few
+// pixels above as it fades up, one after another in the order they were
+// added, so a pull of six reads as six rows arriving and not as the table
+// redrawing. Rows not on screen (another day, a folded group) are skipped.
+export function arriveRows(container, ids) {
+  if (!container || !ids?.length || still()) return;
+  try {
+    let shown = 0;
+    for (const id of ids) {
+      const tr = container.querySelector(`tr[data-row-id="${CSS.escape(String(id))}"]`);
+      if (!tr) continue;
+      tr.animate(
+        [{ opacity: 0, transform: "translateY(-8px)" }, { opacity: 1, transform: "none" }],
+        // Past a dozen they come together: a cascade that long is a wait.
+        { duration: 340, delay: Math.min(shown++, 12) * 55, easing: EASE, fill: "backwards" }
+      );
+    }
+  } catch {
+    // No arrival.
   }
 }
 

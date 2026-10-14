@@ -1,4 +1,4 @@
-import { pickFilePathField, deliveryLinkOf, linksFromTasks } from "../src/lib/orderForms/deliveryLinks.js";
+import { pickFilePathField, pickFilePathFields, deliveryLinkOf, linksFromTasks } from "../src/lib/orderForms/deliveryLinks.js";
 
 const fields = [{ id: "A", title: "Job Number" }, { id: "B", title: "File Path" }, { id: "C", title: "Link" }];
 check("the File Path field, by title", pickFilePathField(fields), { id: "B", title: "File Path" });
@@ -33,3 +33,12 @@ check("fills empty cells that have a link, leaves the rest", planDeliveryFill(os
 });
 check("a sheet with no Delivery Link column has nothing to fill", planDeliveryFill([ord(5)], [{ id: "T5" }], ls), { changes: [], kept: 0, column: false });
 
+
+// One title, several fields: each space can make its own "File path".
+check("every field called File path, not just the first",
+  pickFilePathFields([{ id: "F1", title: "File path" }, { id: "J", title: "Job Number" }, { id: "F2", title: "File Path" }, { id: "L", title: "Delivery link" }]).map((f) => f.id),
+  ["F1", "F2"]);
+check("the looser names only when there is no File path", pickFilePathFields([{ id: "L", title: "Delivery link" }]).map((f) => f.id), ["L"]);
+check("a task's link under any of them",
+  linksFromTasks([{ id: "T1", customFields: [{ id: "F2", value: "https://enterprise.example/1" }] }, { id: "T2", customFields: [{ id: "F1", value: "/Volumes/x" }, { id: "F2", value: "https://e.example/2" }] }], ["F1", "F2"]),
+  { T1: "https://enterprise.example/1", T2: "https://e.example/2" });

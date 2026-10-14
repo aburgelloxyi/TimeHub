@@ -9,6 +9,18 @@ const norm = (s) => String(s || "").toLowerCase().replace(/[^a-z0-9]/g, "");
 
 // The field, found by title so it survives being recreated. null when the
 // account has none.
+//
+// A Wrike account can hold several fields with one title: each space can
+// make its own "File path". The task carries a value under whichever of them
+// its space uses, so all the fields so named are looked at
+// (pickFilePathFields); taking only the first found missed every task whose
+// space had its own.
+export function pickFilePathFields(fields) {
+  const exact = (fields || []).filter((f) => norm(f.title) === "filepath");
+  const loose = (fields || []).filter((f) => /^(delivery)?(file)?(path|link)s?$/.test(norm(f.title)) && norm(f.title) !== "link");
+  return (exact.length ? exact : loose).map((f) => ({ id: f.id, title: f.title }));
+}
+
 export function pickFilePathField(fields) {
   const field =
     (fields || []).find((f) => norm(f.title) === "filepath") ||
@@ -25,11 +37,16 @@ export function deliveryLinkOf(value) {
   return found ? found[0].replace(/[).,;]+$/, "") : "";
 }
 
-// { taskId: link } for the tasks that carry one.
-export function linksFromTasks(tasks, fieldId) {
+// { taskId: link } for the tasks that carry one. `fieldIds` is one field id
+// or several; a task's link is the first of them holding a web address.
+export function linksFromTasks(tasks, fieldIds) {
+  const ids = new Set([].concat(fieldIds || []));
   const links = {};
   for (const task of tasks || []) {
-    const link = deliveryLinkOf((task.customFields || []).find((c) => c.id === fieldId)?.value);
+    const link = (task.customFields || [])
+      .filter((c) => ids.has(c.id))
+      .map((c) => deliveryLinkOf(c.value))
+      .find(Boolean);
     if (link) links[task.id] = link;
   }
   return links;
@@ -56,14 +73,15 @@ export function planDeliveryFill(orders, tasks, links) {
   return { changes, kept, column };
 }
 
-// One lookup of the field per page load: its id doesn't change under us.
-let fieldOnce = null;
-const filePathField = () => (fieldOnce ||= fetchCustomFields().then(pickFilePathField).catch(() => { fieldOnce = null; return null; }));
+// One lookup of the fields per page load: their ids don't change under us.
+let fieldsOnce = null;
+const filePathFields = () => (fieldsOnce ||= fetchCustomFields().then(pickFilePathFields).catch(() => { fieldsOnce = null; return []; }));
 
 // Reads the delivery links on `taskIds` from Wrike. { field, links }, where
 // field is null when the account has no such custom field.
 export async function readDeliveryLinks(taskIds) {
-  const field = await filePathField();
-  if (!field || !taskIds.length) return { field, links: {} };
-  return { field, links: linksFromTasks(await fetchTasksById(taskIds), field.id) };
+  const fields = await filePathFields();
+  const field = fields[0] || null;
+  if (!fields.length || !taskIds.length) return { field, links: {} };
+  return { field, links: linksFromTasks(await fetchTasksById(taskIds), fields.map((f) => f.id)) };
 }

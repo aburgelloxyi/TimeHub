@@ -142,7 +142,9 @@ const taskDone = (task) =>
   !!task && (task.status === "Completed" || task.status === "Cancelled" || /deliver|complete|cancel/i.test(task.customStatusName || ""));
 
 export function ordersByMarket(files, todayIso, matchFor = () => []) {
-  const lists = { overdue: [], dueSoon: [], requested: [], pending: [], longOverdue: [] };
+  // toBrief and waitingArtwork cut across the others: an order due this week
+  // and not yet in Wrike is in both dueSoon and toBrief.
+  const lists = { overdue: [], dueSoon: [], requested: [], pending: [], longOverdue: [], toBrief: [], waitingArtwork: [] };
   const films = [];
   const longAgo = addDays(todayIso, -LONG_OVERDUE_DAYS);
   for (const raw of files || []) {
@@ -152,16 +154,7 @@ export function ordersByMarket(files, todayIso, matchFor = () => []) {
       if (market.unreadable) continue;
       const matches = matchFor(file, market) || [];
       const found = {};
-      market.orders.forEach((order, i) => {
-        counts.orders++;
-        const match = matches[i] || null;
-        if (taskDone(match?.task)) return;
-        const urgency = orderUrgency(order, todayIso);
-        const list = urgency === "overdue" ? (order.deliveryDeadline < longAgo ? "longOverdue" : "overdue")
-          : urgency
-          || (order.status === "requested" && !match ? "requested" : order.status === "pending" ? "pending" : null);
-        if (!list) return;
-        counts[list]++;
+      const into = (list, order, match) => {
         const group = found[list] || (found[list] = {
           fileId: file.id, film: file.name, kind: file.kind, market: market.name,
           sheetUrl: market.sheetUrl || "", canBrief: !!file.source?.clientId, orders: [], toBrief: 0,
@@ -169,6 +162,22 @@ export function ordersByMarket(files, todayIso, matchFor = () => []) {
         group.orders.push(order);
         // Briefable: not in Wrike, and its artwork chosen (see wrikeBatch.js).
         if (!match && String(order.artwork || "").trim()) group.toBrief++;
+      };
+      market.orders.forEach((order, i) => {
+        counts.orders++;
+        const match = matches[i] || null;
+        if (taskDone(match?.task)) return;
+        const urgency = orderUrgency(order, todayIso);
+        const longOver = urgency === "overdue" && order.deliveryDeadline < longAgo;
+        // Not in Wrike yet, unless long past its deadline (the film is
+        // usually over by then).
+        if (!match && !longOver && order.status !== "pending") into(String(order.artwork || "").trim() ? "toBrief" : "waitingArtwork", order, match);
+        const list = urgency === "overdue" ? (longOver ? "longOverdue" : "overdue")
+          : urgency
+          || (order.status === "requested" && !match ? "requested" : order.status === "pending" ? "pending" : null);
+        if (!list) return;
+        counts[list]++;
+        into(list, order, match);
       });
       for (const [list, group] of Object.entries(found)) {
         group.oldest = group.orders.map((o) => o.deliveryDeadline).filter(Boolean).sort()[0] || "";

@@ -104,7 +104,7 @@ const linkButtonClass =
 // onRestore(order) }. Rows set aside are listed under the orders and don't count.
 // `startBriefing` opens it already briefing (a link from the Control Centre);
 // `onStarted` is told once that has been acted on.
-export default function MarketView({ market, kind, filmTitle, clientId, filmKey, today, matcher, wrikeParents, decide, onBack, onChanged, startBriefing: briefOnOpen = false, onStarted }) {
+export default function MarketView({ market, kind, filmTitle, clientId, filmKey, today, matcher, wrikeParents, decide, onBack, onChanged, startBriefing: briefOnOpen = false, openRow = null, onStarted }) {
   const orders = market.orders;
   // The row being worked in (its dropdown choices are read), and the row opened out.
   const [selected, setSelected] = useState(0);
@@ -338,6 +338,21 @@ export default function MarketView({ market, kind, filmTitle, clientId, filmKey,
   };
 
   // From the preview, which is the confirmation: it shows every task first.
+  // Arrived at one order (the Control Centre's search): open its details and
+  // bring it into view, once.
+  useEffect(() => {
+    if (!openRow) return;
+    const i = orders.findIndex((o) => o.row === openRow);
+    if (i >= 0) {
+      setExpanded(i);
+      setSelected(i);
+      requestAnimationFrame(() => document.querySelector(`[data-order-row="${openRow}"]`)?.scrollIntoView({ block: "center", behavior: "smooth" }));
+    }
+    onStarted?.();
+    // Once, on arrival.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [openRow]);
+
   const createInWrike = async () => {
     const { plan, fields } = brief;
     if (!plan.ok) return notify(plan.problems[0]);
@@ -962,6 +977,7 @@ export default function MarketView({ market, kind, filmTitle, clientId, filmKey,
                 return (
                   <React.Fragment key={orderKey(o)}>
                     <tr
+                      data-order-row={o.row}
                       onClick={() => { if (!editing) toggleRow(i); setSelected(i); }}
                       title={editing ? undefined : "Open this order's details"}
                       style={{ "--i": i }}

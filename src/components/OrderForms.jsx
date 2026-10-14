@@ -32,7 +32,8 @@ import { isoToday } from "../utils/dates";
 // `#orderforms/<fileId>/<market>` — the open file and market live in the hash,
 // so a reload stays put and Back returns from a market to the overview.
 // A fourth part, "brief", opens the market ready to brief its orders into
-// Wrike (the Control Centre links that way). It is acted on once and dropped.
+// Wrike, and "row-14" opens it at that order (the Control Centre links both
+// ways). It is acted on once and dropped.
 const readHash = () => {
   const [page, fileId, market, action] = window.location.hash.slice(1).split("/");
   if (page !== "orderforms") return {};
@@ -439,7 +440,7 @@ export default function OrderForms({ wrikeData }) {
               </div>
             )}
             {market
-              ? <MarketView market={market} kind={market.kind || file.kind} filmTitle={filmTitleOf(file)} clientId={file.source?.clientId} filmKey={file.source?.filmKey} startBriefing={view.action === "brief"} onStarted={() => go(file.id, market.name, { replace: true })} onChanged={refresh} today={today} matcher={matcher} wrikeParents={wrikeParents} decide={decideFor(file, market.name)} onBack={() => go(file.id, null)} />
+              ? <MarketView market={market} kind={market.kind || file.kind} filmTitle={filmTitleOf(file)} clientId={file.source?.clientId} filmKey={file.source?.filmKey} startBriefing={view.action === "brief"} openRow={Number(/^row-(\d+)$/.exec(view.action || "")?.[1]) || null} onStarted={() => go(file.id, market.name, { replace: true })} onChanged={refresh} today={today} matcher={matcher} wrikeParents={wrikeParents} decide={decideFor(file, market.name)} onBack={() => go(file.id, null)} />
               : (
                 <MarketList
                   file={shown}

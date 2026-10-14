@@ -116,6 +116,8 @@ check("a request past its deadline is overdue", orderUrgency(order("requested", 
   check("nothing loaded", ordersByMarket([], "2026-10-12").films, []);
   const noArt = ordersByMarket([{ id: "f", name: "F", kind: "print", loadedAt: "t", source: { clientId: "paramount" }, markets: [{ name: "NZ", orders: [{ ...o(4, "requested", "2026-10-15"), artwork: "" }] }] }], "2026-10-12");
   check("an order without its artwork isn't counted as ready to brief", noArt.dueSoon[0].toBrief, 0);
+  check("and waits for its artwork instead", [noArt.toBrief.length, noArt.waitingArtwork[0].orders.length], [0, 1]);
+  check("a briefable order is also listed to brief", got.toBrief[0].toBrief > 0, true);
 }
 
 // ── Changes between reads ─────────────────────────────────────────────────────

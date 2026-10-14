@@ -14,6 +14,11 @@ import MarketFlag from "./MarketFlag";
 import { googleMessage } from "./GoogleSource";
 import { formatDay, MEDIUM_CLASS, MEDIUM_LABEL } from "./format";
 import Sweep, { sweepClass } from "./Sweep";
+import { supabase } from "../../lib/supabaseClient";
+import { defaultLayout, normaliseLayout } from "../../lib/orderForms/controlLayout";
+import { searchIndex, searchOrders, groupHits } from "../../lib/orderForms/search";
+import { SearchBar, SearchResults } from "./ControlSearch";
+import CustomiseLayout from "./CustomiseLayout";
 
 // The PMs' Control Centre, a section of the profile: what needs a PM across every film the team has
 // loaded in Client Orders, without opening each one. A trial.
@@ -31,6 +36,8 @@ const GROUPS = [
   { id: "dueSoon", label: "Due this week", note: "Deadline within seven days, not confirmed", tone: "text-amber-700" },
   { id: "requested", label: "To pick up", note: "In the sheet, not yet in Wrike or ticked as received", tone: "text-sky-600" },
   { id: "pending", label: "Pending with the market", note: "The market has marked these as not ready", tone: "text-[#768994]" },
+  { id: "toBrief", label: "To brief", note: "Not in Wrike yet, with their artwork chosen", tone: "text-[#12a0e1]" },
+  { id: "waitingArtwork", label: "Waiting for artwork", note: "Not in Wrike yet, and no artwork chosen in the sheet", tone: "text-amber-700" },
   { id: "changed", label: "Changed since you looked", note: "Markets a Refresh found different", tone: "text-indigo-600" },
 ];
 
@@ -80,8 +87,38 @@ const actionClass =
   `${sweepClass} group/a flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border border-[#dce4ec] bg-white text-xs font-bold text-[#122027] transition-[border-color,box-shadow,transform,color] duration-200 ease-out active:scale-[0.97] hover:border-[#12a0e1] hover:-translate-y-px hover:shadow-md hover:shadow-[#12a0e1]/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#12a0e1]/40 disabled:opacity-60 disabled:hover:translate-y-0 disabled:hover:shadow-none`;
 const iconMove = "w-3 h-3 transition-transform duration-300 ease-out";
 
+// The layout a PM chose (controlLayout.js), on their profile, with a copy in
+// the browser so the page opens in it before the profile has answered.
+const LAYOUT_KEY = "control-centre-layout";
+function useLayout() {
+  const me = localStorage.getItem("wrike_user_id");
+  const [layout, setLayout] = useState(() => {
+    try { return normaliseLayout(JSON.parse(localStorage.getItem(LAYOUT_KEY))); } catch { return defaultLayout(); }
+  });
+  useEffect(() => {
+    if (!me) return;
+    supabase.from("profiles").select("control_centre_layout").eq("wrike_user_id", me).maybeSingle().then(({ data }) => {
+      if (!data?.control_centre_layout) return;
+      const saved = normaliseLayout(data.control_centre_layout);
+      setLayout(saved);
+      try { localStorage.setItem(LAYOUT_KEY, JSON.stringify(saved)); } catch { /* the profile still has it */ }
+    });
+  }, [me]);
+  const save = (next) => {
+    setLayout(next);
+    try { localStorage.setItem(LAYOUT_KEY, JSON.stringify(next)); } catch { /* the profile still has it */ }
+    if (me) {
+      supabase.from("profiles").update({ control_centre_layout: next }).eq("wrike_user_id", me)
+        .then(({ error }) => { if (error) notify("Your layout couldn't be saved to your profile, so it is kept in this browser only."); });
+    }
+  };
+  return [layout, save];
+}
+
 export default function ControlCentre({ wrikeData }) {
   const [files, setFiles] = useState(null);
+  const [layout, setLayout] = useLayout();
+  const [query, setQuery] = useState("");
   const [only, setOnly] = useState(null); // a count at the top, clicked, narrows the page to that list
   const [open, setOpen] = useState({}); // market lines opened out to their orders
   const [showOld, setShowOld] = useState(false);
@@ -100,6 +137,14 @@ export default function ControlCentre({ wrikeData }) {
       Object.entries(f.changes || {}).map(([market, c]) => ({ fileId: f.id, film: f.name, kind: f.kind, market, note: changesNote(c) })));
     return { ...lists, changed };
   }, [files, today, matcher]);
+
+  // Every order, ready to search; built when the films or Wrike change.
+  const index = useMemo(
+    () => searchIndex(files, today, (file, market) => matcher.match(market.orders, file.links?.[market.name], file.briefed?.[market.name], market.kind || file.kind)),
+    [files, today, matcher]
+  );
+  const result = useMemo(() => searchOrders(index, query), [index, query]);
+  const searching = query.trim().length > 0;
 
   const put = (updated) => setFiles((prev) => prev.map((f) => (f.id === updated.id ? updated : f)));
 
@@ -278,10 +323,91 @@ export default function ControlCentre({ wrikeData }) {
     </div>
   );
 
+  const on = new Set(layout.filter((s) => s.on).map((s) => s.id));
+  const groupOf = Object.fromEntries(GROUPS.map((g) => [g.id, g]));
+  // The order lists the PM shows, in their order: a count each at the top, and
+  // a section each below.
+  const shownGroups = layout.filter((s) => s.on && groupOf[s.id]).map((s) => groupOf[s.id]);
+
+  // Long past their deadline: by now a question about the film, not a job
+  // for today. Kept folded away, with the way to answer it beside each.
+  const longOverdueSection = !only && found.longOverdue.length > 0 && (
+    <div key="longOverdue" className={card}>
+      <button onClick={() => setShowOld((v) => !v)} aria-expanded={showOld} className="w-full flex items-center gap-2 px-5 py-3 text-left hover:bg-slate-50 transition-colors">
+        <ChevronRight className={`w-4 h-4 text-[#768994] transition-transform duration-200 ${showOld ? "rotate-90" : ""}`} />
+        <span className="text-[10px] font-black uppercase tracking-widest text-[#122027]">Long overdue</span>
+        <span className="text-xs text-[#768994] truncate">
+          {count(older, "order")} in {count(found.longOverdue.length, "market")}, more than {LONG_OVERDUE_DAYS} days past the deadline. Usually the film has finished: say so on a line and it stops being counted.
+        </span>
+      </button>
+      {showOld && <div className="border-t border-[#dce4ec]">{found.longOverdue.map((group, i) => line(group, "text-[#768994]", i, true))}</div>}
+    </div>
+  );
+
+  const filmsSection = (
+    <div key="films" className={card}>
+      {heading("Films", "What this is read from. A finished film stops being counted here, for everyone; nothing in it is set aside or deleted.")}
+      {found.films.map((f) => (
+        <div key={f.fileId} className={`flex flex-wrap items-center gap-x-3 gap-y-1 px-5 py-2.5 border-b border-slate-100 last:border-b-0 text-sm ${f.wrapped ? "opacity-60" : ""}`}>
+          <a href={linkTo(f.fileId)} className="font-bold text-[#122027] truncate hover:underline">{filmTitle(f.film)}</a>
+          <span className={`px-1.5 py-0.5 rounded-md text-[10px] font-black uppercase tracking-wider ${MEDIUM_CLASS[f.kind] || MEDIUM_CLASS.motion}`}>{MEDIUM_LABEL[f.kind] || "Motion"}</span>
+          {!f.wrapped && <span className="text-xs text-[#768994] tabular-nums">{f.orders} orders{f.longOverdue ? ` · ${f.longOverdue} long overdue` : ""}</span>}
+          {/* As fresh as the last read: this page doesn't go to Google unless asked. */}
+          <span className="ml-auto text-xs text-[#768994]">read {readAt(f.loadedAt)}</span>
+          <button onClick={() => setWrapped(f.fileId, !f.wrapped)} className={actionClass}>
+            <Sweep />
+            {f.wrapped ? "Count it again" : "Film's finished"}
+          </button>
+        </div>
+      ))}
+    </div>
+  );
+
+  const sectionFor = (id) => {
+    const g = groupOf[id];
+    if (g) {
+      if (!found[g.id].length || (only && only !== g.id)) return null;
+      return (
+        <div key={g.id} className={card}>
+          {heading(g.label, `${g.id === "changed" ? count(found.changed.length, "market") : `${count(ordersIn(found[g.id]), "order")} in ${count(found[g.id].length, "market")}`} · ${g.note}`)}
+          {g.id === "changed"
+            ? found.changed.map((e, i) => (
+              <a
+                key={`${e.fileId}|${e.market}`}
+                ref={cascade(`changed-${e.fileId}|${e.market}`, i)}
+                href={linkTo(e.fileId, e.market)}
+                className="group flex items-center gap-3 px-5 py-3 border-b border-slate-100 last:border-b-0 text-sm hover:bg-slate-50 transition-colors"
+              >
+                <MarketFlag name={e.market} className="w-7 h-5" />
+                <span className="font-display text-base font-bold tracking-tight text-[#122027] w-48 shrink-0 truncate">{e.market}</span>
+                <span className="flex-1 min-w-0 truncate font-bold text-indigo-600">{e.note}</span>
+                <span className="hidden md:block w-56 shrink-0 truncate text-xs text-[#768994] text-right">{filmTitle(e.film)}</span>
+                <ChevronRight className="w-4 h-4 text-[#b6c3cc] group-hover:text-[#122027] group-hover:translate-x-0.5 transition-[color,transform] shrink-0" />
+              </a>
+            ))
+            : found[g.id].map((group, i) => line(group, g.tone, i))}
+        </div>
+      );
+    }
+    if (id === "longOverdue") return longOverdueSection;
+    if (id === "films") return filmsSection;
+    return null;
+  };
+
   return (
     <div className="space-y-4">
-      <div className="grid grid-cols-2 lg:grid-cols-5 gap-3">
-        {GROUPS.map((g, i) => {
+      <div className="flex items-stretch gap-3">
+        <SearchBar value={query} onChange={setQuery} />
+        <CustomiseLayout layout={layout} onChange={setLayout} />
+      </div>
+
+      {searching ? (
+        <SearchResults query={query} result={result} groups={groupHits(result.hits)} films={files.length} today={today} linkTo={linkTo} />
+      ) : (
+      <>
+      {shownGroups.length > 0 && (
+      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-[repeat(auto-fit,minmax(9.5rem,1fr))] gap-3">
+        {shownGroups.map((g, i) => {
           const n = ordersIn(found[g.id]);
           const on = only === g.id;
           return (
@@ -307,66 +433,18 @@ export default function ControlCentre({ wrikeData }) {
           );
         })}
       </div>
+      )}
 
-      {GROUPS.filter((g) => found[g.id].length > 0 && (!only || only === g.id)).map((g) => (
-        <div key={g.id} className={card}>
-          {heading(g.label, `${g.id === "changed" ? count(found.changed.length, "market") : `${count(ordersIn(found[g.id]), "order")} in ${count(found[g.id].length, "market")}`} · ${g.note}`)}
-          {g.id === "changed"
-            ? found.changed.map((e, i) => (
-              <a
-                key={`${e.fileId}|${e.market}`}
-                ref={cascade(`changed-${e.fileId}|${e.market}`, i)}
-                href={linkTo(e.fileId, e.market)}
-                className="group flex items-center gap-3 px-5 py-3 border-b border-slate-100 last:border-b-0 text-sm hover:bg-slate-50 transition-colors"
-              >
-                <MarketFlag name={e.market} className="w-7 h-5" />
-                <span className="font-display text-base font-bold tracking-tight text-[#122027] w-48 shrink-0 truncate">{e.market}</span>
-                <span className="flex-1 min-w-0 truncate font-bold text-indigo-600">{e.note}</span>
-                <span className="hidden md:block w-56 shrink-0 truncate text-xs text-[#768994] text-right">{filmTitle(e.film)}</span>
-                <ChevronRight className="w-4 h-4 text-[#b6c3cc] group-hover:text-[#122027] group-hover:translate-x-0.5 transition-[color,transform] shrink-0" />
-              </a>
-            ))
-            : found[g.id].map((group, i) => line(group, g.tone, i))}
-        </div>
-      ))}
+      {layout.filter((s) => s.on).map((s) => sectionFor(s.id))}
 
-      {GROUPS.every((g) => found[g.id].length === 0) && (
+      {shownGroups.length > 0 && shownGroups.every((g) => found[g.id].length === 0) && (
         <p className={`${card} px-6 py-10 text-center text-sm text-[#768994]`}>
-          Nothing is late, due this week, waiting to be picked up, pending or changed in the films loaded.
+          Nothing in your sections needs you in the films loaded.
         </p>
       )}
-
-      {/* Long past their deadline: by now a question about the film, not a job
-          for today. Kept folded away, with the way to answer it beside each. */}
-      {!only && found.longOverdue.length > 0 && (
-        <div className={card}>
-          <button onClick={() => setShowOld((v) => !v)} aria-expanded={showOld} className="w-full flex items-center gap-2 px-5 py-3 text-left hover:bg-slate-50 transition-colors">
-            <ChevronRight className={`w-4 h-4 text-[#768994] transition-transform duration-200 ${showOld ? "rotate-90" : ""}`} />
-            <span className="text-[10px] font-black uppercase tracking-widest text-[#122027]">Long overdue</span>
-            <span className="text-xs text-[#768994] truncate">
-              {count(older, "order")} in {count(found.longOverdue.length, "market")}, more than {LONG_OVERDUE_DAYS} days past the deadline. Usually the film has finished: say so on a line and it stops being counted.
-            </span>
-          </button>
-          {showOld && <div className="border-t border-[#dce4ec]">{found.longOverdue.map((group, i) => line(group, "text-[#768994]", i, true))}</div>}
-        </div>
+      </>
       )}
 
-      <div className={card}>
-        {heading("Films", "What this is read from. A finished film stops being counted here, for everyone; nothing in it is set aside or deleted.")}
-        {found.films.map((f) => (
-          <div key={f.fileId} className={`flex flex-wrap items-center gap-x-3 gap-y-1 px-5 py-2.5 border-b border-slate-100 last:border-b-0 text-sm ${f.wrapped ? "opacity-60" : ""}`}>
-            <a href={linkTo(f.fileId)} className="font-bold text-[#122027] truncate hover:underline">{filmTitle(f.film)}</a>
-            <span className={`px-1.5 py-0.5 rounded-md text-[10px] font-black uppercase tracking-wider ${MEDIUM_CLASS[f.kind] || MEDIUM_CLASS.motion}`}>{MEDIUM_LABEL[f.kind] || "Motion"}</span>
-            {!f.wrapped && <span className="text-xs text-[#768994] tabular-nums">{f.orders} orders{f.longOverdue ? ` · ${f.longOverdue} long overdue` : ""}</span>}
-            {/* As fresh as the last read: this page doesn't go to Google unless asked. */}
-            <span className="ml-auto text-xs text-[#768994]">read {readAt(f.loadedAt)}</span>
-            <button onClick={() => setWrapped(f.fileId, !f.wrapped)} className={actionClass}>
-              <Sweep />
-  {f.wrapped ? "Count it again" : "Film's finished"}
-            </button>
-          </div>
-        ))}
-      </div>
     </div>
   );
 }

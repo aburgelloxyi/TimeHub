@@ -49,7 +49,7 @@ const BY_NAME = [
   [/content approved/, "purple"],
   [/backlog/, "slate"],
 ];
-const styleFor = (name, color) => {
+export const styleFor = (name, color) => {
   const n = String(name || "").trim().toLowerCase();
   const hit = BY_NAME.find(([re]) => re.test(n));
   return hit ? STYLE[hit[1]] : statusStyle(color);

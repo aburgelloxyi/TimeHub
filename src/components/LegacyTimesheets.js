@@ -28,6 +28,13 @@ import {
   CheckCircle,
   AlertCircle,
   Plus,
+  Copy,
+  ClipboardCopy,
+  ExternalLink,
+  Merge,
+  Split,
+  Square,
+  CheckSquare,
 } from "lucide-react";
 import {
   TERRITORIES,
@@ -72,6 +79,8 @@ import { snapshotRows, glideRows, sweepRows, nudge, picturesOf, arriveRows } fro
 import WrikeHubModal from "./legacy/WrikeHubModal";
 import UnloggedReminderModal from "./legacy/UnloggedReminderModal";
 import BatchEditBar from "./legacy/BatchEditBar";
+import { useContextMenu } from "./shared/ContextMenu";
+import { wrikeLinkForId } from "../lib/wrikeLink";
 import DayTabs from "./legacy/DayTabs";
 import TimesheetActionBar from "./legacy/TimesheetActionBar";
 import { newRowId } from "../utils/rowId";
@@ -2636,11 +2645,12 @@ export default function LegacyTimesheet({ wrikeData, isAdmin = false }) {
   //     time cell speak for whichever came first.
   // Everything that identifies the WORK — job, film, client, description,
   // territory, category, notes — is what you wanted copied, and is.
-  const duplicateSelected = useCallback(() => {
+  // `ids` are the rows to copy: the ticked ones, or one from a row's menu.
+  const duplicateRows = useCallback((ids) => {
     if (frozenDays[activeDay]) return;
     const byId = new Map(rows.map((r) => [r.id, r]));
     const copies = [];
-    for (const id of selectedRowIds) {
+    for (const id of ids) {
       const src = byId.get(id);
       if (!src) continue;
       const { id: _id, wrikeTimelogId: _logId, taskId: _taskId, ...rest } = src;
@@ -2663,7 +2673,8 @@ export default function LegacyTimesheet({ wrikeData, isAdmin = false }) {
       "success"
     );
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [rows, selectedRowIds, activeDay, frozenDays, addRows, clearSelection]);
+  }, [rows, activeDay, frozenDays, addRows, clearSelection]);
+  const duplicateSelected = useCallback(() => duplicateRows([...selectedRowIds]), [duplicateRows, selectedRowIds]);
 
   // Merge the ticked rows into one entry: the same work in several markets,
   // on one job, day and category (see mergeCheck and mergeRows). The merged
@@ -2676,7 +2687,9 @@ export default function LegacyTimesheet({ wrikeData, isAdmin = false }) {
   const mergeState = useMemo(() => mergeCheck(selectedRows), [selectedRows]);
 
   const [isMerging, setIsMerging] = useState(false);
-  const mergeSelected = useCallback(async () => {
+  // `selectedRows` here is the rows to merge: the ticked ones, or the ticked
+  // ones and the row whose menu asked.
+  const mergeList = useCallback(async (selectedRows) => {
     if (frozenDays[activeDay] || isMerging) return;
     const check = mergeCheck(selectedRows);
     if (!check.ok) {
@@ -2718,11 +2731,14 @@ export default function LegacyTimesheet({ wrikeData, isAdmin = false }) {
       setIsMerging(false);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedRows, activeDay, frozenDays, isMerging, addRows, deleteRows, clearSelection]);
+  }, [activeDay, frozenDays, isMerging, addRows, deleteRows, clearSelection]);
+  const mergeSelected = useCallback(() => mergeList(selectedRows), [mergeList, selectedRows]);
 
   // Ticked entries that were made by merging and remember their parts.
   const unmergeable = useMemo(() => selectedRows.filter(canUnmerge), [selectedRows]);
-  const unmergeSelected = useCallback(async () => {
+  // `unmergeable` here is the merged entries to split: the ticked ones, or
+  // the one whose menu asked.
+  const unmergeEntries = useCallback(async (unmergeable) => {
     if (frozenDays[activeDay] || isMerging || !unmergeable.length) return;
     const split = unmergeable.map((entry) => ({ entry, ...unmergeRow(entry) }));
     // An entry changed after it was merged no longer adds up to its parts, and
@@ -2752,7 +2768,40 @@ export default function LegacyTimesheet({ wrikeData, isAdmin = false }) {
       setIsMerging(false);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [unmergeable, rows, activeDay, frozenDays, isMerging, addRows, deleteRows, clearSelection]);
+  }, [rows, activeDay, frozenDays, isMerging, addRows, deleteRows, clearSelection]);
+  const unmergeSelected = useCallback(() => unmergeEntries(unmergeable), [unmergeEntries, unmergeable]);
+
+  // Right-click (or a long press) on a row: what otherwise means ticking it,
+  // using the batch bar and unticking. Delete, the tick and each field are
+  // already a click on the row, so they aren't here. A locked day offers only
+  // what changes nothing.
+  const rowMenu = useContextMenu();
+  const itemsForRow = (row) => {
+    const others = selectedRows.filter((r) => r.id !== row.id);
+    const ticked = selectedRowIds.has(row.id);
+    return [
+      // The tick box is only shown when the row is pointed at; this is the
+      // same thing from wherever the row was right-clicked.
+      rowsAreEditable && { label: ticked ? "Unselect row" : "Select row", icon: ticked ? Square : CheckSquare, onSelect: () => toggleRowSelected(row.id) },
+      "-",
+      rowsAreEditable && { label: "Duplicate", hint: "hours blank", icon: Copy, onSelect: () => duplicateRows([row.id]) },
+      rowsAreEditable && canUnmerge(row) && { label: "Unmerge", hint: "one row per market", icon: Split, onSelect: () => unmergeEntries([row]) },
+      rowsAreEditable && others.length > 0 && {
+        label: `Merge with the ${others.length} ticked ${others.length === 1 ? "row" : "rows"}`,
+        icon: Merge,
+        onSelect: () => mergeList([row, ...others]),
+      },
+      "-",
+      row.projectDescription?.trim() && {
+        label: "Copy description",
+        icon: ClipboardCopy,
+        onSelect: () => navigator.clipboard.writeText(row.projectDescription.trim())
+          .then(() => showToast("Description copied", "success"))
+          .catch(() => showToast("Couldn't copy from here.")),
+      },
+      row.taskId && { label: "Open the task in Wrike", icon: ExternalLink, href: wrikeLinkForId(row.taskId) },
+    ];
+  };
 
   const textAreaClass = `w-full bg-transparent border border-transparent hover:border-slate-300 focus:border-[#12a0e1] focus:ring-2 focus:ring-[#12a0e1]/20 outline-none text-[12px] text-[#122027] font-medium p-2 transition-[border-color,box-shadow] rounded-xl resize-none overflow-hidden leading-tight placeholder:text-slate-500 ${
     !rowsAreEditable ? "opacity-60 cursor-not-allowed" : ""
@@ -2760,6 +2809,7 @@ export default function LegacyTimesheet({ wrikeData, isAdmin = false }) {
 
   return (
     <div className="min-h-screen bg-slate-100 font-sans selection:bg-[#12a0e1]/30">
+      {rowMenu.menu}
       {/* Toast */}
       {toast.show && (
         <div
@@ -3119,6 +3169,7 @@ export default function LegacyTimesheet({ wrikeData, isAdmin = false }) {
                 <tr
                   key={row.id}
                   data-row-id={row.id}
+                  {...rowMenu.bind(() => itemsForRow(row))}
                   className={`timesheet-row transition-colors group relative ${
                     enteringIds.has(row.id) ? "row-enter" : ""
                   } ${

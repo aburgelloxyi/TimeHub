@@ -145,6 +145,7 @@ const XYI_COLUMNS = [
   ["art", "art"],
   ["xyiFormat", "format"],
   ["quote", "quote"],
+  ["reporting", "reporting"],
   // Where the PMs keep the link an order was delivered at.
   ["deliveryLink", "delivery link"],
 ];

@@ -6,8 +6,9 @@
 // would be made; creating happens after someone confirms that.
 
 import {
-  fetchTasksUnderFolder, discoverCustomStatus, createTaskIn, removeTaskFromFolder,
+  fetchTasksUnderFolder, discoverCustomStatus, createTaskIn, removeTaskFromFolder, fetchCustomFields,
 } from "../wrikeCampaign";
+import { resolveFields, fieldUse } from "./wrikeFields";
 import { planMarketFolderLive } from "./wrikeMarketFolder";
 import { orderKey } from "./wrikeMatch";
 
@@ -80,15 +81,17 @@ export function planBatch({ name, due, orders }) {
 }
 
 // Reads Wrike for what briefing a market needs: its folder (which must exist;
-// "Add folder to Wrike" makes it), the batch names already in it, and the
-// status new tasks start in. { ok: false, reason } when there is no folder.
+// "Add folder to Wrike" makes it), the batch names already in it, the status
+// new tasks start in, and the custom fields they are given (wrikeFields.js).
+// { ok: false, reason } when there is no folder.
 export async function readMarketForBriefing(request) {
   const place = await planMarketFolderLive(request);
   if (!place.ok) return { ok: false, reason: place.reason };
   if (!place.existing) return { ok: false, reason: `${place.title} has no folder in Wrike yet. Add the folder first, then brief its orders.`, needsFolder: true };
-  const [tasks, status] = await Promise.all([
+  const [tasks, status, accountFields] = await Promise.all([
     fetchTasksUnderFolder(place.existing.id).catch(() => []),
     discoverCustomStatus("Studio", "Backlog").catch(() => null),
+    fetchCustomFields().catch(() => []),
   ]);
   return {
     ok: true,
@@ -97,23 +100,28 @@ export async function readMarketForBriefing(request) {
     parentFolder: place.parent,
     existingTitles: tasks.map((t) => t.title),
     status,
+    fields: resolveFields(accountFields, fieldUse(tasks)),
+    // The job number field holds the film's Markets folder title.
+    jobNumber: place.parent?.title || "",
   };
 }
 
 // Creates the planned batch in the market's folder. The batch task first; if
 // that fails nothing is made. Then each order as a subtask, one at a time, so
 // a failure part-way leaves a batch that says exactly which orders are in it.
-// Returns { batch, made: [{ key, id, title, permalink }], failed: [{ row, title }] }.
-export async function createBatch({ folder, status, plan, onProgress }) {
+// `fields` is planFields' plan: the custom fields go in with each task as it
+// is made. Returns { batch, made: [{ key, id, title, permalink }], failed: [{ row, title }] }.
+export async function createBatch({ folder, status, plan, fields, onProgress }) {
   const dates = { type: "Milestone", due: plan.due };
   const common = { dates, ...(status ? { customStatus: status.id } : {}) };
-  const batch = await createTaskIn(folder.id, { title: plan.name, ...common });
+  const withFields = (list) => (list?.length ? { customFields: list } : {});
+  const batch = await createTaskIn(folder.id, { title: plan.name, ...common, ...withFields(fields?.batch) });
   if (!batch.id) throw new Error("Wrike didn't return the batch task.");
   const made = [];
   const failed = [];
   for (const task of plan.tasks) {
     try {
-      const sub = await createTaskIn(folder.id, { title: task.title, ...common, superTasks: [batch.id] });
+      const sub = await createTaskIn(folder.id, { title: task.title, ...common, ...withFields(fields?.byKey[task.key]), superTasks: [batch.id] });
       // Filed under the batch only, like the PMs' own. If this step is
       // refused the subtask still exists, in the folder as well.
       await removeTaskFromFolder(sub.id, folder.id).catch(() => {});

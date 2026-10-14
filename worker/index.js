@@ -273,6 +273,20 @@ async function handleOrders(request, url, env) {
     try { file = JSON.parse(text); } catch { return json({ error: "bad_request" }, { status: 400 }); }
     if (!file || file.id !== key || !Array.isArray(file.markets)) return json({ error: "bad_request" }, { status: 400 });
     file.loadedBy = caller.who;
+    // Decisions are written by PATCH alone. A whole film sent by a page that
+    // read it before someone's decision would otherwise put back the older
+    // decisions over the newer (a Refresh erased orders briefed minutes
+    // earlier). Taken from the payload only when the film is new here.
+    const existing = await sbFetch(env, `${one}&select=data`);
+    if (!existing.ok) return failed(existing, "read");
+    const stored = (await existing.json())[0]?.data;
+    if (stored) {
+      for (const field of ORDER_DECISIONS) {
+        if (field in stored) file[field] = stored[field];
+        else delete file[field];
+      }
+      if (stored.decidedBy) file.decidedBy = stored.decidedBy;
+    }
     const res = await sbFetch(env, "/order_films?on_conflict=key&select=updated_at", {
       method: "POST",
       headers: { Prefer: "resolution=merge-duplicates,return=representation" },

@@ -79,7 +79,7 @@ export default function MarketList({ file, today, matcher, onOpen, arriving = fa
   const inWrike = useMemo(
     () => new Map(file.markets.map((m) => [
       m.name,
-      matcher ? matcher.match(m.orders, file.links?.[m.name], file.briefed?.[m.name]).filter(Boolean).length : 0,
+      matcher ? matcher.match(m.orders, file.links?.[m.name], file.briefed?.[m.name], m.kind || file.kind).filter(Boolean).length : 0,
     ])),
     [file, matcher]
   );

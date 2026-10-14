@@ -86,3 +86,16 @@ check("no parent loaded", taskSummary(sub, undefined), {
   check("a cached task still has a link", [taskLink({ id: "IEAB" }), taskLink({ id: "IEAB", permalink: "https://x/y" }), taskLink(null)],
     ["https://www.wrike.com/open.htm?id=IEAB", "https://x/y", ""]);
 }
+
+// ── Motion and print are kept apart ───────────────────────────────────────────
+{
+  const { makeMatcher, mediumOf } = await import("../src/lib/orderForms/wrikeMatch.js");
+  check("a name's kind", ["EBZR_INTL__DFOH__1920x1080px_10s_ZA", "EBZR_INTL_CandleSmoke_FOH_Banner_6x3m_CMYK_ZA", "EBZR_Batch1_ZA"].map(mediumOf), ["motion", "print", ""]);
+  const za = [
+    { id: "p1", title: "EBZR_INTL_CandleSmoke_FOH_Banner_6x3m_CMYK_ZA" },
+    { id: "m1", title: "EBZR_INTL_CandleSmoke_DFOH_Screen_1920x1080px_10s_ZA" },
+  ];
+  const order = { tab: "T", row: 4, xyi: { title: "EBZR_INTL__DFOH__1920x1080px_10s_ZA" } };
+  check("a motion order is offered only motion tasks", makeMatcher(za).candidates(order, "motion").map((c) => c.task.id), ["m1"]);
+  check("without a kind, everything for the film and market", makeMatcher(za).candidates(order).map((c) => c.task.id).sort(), ["m1", "p1"]);
+}

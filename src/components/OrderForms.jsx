@@ -178,6 +178,13 @@ export default function OrderForms({ wrikeData }) {
       links: target.links?.[marketName],
       // Tasks created from here, by order: [{ key, id, title, permalink }].
       briefed: target.briefed?.[marketName],
+      // Records of tasks made from here that Wrike no longer has (someone
+      // deleted them there), dropped so the orders can be briefed again.
+      onUnbriefed: (keys) => change((f) => {
+        const kept = { ...f.briefed?.[marketName] };
+        keys.forEach((k) => delete kept[k]);
+        return { ...f, briefed: { ...f.briefed, [marketName]: kept } };
+      }),
       onBriefed: (made) => change((f) => ({
         ...f,
         briefed: { ...f.briefed, [marketName]: { ...f.briefed?.[marketName], ...Object.fromEntries(made.map(({ key, ...task }) => [key, task])) } },
@@ -201,7 +208,9 @@ export default function OrderForms({ wrikeData }) {
     const parsed = {
       ...read,
       id: fileKey(read),
-      ...(replaces ? { ignored: replaces.ignored, links: replaces.links, changes: fileChanges(replaces, read) } : {}),
+      ...(replaces
+        ? { ignored: replaces.ignored, links: replaces.links, briefed: replaces.briefed, wrapped: replaces.wrapped, changes: fileChanges(replaces, read) }
+        : {}),
     };
     if (replaces && replaces.id !== parsed.id) await removeFile(replaces.id);
     const kept = await saveFile(parsed);

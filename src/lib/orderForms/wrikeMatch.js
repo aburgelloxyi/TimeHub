@@ -147,6 +147,22 @@ const bucketOf = (title) => {
 
 const orderTitle = (order) => order.xyi?.title || order.deliveryName || "";
 
+// Whether a name is for a motion or a print piece, from the words it is
+// built from: a duration or a digital placement means motion, a print colour
+// space or a print placement means print. "" when it says neither. Close
+// matches and the hand-picked list only offer tasks of the order's own kind:
+// a motion order is never matched to a print banner because the market and
+// film agree.
+const MOTION_WORDS = new Set(["dooh", "dinth", "dfoh", "motion", "video"]);
+const PRINT_WORDS = new Set(["cmyk", "ooh", "inth", "foh", "print"]);
+export function mediumOf(title) {
+  const tokens = parts(title);
+  if (tokens.some((t) => MOTION_WORDS.has(t) || /^\d+(s|secs?)$/.test(t))) return "motion";
+  if (tokens.some((t) => PRINT_WORDS.has(t))) return "print";
+  return "";
+}
+const sameKind = (task, kind) => !kind || !mediumOf(task.title) || mediumOf(task.title) === kind;
+
 // What identifies an order between reads of its sheet, for the things a PM
 // decides about it here (set aside, matched by hand). The row is part of it
 // because a market can order the same thing twice; if rows move, the decision
@@ -172,13 +188,15 @@ export function makeMatcher(tasks) {
     buckets.get(bucket).push(task);
   }
 
-  // Tasks for the same film and market, nearest name first.
-  const candidates = (order) =>
+  // Tasks for the same film and market, of the same kind (`kind`, the film's
+  // medium) where a name says, nearest name first.
+  const candidates = (order, kind) =>
     (buckets.get(bucketOf(orderTitle(order))) || [])
+      .filter((task) => sameKind(task, kind))
       .map((task) => ({ task, score: titleSimilarity(orderTitle(order), task.title) }))
       .sort((a, b) => b.score - a.score);
 
-  const match = (orders, links = {}, briefed = {}) => {
+  const match = (orders, links = {}, briefed = {}, kind = "") => {
     const result = orders.map(() => null);
     const taken = new Set();
     const give = (i, task, how) => { result[i] = { task, how }; taken.add(task.id); };
@@ -208,7 +226,7 @@ export function makeMatcher(tasks) {
     const offers = [];
     orders.forEach((order, i) => {
       if (decided.has(i) || result[i]) return;
-      for (const { task, score } of candidates(order)) {
+      for (const { task, score } of candidates(order, kind)) {
         if (score < CLOSE) break;
         if (!taken.has(task.id)) offers.push({ i, task, score });
       }

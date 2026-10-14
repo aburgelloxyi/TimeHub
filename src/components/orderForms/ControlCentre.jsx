@@ -95,7 +95,7 @@ export default function ControlCentre({ wrikeData }) {
   }, []);
 
   const found = useMemo(() => {
-    const lists = ordersByMarket(files, today, (file, market) => matcher.match(market.orders, file.links?.[market.name], file.briefed?.[market.name]));
+    const lists = ordersByMarket(files, today, (file, market) => matcher.match(market.orders, file.links?.[market.name], file.briefed?.[market.name], market.kind || file.kind));
     const changed = (files || []).filter((f) => !f.wrapped).flatMap((f) =>
       Object.entries(f.changes || {}).map(([market, c]) => ({ fileId: f.id, film: f.name, kind: f.kind, market, note: changesNote(c) })));
     return { ...lists, changed };

@@ -2,6 +2,8 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import { Check, ChevronRight, ExternalLink, FileSpreadsheet, Link2, Loader2, PencilLine, Send } from "lucide-react";
 import { AnimatePresence, motion } from "framer-motion";
 import { checkMarketFolder } from "../../lib/orderForms/wrikeMarketFolder";
+import { fetchTasksUnderFolder } from "../../lib/wrikeCampaign";
+import { makeMatcher } from "../../lib/orderForms/wrikeMatch";
 import { marketSummary, orderUrgency, changeKeys, changesNote } from "../../lib/orderForms/status";
 import { orderKey, taskLink } from "../../lib/orderForms/wrikeMatch";
 import { deliveryLinkOf, planDeliveryFill, readDeliveryLinks } from "../../lib/orderForms/deliveryLinks";
@@ -148,10 +150,58 @@ export default function MarketView({ market, kind, filmTitle, clientId, filmKey,
   };
   const choicesFor = (held) => (held ? choices[held.at] || choices[`col:${held.at.replace(/\d+$/, "")}`] : null);
   const summary = marketSummary(market, today);
-  const matches = useMemo(
-    () => (matcher ? matcher.match(orders, decide?.links, decide?.briefed) : orders.map(() => null)),
-    [matcher, orders, decide?.links, decide?.briefed]
-  );
+  // The tasks in this market's own Wrike folder, read live when the market
+  // opens. TimeHub's task cache only holds what someone on a team is
+  // assigned to, so a batch a PM has just made by hand, unassigned, isn't in
+  // it and the orders would say "not in Wrike" though they are. Matching
+  // tries the cache first and then these.
+  const [folderTasks, setFolderTasks] = useState(null);
+  useEffect(() => {
+    setFolderTasks(null);
+    if (wrikeFolder?.state !== "exists") return;
+    let live = true;
+    fetchTasksUnderFolder(wrikeFolder.folder.id).then((tasks) => { if (live) setFolderTasks(tasks); }).catch(() => {});
+    return () => { live = false; };
+  }, [wrikeFolder]);
+  const folderMatcher = useMemo(() => (folderTasks?.length ? makeMatcher(folderTasks) : null), [folderTasks]);
+
+  // Tasks made from here are trusted only while Wrike still has them. Once
+  // the market's folder has been read, a record whose task isn't in it (it
+  // was deleted in Wrike), or every record when the folder itself is gone,
+  // stops counting, so those orders can be briefed again.
+  const liveBriefed = useMemo(() => {
+    const briefed = decide?.briefed || {};
+    if (wrikeFolder?.state === "missing") return {};
+    if (!folderTasks) return briefed;
+    const there = new Set(folderTasks.map((t) => t.id));
+    return Object.fromEntries(Object.entries(briefed).filter(([, task]) => there.has(task.id)));
+  }, [decide?.briefed, wrikeFolder, folderTasks]);
+  // And the stale records are dropped from the film, for everyone.
+  useEffect(() => {
+    const stale = Object.keys(decide?.briefed || {}).filter((k) => !(k in liveBriefed));
+    if (stale.length && (folderTasks || wrikeFolder?.state === "missing")) decide?.onUnbriefed?.(stale);
+    // Runs when what Wrike says changes, not on every new decide object.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [liveBriefed]);
+
+  const matches = useMemo(() => {
+    const found = matcher ? matcher.match(orders, decide?.links, liveBriefed, kind) : orders.map(() => null);
+    if (!folderMatcher) return found;
+    const taken = new Set(found.filter(Boolean).map((m) => m.task.id));
+    const local = folderMatcher.match(orders, {}, {}, kind);
+    return found.map((m, i) => {
+      if (m || decide?.links?.[orderKey(orders[i])] === "none" || !local[i] || taken.has(local[i].task.id)) return m;
+      taken.add(local[i].task.id);
+      return local[i];
+    });
+  }, [matcher, folderMatcher, orders, decide?.links, liveBriefed, kind]);
+  // What can be picked by hand: the cache's and the folder's tasks for this
+  // film and market, of the film's own kind, nearest first.
+  const candidatesFor = (o) => {
+    const all = [...(matcher?.candidates(o, kind) || []), ...(folderMatcher?.candidates(o, kind) || [])];
+    const seen = new Set();
+    return all.filter(({ task }) => !seen.has(task.id) && seen.add(task.id)).sort((a, b) => b.score - a.score);
+  };
   const tasks = matches.map((m) => m?.task || null);
   const inWrike = tasks.filter(Boolean).length;
 
@@ -846,7 +896,7 @@ export default function MarketView({ market, kind, filmTitle, clientId, filmKey,
                               today={today}
                               matching={decide && matcher ? {
                                 link: decide.links?.[orderKey(o)],
-                                candidates: matcher.candidates(o),
+                                candidates: candidatesFor(o),
                                 onLink: (value) => decide.onLink(o, value),
                               } : null}
                               onSetAside={decide && !editing ? () => decide.onSetAside(o) : null}

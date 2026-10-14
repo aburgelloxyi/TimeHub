@@ -14,7 +14,6 @@ import {
   Zap,
   Film,
   Activity,
-  Layers,
   ChevronLeft,
   ChevronRight,
   Key,
@@ -2176,13 +2175,6 @@ export default function Profile({ wrikeData, onTokenChange, activeSection: activ
               const restSections = sections.filter((s) => !s.featured);
               return (
                 <>
-                  <div className="flex items-center gap-2 px-1">
-                    <Layers className="w-4 h-4 text-[#12a0e1]" />
-                    <h2 className="text-sm font-black text-[#122027] uppercase tracking-widest">
-                      Your Hub
-                    </h2>
-                  </div>
-
                   {featuredSection && (
                     <div className="bg-white rounded-3xl border border-[#dce4ec] shadow-sm overflow-hidden">
                       <HubRow

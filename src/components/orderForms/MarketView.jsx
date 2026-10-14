@@ -18,7 +18,7 @@ import Corrections from "./Corrections";
 import { googleMessage } from "./GoogleSource";
 import { applyCellChanges, connectGoogleForWriting, googleCanWrite, googleConnected, readCellChoices } from "../../lib/orderForms/googleApi";
 import { cellRange, editChanges, reversed } from "../../lib/orderForms/corrections";
-import { readMarketForBriefing, suggestBatchName, suggestDue, planBatch, createBatch } from "../../lib/orderForms/wrikeBatch";
+import { readMarketForBriefing, suggestBatchName, suggestDue, planBatch, createBatch, hasArtwork } from "../../lib/orderForms/wrikeBatch";
 import { confirmAction } from "../../lib/confirm";
 import { notify } from "../../lib/toast";
 import { formatDay, pillClass, undatedNote, STATUS_CLASS, STATUS_LABEL, URGENCY_TEXT } from "./format";
@@ -225,8 +225,11 @@ export default function MarketView({ market, kind, filmTitle, clientId, filmKey,
   const setAside = market.setAside || [];
   // Rows that can be ticked: all of them when editing; when briefing, only
   // the ones not in Wrike yet.
-  const tickable = orders.map((_, i) => i).filter((i) => !briefing || !matches[i]);
-  const toBrief = matches.filter((m) => !m).length;
+  // An order can be briefed when it isn't in Wrike yet and has its artwork.
+  const briefable = (i) => !matches[i] && hasArtwork(orders[i]);
+  const tickable = orders.map((_, i) => i).filter((i) => !briefing || briefable(i));
+  const waitingForArtwork = orders.filter((o, i) => !matches[i] && !hasArtwork(o)).length;
+  const toBrief = orders.filter((_, i) => !matches[i] && hasArtwork(orders[i])).length;
   // What the last Refresh changed here and hasn't been acknowledged, and which
   // of the orders on screen it was (decide.changes; see status.js).
   const changed = decide?.changes || null;
@@ -275,8 +278,8 @@ export default function MarketView({ market, kind, filmTitle, clientId, filmKey,
   const bulkChoices = bulkField && !bulkField.type ? choicesFor(firstTicked?.cells?.[bulk.field]) : null;
 
   const startBriefing = async () => {
-    // Everything not in Wrike yet starts ticked: that is usually the batch.
-    const fresh = new Set(orders.map((_, i) => i).filter((i) => !matches[i]));
+    // Everything ready to brief starts ticked: that is usually the batch.
+    const fresh = new Set(orders.map((_, i) => i).filter(briefable));
     setTicked(fresh);
     setExpanded(null);
     setBriefing({ loading: true });
@@ -642,7 +645,11 @@ export default function MarketView({ market, kind, filmTitle, clientId, filmKey,
                 known={wrikeFolder}
                 onMade={(folder) => setWrikeFolder({ state: "exists", folder })}
               />
-              {orders.length > 0 && (toBrief === 0 ? (
+              {orders.length > 0 && (toBrief === 0 && waitingForArtwork > 0 ? (
+                <span title="Choose their artwork in the sheet, or with Edit, to brief them" className="px-3 py-1.5 text-sm font-bold text-amber-700">
+                  {waitingForArtwork} waiting for artwork
+                </span>
+              ) : toBrief === 0 ? (
                 <span className="flex items-center gap-1.5 px-3 py-1.5 text-sm font-bold text-emerald-600">
                   <Check className="pop-in w-4 h-4" strokeWidth={3} />
                   All in Wrike
@@ -720,6 +727,11 @@ export default function MarketView({ market, kind, filmTitle, clientId, filmKey,
                   {creating ? `Creating ${creating.done} of ${creating.total}` : `Create ${ticked.size + 1} tasks in Wrike`}
                 </button>
               </div>
+              {waitingForArtwork > 0 && (
+                <p className="mt-2 text-[11px] font-bold text-amber-700">
+                  {waitingForArtwork} {waitingForArtwork === 1 ? "order has" : "orders have"} no artwork selected, so {waitingForArtwork === 1 ? "it can't" : "they can't"} be briefed yet. Choose the artwork in the sheet (or with Edit), then brief {waitingForArtwork === 1 ? "it" : "them"}.
+                </p>
+              )}
               <p className="mt-2 text-[11px] text-[#768994]">
                 One batch task in {briefing.film} › {briefing.parentFolder.title} › <span className="font-bold text-[#122027]">{briefing.folder.title}</span>, with a subtask for each ticked order, named as the sheet names it.{" "}
                 {briefing.status ? `They start as ${briefing.status.name} in the ${briefing.status.workflow} workflow.` : "No Backlog status was found in the Studio workflow, so they start in Wrike's default status."}{" "}
@@ -844,9 +856,10 @@ export default function MarketView({ market, kind, filmTitle, clientId, filmKey,
                           <input
                             type="checkbox"
                             aria-label={`Tick row ${o.row}`}
-                            // An order already in Wrike isn't briefed again.
-                            disabled={!!briefing && !!matches[i]}
-                            title={briefing && matches[i] ? "Already in Wrike" : undefined}
+                            // An order already in Wrike isn't briefed again, and
+                            // one without its artwork isn't ready to be.
+                            disabled={!!briefing && !briefable(i)}
+                            title={briefing && matches[i] ? "Already in Wrike" : briefing && !hasArtwork(o) ? "No artwork selected yet" : undefined}
                             checked={ticked.has(i)}
                             onChange={() => setTicked((prev) => { const next = new Set(prev); if (!next.delete(i)) next.add(i); return next; })}
                             className="accent-indigo-600 shrink-0"

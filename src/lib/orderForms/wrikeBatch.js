@@ -13,6 +13,20 @@ import { orderKey } from "./wrikeMatch";
 
 const titleOf = (order) => String(order.xyi?.title || order.deliveryName || "").trim();
 
+// The task name as a PM would type it from the sheet's: the sheet's formula
+// leaves a doubled underscore where a field is empty (no site name gives
+// "EBZR_INTL__DFOH__1920x1080px_10s_ZA"), and a site name can have spaces.
+// Spaces become underscores, runs of them become one, and none is left at
+// either end. Matching ignores the same differences (taskKey), so a task
+// named either way is still found.
+export const tidyTaskName = (name) =>
+  String(name || "").trim().replace(/\s+/g, "_").replace(/_+/g, "_").replace(/^_+|_+$/g, "");
+
+// An order goes to Wrike with its artwork chosen: the artwork is part of the
+// task's name and of what the studio works from, and an order without one
+// isn't ready to brief.
+export const hasArtwork = (order) => !!String(order.artwork || "").trim();
+
 // The film and market codes an order's name starts and ends with.
 export function batchCodes(orders) {
   const parts = titleOf(orders.find(titleOf) || {}).split(/[\s_]+/).filter(Boolean);
@@ -48,17 +62,20 @@ export function planBatch({ name, due, orders }) {
   if (!String(name || "").trim()) problems.push("Give the batch a name.");
   if (!due) problems.push("Give the batch a due date.");
   if (!orders.length) problems.push("Tick the orders to brief.");
+  const rowsOf = (list) => `${list.length === 1 ? "Row" : "Rows"} ${list.map((o) => o.row).join(", ")}`;
+  const noArtwork = orders.filter((o) => !hasArtwork(o));
+  if (noArtwork.length) problems.push(`${rowsOf(noArtwork)} ${noArtwork.length === 1 ? "has" : "have"} no artwork selected. Choose it in the sheet first.`);
   const unnamed = orders.filter((o) => !titleOf(o));
-  if (unnamed.length) problems.push(`${unnamed.length === 1 ? "Row" : "Rows"} ${unnamed.map((o) => o.row).join(", ")} ${unnamed.length === 1 ? "has" : "have"} no task name in the sheet.`);
+  if (unnamed.length) problems.push(`${rowsOf(unnamed)} ${unnamed.length === 1 ? "has" : "have"} no task name in the sheet.`);
   const seen = new Map();
-  for (const o of orders) if (titleOf(o)) seen.set(titleOf(o), [...(seen.get(titleOf(o)) || []), o.row]);
+  for (const o of orders) if (titleOf(o)) seen.set(tidyTaskName(titleOf(o)), [...(seen.get(tidyTaskName(titleOf(o))) || []), o.row]);
   for (const [title, rows] of seen) if (rows.length > 1) problems.push(`Rows ${rows.join(" and ")} would both become "${title}".`);
   return {
     ok: problems.length === 0,
     problems,
     name: String(name || "").trim(),
     due,
-    tasks: orders.filter(titleOf).map((o) => ({ key: orderKey(o), row: o.row, title: titleOf(o) })),
+    tasks: orders.filter(titleOf).map((o) => ({ key: orderKey(o), row: o.row, title: tidyTaskName(titleOf(o)) })),
   };
 }
 

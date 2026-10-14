@@ -87,7 +87,7 @@ check("a request past its deadline is overdue", orderUrgency(order("requested", 
 // ── Across films, for the profile ─────────────────────────────────────────────
 {
   const { ordersByMarket } = await import("../src/lib/orderForms/status.js");
-  const o = (row, status, deliveryDeadline) => ({ tab: "T", row, status, deliveryDeadline, xyi: { title: `A_B_C_${row}` } });
+  const o = (row, status, deliveryDeadline) => ({ tab: "T", row, status, deliveryDeadline, artwork: "Trio", xyi: { title: `A_B_C_${row}` } });
   const files = [
     { id: "f1", name: "Film One", kind: "print", loadedAt: "t", source: { clientId: "paramount" }, markets: [
       { name: "NZ", sheetUrl: "https://sheet", orders: [o(3, "requested", "2026-10-08"), o(4, "requested", "2026-10-15"), o(5, "requested", "2026-12-01"), o(6, "confirmed", "2026-10-01"), o(7, "requested", "2026-02-11"), o(8, "requested", "2026-12-02")] },
@@ -114,6 +114,8 @@ check("a request past its deadline is overdue", orderUrgency(order("requested", 
   check("a film marked as wrapping up is left out, but still listed", [got.films.map((f) => [f.film, f.wrapped, f.orders]), got.longOverdue.some((g) => g.film === "Wrapped")],
     [[["Film One", false, 6], ["Film Two", false, 2], ["Wrapped", true, 0]], false]);
   check("nothing loaded", ordersByMarket([], "2026-10-12").films, []);
+  const noArt = ordersByMarket([{ id: "f", name: "F", kind: "print", loadedAt: "t", source: { clientId: "paramount" }, markets: [{ name: "NZ", orders: [{ ...o(4, "requested", "2026-10-15"), artwork: "" }] }] }], "2026-10-12");
+  check("an order without its artwork isn't counted as ready to brief", noArt.dueSoon[0].toBrief, 0);
 }
 
 // ── Changes between reads ─────────────────────────────────────────────────────

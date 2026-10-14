@@ -167,7 +167,8 @@ export function ordersByMarket(files, todayIso, matchFor = () => []) {
           sheetUrl: market.sheetUrl || "", canBrief: !!file.source?.clientId, orders: [], toBrief: 0,
         });
         group.orders.push(order);
-        if (!match) group.toBrief++;
+        // Briefable: not in Wrike, and its artwork chosen (see wrikeBatch.js).
+        if (!match && String(order.artwork || "").trim()) group.toBrief++;
       });
       for (const [list, group] of Object.entries(found)) {
         group.oldest = group.orders.map((o) => o.deliveryDeadline).filter(Boolean).sort()[0] || "";

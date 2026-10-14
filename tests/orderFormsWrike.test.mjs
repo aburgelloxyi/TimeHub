@@ -89,7 +89,24 @@ check("no parent loaded", taskSummary(sub, undefined), {
 
 // ── Motion and print are kept apart ───────────────────────────────────────────
 {
-  const { makeMatcher, mediumOf } = await import("../src/lib/orderForms/wrikeMatch.js");
+  const { makeMatcher, mediumOf, taskMediumOf } = await import("../src/lib/orderForms/wrikeMatch.js");
+  const filed = (title, jobNumber) => ({ title, customFields: jobNumber ? [{ id: "JN", value: jobNumber }] : [] });
+  check("a task's kind: its job number before its name", [
+    taskMediumOf(filed("EBZR_INTL_CandleSmoke_DINTH_LED_3840x600px_RGB_HU", "XY026287_INTL_PRINT_Outdoor_Campaign_Markets")),
+    taskMediumOf(filed("EBZR_INTL_CandleSmoke_FOH_Banner_6x3m_CMYK_HU", "XY026288_DIGITAL_Outdoor_INTL_Campaign")),
+    taskMediumOf(filed("EBZR_INTL__DFOH__1920x1080px_10s_HU", "XY026289_DOOH_INTL_Campaign")),
+  ], ["print", "motion", "motion"]);
+  check("a task's kind: its name when the job number says neither", [
+    taskMediumOf(filed("EBZR_INTL__DFOH__1920x1080px_10s_HU", "XY026290_Outdoor_INTL_Campaign")),
+    taskMediumOf(filed("EBZR_INTL_CandleSmoke_FOH_Banner_6x3m_CMYK_HU")),
+  ], ["motion", "print"]);
+  {
+    const hu = { tab: "Hungary (HUN)", row: 6, xyi: { title: "EBZR_INTL__DINTH_LED_ETELE_3840x1400px_15s_HU" } };
+    const printLed = { id: "P", title: "EBZR_INTL_CandleSmoke_DINTH_LED_3840x600px_RGB_HU", customFields: [{ id: "JN", value: "XY026287_INTL_PRINT_Outdoor_Campaign_Markets" }] };
+    const m = makeMatcher([printLed]);
+    check("a motion order isn't matched to a print task named with a digital word", m.match([hu], {}, {}, "motion"), [null]);
+    check("nor offered it by hand", m.candidates(hu, "motion").length, 0);
+  }
   check("a name's kind", ["EBZR_INTL__DFOH__1920x1080px_10s_ZA", "EBZR_INTL_CandleSmoke_FOH_Banner_6x3m_CMYK_ZA", "EBZR_Batch1_ZA"].map(mediumOf), ["motion", "print", ""]);
   const za = [
     { id: "p1", title: "EBZR_INTL_CandleSmoke_FOH_Banner_6x3m_CMYK_ZA" },

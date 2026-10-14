@@ -163,7 +163,24 @@ export function mediumOf(title) {
   if (tokens.some((t) => PRINT_WORDS.has(t))) return "print";
   return "";
 }
-const sameKind = (task, kind) => !kind || !mediumOf(task.title) || mediumOf(task.title) === kind;
+// A task's kind from where it is filed, before its name: the job number on it
+// says which campaign it belongs to ("XY026287_INTL_PRINT_Outdoor_Campaign_
+// Markets", "…_DIGITAL_Outdoor_…", "…_DOOH_…"). The name alone misleads when a
+// print piece carries a digital placement word, as a printed LED wrap named
+// "…_DINTH_LED_…_RGB_HU" does. Job numbers that name neither leave it to the name.
+const JOB_PRINT = new Set(["print"]);
+const JOB_MOTION = new Set(["digital", "dooh", "motion"]);
+export function taskMediumOf(task) {
+  for (const field of task?.customFields || []) {
+    const value = String(field?.value || "");
+    if (!/XY\d{5,6}/i.test(value)) continue;
+    const tokens = value.toLowerCase().split(/[^a-z0-9]+/);
+    if (tokens.some((t) => JOB_PRINT.has(t))) return "print";
+    if (tokens.some((t) => JOB_MOTION.has(t))) return "motion";
+  }
+  return mediumOf(task?.title);
+}
+const sameKind = (task, kind) => !kind || !taskMediumOf(task) || taskMediumOf(task) === kind;
 
 // What identifies an order between reads of its sheet, for the things a PM
 // decides about it here (set aside, matched by hand). The row is part of it

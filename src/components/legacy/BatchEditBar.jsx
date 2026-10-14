@@ -56,7 +56,7 @@ function BatchCategoryPicker({ onPick, pinned = [] }) {
                 />
               </div>
             </div>
-            <div className="max-h-56 overflow-y-auto overscroll-contain px-2 pb-2">
+            <div className="max-h-56 overflow-y-auto scrollbar-thin overscroll-contain px-2 pb-2">
               {/* Same shortlist as the row dropdown, and only while unfiltered
                   — once you are searching, a shortlist above the matches is
                   just a duplicate of some of them. */}

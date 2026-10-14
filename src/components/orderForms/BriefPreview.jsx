@@ -169,7 +169,7 @@ export default function BriefPreview({ path, plan, fields, titles, status, today
 
       <FieldsStrip summary={fields.summary} overrides={overrides} onOverride={onOverride} count={plan.tasks.length} today={today} />
 
-      <ul className="max-h-80 overflow-y-auto divide-y divide-slate-100">
+      <ul className="max-h-80 overflow-y-auto scrollbar-thin divide-y divide-slate-100">
         <li className="px-4 py-2.5">
           <span className="flex items-center gap-2">
             <span className="w-6 h-6 shrink-0 flex items-center justify-center rounded-md bg-gradient-to-br from-[#12a0e1] to-[#1cc1a5] text-white">

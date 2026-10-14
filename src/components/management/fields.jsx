@@ -86,7 +86,7 @@ export function ComboField({ label, value, onChange, options, placeholder, requi
           placeholder={placeholder || "Search or type…"}
           className={MODAL_INPUT} />
         {open && hits.length > 0 && (
-          <div className="absolute z-[100] left-0 right-0 mt-1.5 bg-white border border-[#dce4ec] rounded-2xl shadow-2xl max-h-72 overflow-y-auto">
+          <div className="absolute z-[100] left-0 right-0 mt-1.5 bg-white border border-[#dce4ec] rounded-2xl shadow-2xl max-h-72 overflow-y-auto scrollbar-thin scrollbar-inset">
             {groupOrder && (
               <div className="flex flex-wrap gap-1.5 p-2 border-b border-[#eef2f6] sticky top-0 bg-white z-20">
                 {groupOrder.map(g => {

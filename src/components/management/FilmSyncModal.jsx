@@ -81,7 +81,7 @@ export function FilmSyncModal({ studio: initialStudio = "Paramount", existingFil
                 <p className="text-[10px] font-black uppercase tracking-widest text-[#768994] mb-2">
                   {plan.toAdd.length} new film{plan.toAdd.length === 1 ? "" : "s"} to add
                 </p>
-                <div className="border border-[#dce4ec] rounded-2xl divide-y divide-[#f0f4f8] max-h-[320px] overflow-y-auto">
+                <div className="border border-[#dce4ec] rounded-2xl divide-y divide-[#f0f4f8] max-h-[320px] overflow-y-auto scrollbar-thin scrollbar-inset">
                   {plan.toAdd.map((t) => (
                     <div key={t} className="flex items-center gap-2 px-4 py-2 text-sm text-[#122027]">
                       <Film className="w-3.5 h-3.5 text-[#12a0e1] shrink-0" /> {t}

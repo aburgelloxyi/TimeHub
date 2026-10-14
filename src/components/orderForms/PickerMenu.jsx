@@ -144,7 +144,7 @@ export default function PickerMenu({
           )}
           <div
             role="listbox"
-            className={`flex-1 min-h-0 overflow-y-auto py-2 ${sideBySide && groups.size > 1 ? "grid divide-x divide-[#dce4ec]" : ""}`}
+            className={`flex-1 min-h-0 overflow-y-auto py-2 scrollbar-thin scrollbar-inset ${sideBySide && groups.size > 1 ? "grid divide-x divide-[#dce4ec]" : ""}`}
             style={sideBySide && groups.size > 1 ? { gridTemplateColumns: `repeat(${groups.size}, minmax(0, 1fr))` } : undefined}
           >
             {shown.length === 0 && <p className="px-4 py-3 text-sm text-[#768994]">Nothing matches.</p>}

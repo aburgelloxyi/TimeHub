@@ -344,7 +344,7 @@ export function ActiveDot({ task, now, canActivate = false }) {
               {subLoading && subtasks.length === 0 ? (
                 <p className="px-1 py-1 text-[11px] text-[#b0bcc6] italic">Loading…</p>
               ) : (
-                <div className="max-h-48 overflow-y-auto overflow-x-hidden flex flex-col gap-0.5">
+                <div className="max-h-48 overflow-y-auto scrollbar-thin overflow-x-hidden flex flex-col gap-0.5">
                   {subtasks.map((s) => {
                     const done = checkedIds.has(s.id);
                     return (

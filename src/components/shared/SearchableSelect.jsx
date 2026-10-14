@@ -176,7 +176,7 @@ const SearchableSelect = ({
 
       {isOpen && !disabled && (
         <div
-          className={`absolute top-full mt-2 bg-white/95 backdrop-blur-xl border border-[#dce4ec] rounded-xl shadow-xl z-[999999] max-h-80 overflow-y-auto overscroll-contain animate-in fade-in slide-in-from-top-2 duration-200 w-full ${showAllOnOpen ? "" : "sm:min-w-[600px] md:min-w-[750px] lg:min-w-[900px]"} ${
+          className={`absolute top-full mt-2 bg-white/95 backdrop-blur-xl border border-[#dce4ec] rounded-xl shadow-xl z-[999999] max-h-80 overflow-y-auto scrollbar-thin scrollbar-inset overscroll-contain animate-in fade-in slide-in-from-top-2 duration-200 w-full ${showAllOnOpen ? "" : "sm:min-w-[600px] md:min-w-[750px] lg:min-w-[900px]"} ${
             alignRight ? "right-0" : "left-0"
           }`}
         >

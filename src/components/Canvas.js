@@ -732,7 +732,7 @@ function EndOfCampaignNotesCard({ campaigns, department, onOpenCampaign, covers,
                 className="w-full pl-9 pr-3 py-2.5 rounded-xl border border-[#dce4ec] bg-white outline-none text-sm font-semibold text-[#122027] focus:border-[#c2410d]/40"
               />
             </div>
-            <div className="rounded-2xl border border-[#dce4ec] bg-white overflow-hidden max-h-[560px] overflow-y-auto custom-scrollbar divide-y divide-slate-100">
+            <div className="rounded-2xl border border-[#dce4ec] bg-white overflow-hidden max-h-[560px] overflow-y-auto custom-scrollbar scrollbar-inset divide-y divide-slate-100">
               {sortedFilteredCampaigns.length === 0 && (
                 <p className="p-4 text-xs font-bold text-[#768994]">No campaigns match.</p>
               )}
@@ -1915,7 +1915,7 @@ export function NotesCanvasCard({ isOpen, onToggle, department, pinnedFolderIds 
                   {shareOpen && (
                     <>
                       <div className="fixed inset-0 z-[60]" onClick={() => setShareOpen(false)} />
-                      <div className="absolute right-0 top-full mt-1.5 z-[61] w-60 max-h-72 overflow-y-auto rounded-xl border border-[#ece4d8] bg-white shadow-xl p-1.5">
+                      <div className="absolute right-0 top-full mt-1.5 z-[61] w-60 max-h-72 overflow-y-auto scrollbar-thin scrollbar-inset rounded-xl border border-[#ece4d8] bg-white shadow-xl p-1.5">
                         {/* Copy link sits above the people list: sending a
                             link is the quickest way to get someone to a page,
                             and it works whether or not you also tick them. */}
@@ -2319,7 +2319,7 @@ function MarketChip({ market }) {
       {open && (
         <>
           <div className="fixed inset-0 z-20" onClick={() => setOpen(false)} />
-          <div className="absolute z-30 top-full left-0 mt-1.5 w-72 max-h-64 overflow-y-auto bg-white border border-[#dce4ec] rounded-xl shadow-xl p-1.5 space-y-0.5">
+          <div className="absolute z-30 top-full left-0 mt-1.5 w-72 max-h-64 overflow-y-auto scrollbar-thin scrollbar-inset bg-white border border-[#dce4ec] rounded-xl shadow-xl p-1.5 space-y-0.5">
             {market.items.map(({ task, status }) => {
               const s = launchStatusStyle(status);
               return (

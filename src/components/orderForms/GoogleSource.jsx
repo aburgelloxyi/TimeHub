@@ -260,7 +260,7 @@ export default function GoogleSource({ onLoaded, onBusy, onPartial, signedInTick
               <button onClick={() => openClient(clientId)} className="text-sm font-bold text-[#122027] underline underline-offset-2 hover:text-[#12a0e1]">Try again</button>
             )}
             {films?.length > 0 && (
-              <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-2 max-h-[22rem] overflow-y-auto -mr-2 pr-2">
+              <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-2 max-h-[22rem] overflow-y-auto scrollbar-thin -mr-2 pr-2">
                 {shownFilms.map((f) => (
                   <button key={f.key} onClick={() => load(f)} disabled={busy} className={`${tileClass} px-4 py-3`}>
                     <span aria-hidden className={sweepClass} />

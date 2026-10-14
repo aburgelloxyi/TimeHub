@@ -247,7 +247,7 @@ export default function Corrections({ clientId, filmKey, market, onApplied, bare
                 <button onClick={() => { setSkipped(new Set()); setPreview(null); }} disabled={busy} className="normal-case tracking-normal font-bold text-indigo-600 hover:underline">All</button>
                 <button onClick={() => { setSkipped(new Set(docs.map((d) => d.sheet.id))); setPreview(null); }} disabled={busy} className="normal-case tracking-normal font-bold text-indigo-600 hover:underline">None</button>
               </span>
-              <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-x-4 rounded-xl border border-[#dce4ec] bg-white px-3 py-2 max-h-56 overflow-y-auto">
+              <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-x-4 rounded-xl border border-[#dce4ec] bg-white px-3 py-2 max-h-56 overflow-y-auto scrollbar-thin scrollbar-inset">
                 {docs.map((d) => (
                   <label key={d.sheet.id} className="flex items-center gap-2 py-1 text-sm text-[#122027] min-w-0">
                     <input

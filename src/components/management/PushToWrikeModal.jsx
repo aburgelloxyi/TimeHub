@@ -371,7 +371,7 @@ export function PushToWrikeModal({ studio, filmTitle, jobs, mode = "push", onClo
                 Activate slots first to tag their tasks with a Job Number.
               </p>
             ) : (
-              <div className="border border-[#dce4ec] rounded-2xl divide-y divide-[#f0f4f8] max-h-[200px] overflow-y-auto mb-2">
+              <div className="border border-[#dce4ec] rounded-2xl divide-y divide-[#f0f4f8] max-h-[200px] overflow-y-auto scrollbar-thin scrollbar-inset mb-2">
                 {slots.map((s) => {
                   const on = !excluded.has(s.id);
                   const done = doneSlots.has(s.id);

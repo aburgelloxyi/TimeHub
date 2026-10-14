@@ -1,4 +1,9 @@
-import { studioKeywordOf, studioNameOf, STUDIO_CLIENT, STUDIO_KEYWORDS_FLAT } from "../src/lib/studios.js";
+import { studioKeywordOf, studioNameOf, STUDIO_CLIENT, STUDIO_KEYWORDS_FLAT, clientsAgree } from "../src/lib/studios.js";
+
+check("client: an empty one disagrees with Wrike's", clientsAgree("", "Amazon International"), false);
+check("client: another studio's disagrees", clientsAgree("Paramount Pictures", "Amazon International"), false);
+check("client: the same studio in other words agrees", [clientsAgree("Universal Pictures UK", "Universal Pictures International"), clientsAgree("Amazon MGM Studios", "Amazon International")], [true, true]);
+check("client: nothing to say when Wrike gives none", [clientsAgree("", ""), clientsAgree("Anyone", "Some Agency")], [true, true]);
 import { getStudioName, getFilmName, buildChildToParents, hydrateMissingFolders } from "../src/lib/wrikeEnrich.js";
 
 const F = (id, title, childIds = []) => ({ id, title, childIds });

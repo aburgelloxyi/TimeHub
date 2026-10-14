@@ -8,6 +8,7 @@ import { Plus, X, Search, RefreshCw, CheckCircle2 } from "lucide-react";
 import { supabase, selectAll } from "../../lib/supabaseClient";
 import { confirmAction } from "../../lib/confirm";
 import { scanStudioJobNumbers, descriptionsAgree } from "../../lib/wrikeCampaign";
+import { clientsAgree } from "../../lib/studios";
 
 // ── Studio Job-Number Scanner ──────────────────────────────────────────────────
 // Walks every visible Wrike folder for canonical "Film : CODE, Desc" job folders
@@ -109,11 +110,12 @@ export function StudioJobScanModal({ onClose, onApplied }) {
 
   useEffect(() => { let alive = true; if (alive) loadScan(); return () => { alive = false; }; }, [loadScan]);
 
-  // Existing book rows that disagree with Wrike. Three kinds:
+  // Existing book rows that disagree with Wrike. These kinds:
   //   • a pseudo-film ("2026") the re-derived scan now resolves to a real film;
   //   • a row filed under the WRONG film, or carrying a malformed code
   //     ("XY026089_SKY_VIP" instead of "XY026089");
-  //   • a row whose DESCRIPTION describes something else entirely.
+  //   • a row whose DESCRIPTION describes something else entirely;
+  //   • a row with no client, or another studio's (clientsAgree).
   // The second kind is why "0 new" can coexist with jobs you can't find: the
   // code IS in the book, so the scan skips it as a duplicate, but it's filed
   // under someone else's film and no film search will ever surface it. Wrike's
@@ -156,8 +158,15 @@ export function StudioJobScanModal({ onClose, onApplied }) {
     const supersededByTwin =
       (cur.job_number || "") !== c.jobNumber &&
       (existingExtras[c.code] || []).some((r) => (r.job_number || "") === c.jobNumber);
-    return filmWrong || codeMalformed || descWrong || supersededByTwin;
+    const clientWrong = !clientsAgree(cur.client, c.client);
+    return filmWrong || codeMalformed || descWrong || supersededByTwin || clientWrong;
   });
+  // A row whose only fault is its client: the fix sets the client and nothing
+  // else, so a description someone wrote by hand isn't swapped for the scan's.
+  const onlyClientWrong = (c) => {
+    const cur = existingByCode[c.code];
+    return Boolean(cur) && !clientsAgree(cur.client, c.client) && (cur.job_number || "") === c.jobNumber;
+  };
 
   const corrections = allCorrections.filter((c) => !activeOnly || !c.archived);
   const correctionsHidden = activeOnly
@@ -326,7 +335,7 @@ export function StudioJobScanModal({ onClose, onApplied }) {
         else merged += 1;
         continue;
       }
-      const { error: err } = await supabase.from("jobs").update({
+      const { error: err } = await supabase.from("jobs").update(onlyClientWrong(c) ? { client: c.client } : {
         job_number: c.jobNumber,
         film_title: c.filmTitle || null,
         client: c.client || null,
@@ -419,7 +428,7 @@ export function StudioJobScanModal({ onClose, onApplied }) {
                   <span className="text-[11px] font-bold text-amber-700">
                     {corrections.length > 0 && (
                       <>
-                        {corrections.length} existing {corrections.length === 1 ? "entry disagrees" : "entries disagree"} with Wrike — filed under the wrong film, describing different work, or with the folder name stuck in the job number. These are in the book already, which is why they don’t show as new.
+                        {corrections.length} existing {corrections.length === 1 ? "entry disagrees" : "entries disagree"} with Wrike — filed under the wrong film, describing different work, with no client or another studio's, or with the folder name stuck in the job number. These are in the book already, which is why they don’t show as new.
                       </>
                     )}
                     {redundantRows.length > 0 && (
@@ -464,6 +473,11 @@ export function StudioJobScanModal({ onClose, onApplied }) {
                               </td>
                               <td className="py-1 max-w-[420px]">
                                 <div className="text-[#122027] truncate" title={c.jobNumber}>→ {c.jobNumber}</div>
+                                {!clientsAgree(existingByCode[c.code]?.client, c.client) && (
+                                  <div className="text-[#122027] truncate">
+                                    Client: <span className="text-slate-400 line-through">{existingByCode[c.code]?.client || "none"}</span> → {c.client}
+                                  </div>
+                                )}
                                 {c.folderPath && (
                                   <div className="text-[10px] text-slate-400 truncate" title={c.folderPath}>
                                     Wrike: {c.folderPath}

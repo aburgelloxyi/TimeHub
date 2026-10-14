@@ -40,6 +40,17 @@ export const studioKeywordOf = (title) => {
   return STUDIO_KEYWORDS_FLAT.find((k) => new RegExp(`\\b${k}\\b`, "i").test(t));
 };
 
+// Whether a Job Book row's client agrees with the one Wrike's folders give.
+// Only an empty client or a different studio disagrees: the region and the
+// wording ("Universal Pictures UK" against "…International") are left to
+// whoever filed the row, since the scan's guess at those is no better.
+export const clientsAgree = (bookClient, scanClient) => {
+  const wrike = studioNameOf(scanClient);
+  if (!wrike) return true;
+  if (!String(bookClient || "").trim()) return false;
+  return studioNameOf(bookClient) === wrike;
+};
+
 // The studio label ("Warner") rather than the matched keyword ("wbros").
 export const studioNameOf = (title) => {
   const t = separated(title);

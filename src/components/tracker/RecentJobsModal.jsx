@@ -5,7 +5,7 @@ import {
 } from "lucide-react";
 import SearchableSelect from "../shared/SearchableSelect";
 import { CATEGORIES } from "../../constants";
-import { getTagStyle, getBorderColorClass } from "../../utils/tagStyles";
+import { getTagStyle } from "../../utils/tagStyles";
 
 export default function RecentJobsModal({
   showRecentJobsModal, setShowRecentJobsModal,
@@ -215,7 +215,6 @@ export default function RecentJobsModal({
                     {sortedTasks.map((task) => {
                       const isExpanded = recentTaskDraft?.taskId === task.id;
                       const statusName = task.customStatusName || task.status;
-                      const borderColor = getBorderColorClass(statusName);
                       const isMatrix = task.title?.toUpperCase().includes("MATRIX");
 
                       const formattedDueDate = task.dueDate && task.dueDate !== "No Due Date"
@@ -231,10 +230,10 @@ export default function RecentJobsModal({
                       return (
                         <div
                           key={task.id}
-                          className={`p-4 border-y border-r border-l-4 rounded-2xl transition-[border-color,background-color,box-shadow,opacity] ${borderColor} ${
-                            isExpanded ? "shadow-md bg-white border-y-[#12a0e1]/30 border-r-[#12a0e1]/30"
-                            : isMatrix ? "border-y-[#dce4ec] border-r-[#dce4ec] hover:shadow-md bg-slate-200/50 opacity-60 hover:opacity-100 cursor-pointer group"
-                            : "border-y-[#dce4ec] border-r-[#dce4ec] hover:shadow-md bg-slate-50 hover:bg-white cursor-pointer group"
+                          className={`p-4 border rounded-2xl transition-[border-color,background-color,box-shadow,opacity] ${
+                            isExpanded ? "shadow-md bg-white border-[#12a0e1]/30"
+                            : isMatrix ? "border-[#dce4ec] hover:shadow-md bg-slate-200/50 opacity-60 hover:opacity-100 cursor-pointer group"
+                            : "border-[#dce4ec] hover:shadow-md bg-slate-50 hover:bg-white cursor-pointer group"
                           }`}
                           onClick={() => { if (!isExpanded) handleExpandRecentJob(task); }}
                         >

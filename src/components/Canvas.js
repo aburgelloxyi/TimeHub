@@ -1875,7 +1875,7 @@ export function NotesCanvasCard({ isOpen, onToggle, department, pinnedFolderIds 
 
           {/* Editor column */}
           <div className="flex flex-col min-w-0 rounded-2xl border shadow-sm overflow-hidden bg-white"
-            style={selectedPage ? { borderColor: `${selectedAccent}33`, borderLeftWidth: 3, borderLeftColor: selectedAccent } : { borderColor: "#ece4d8" }}
+            style={{ borderColor: selectedPage ? `${selectedAccent}55` : "#ece4d8" }}
           >
             {/* Slim top bar — orientation + save state + focus toggle */}
             <div className="flex items-center gap-2 px-4 py-2 border-b border-slate-100 shrink-0">

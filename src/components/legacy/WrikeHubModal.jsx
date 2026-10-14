@@ -229,7 +229,7 @@ export default function WrikeHubModal({
                                 key={task.id}
                                 className={`transition-[background-color] group border-b border-[#1e293b]/40 ${
                                   isAddedToActiveDay
-                                    ? "bg-[#10b981]/15 hover:bg-[#10b981]/25 border-l-2 border-l-[#10b981] shadow-[inset_0_0_15px_rgba(52,211,153,0.05)] text-emerald-100"
+                                    ? "bg-[#10b981]/15 hover:bg-[#10b981]/25 shadow-[inset_0_0_15px_rgba(52,211,153,0.05)] text-emerald-100"
                                     : "hover:bg-[#121824]"
                                 }`}
                               >

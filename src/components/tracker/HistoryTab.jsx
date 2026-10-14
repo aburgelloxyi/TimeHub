@@ -8,7 +8,6 @@ import MultiCountrySelect from "../shared/MultiCountrySelect";
 import { territoryFlags } from "../../utils/territories";
 import { CATEGORIES } from "../../constants";
 import { formatTimerDisplay, getTimesheetValue } from "../../utils/timeHelpers";
-import { getBorderColorClass } from "../../utils/tagStyles";
 
 export default function HistoryTab({
   loading,

@@ -147,26 +147,8 @@ const getTerritoryData = (title) => {
   return { name: "GLOBAL", flag: "🎬" };
 };
 
-const getBorderColorClass = (tag) => {
-  if (!tag) return "border-l-slate-300";
-  const t = String(tag).toLowerCase();
-  if (t.includes("to amend"))          return "border-l-rose-400";
-  if (t.includes("render review"))     return "border-l-indigo-400";
-  if (t.includes("revised"))           return "border-l-teal-400";
-  if (t.includes("creative approved")) return "border-l-blue-400";
-  if (t.includes("content approved"))  return "border-l-purple-400";
-  if (t.includes("client review") || t.includes("content review")) return "border-l-yellow-400";
-  if (t.includes("motion"))            return "border-l-emerald-400";
-  if (t.includes("digital"))           return "border-l-cyan-400";
-  if (t.includes("prep for delivery")) return "border-l-orange-400";
-  if (t === "delivering" || t === "delivery") return "border-l-yellow-500";
-  if (t.includes("on hold"))           return "border-l-red-400";
-  if (t.includes("pm"))                return "border-l-fuchsia-400";
-  return "border-l-transparent";
-};
-
-// Same hue as getBorderColorClass, as text — lets the status word in the
-// card's meta line carry the accent instead of a full chip.
+// A status's hue, as text: the status word in the card's meta line carries
+// the colour, with no chip and no bar on the card's edge.
 const getTagTextColorClass = (tag) => {
   if (!tag) return "text-slate-400";
   const t = String(tag).toLowerCase();
@@ -187,7 +169,7 @@ const getTagTextColorClass = (tag) => {
 
 // Status as a small dot — used on the dark slate where a light chip palette
 // would not survive. Same semantic hues as
-// getBorderColorClass (literal classes so Tailwind's scanner sees them).
+// getTagTextColorClass (literal classes so Tailwind's scanner sees them).
 const getStatusDotClass = (tag) => {
   if (!tag) return "bg-slate-400";
   const t = String(tag).toLowerCase();
@@ -897,10 +879,10 @@ export default function TodaysList({ wrikeData, triggerToast: _triggerToast, isA
                       const terr = getTerritoryData(task.title);
                       const overdue = isOverdue(task.dueDate);
                       return (
-                        // A clip, not a dashboard widget: the left bar is the
-                        // single colour statement (status), the title is the
-                        // single loud element, and everything else — campaign,
-                        // status word, files — recedes to muted plain text.
+                        // A clip, not a dashboard widget: the status word is the
+                        // single colour statement, the title is the single loud
+                        // element, and everything else (campaign, files)
+                        // recedes to muted plain text.
                         // No chips inside cards inside lanes.
                         <div
                           key={task.id}
@@ -914,7 +896,7 @@ export default function TodaysList({ wrikeData, triggerToast: _triggerToast, isA
                               setSelectedTask(task);
                             }
                           }}
-                          className={`group/chip shrink-0 cursor-pointer rounded-lg border-l-[3px] ${getBorderColorClass(task.tag)} border-y border-r border-slate-200/70 ${
+                          className={`group/chip shrink-0 cursor-pointer rounded-lg border border-slate-200/70 ${
                             overdue ? "bg-rose-50/40" : "bg-white"
                           } hover:shadow-md hover:-translate-y-0.5 transition-[transform,box-shadow] focus-visible:ring-2 focus-visible:ring-[#12a0e1]/40 focus-visible:outline-none ${
                             isFocused ? "w-72 p-3.5" : "w-60 px-3 py-2.5"

@@ -36,26 +36,3 @@ export const getTagStyle = (tag) => {
 
   return `${baseStyle} bg-slate-100 text-slate-500 border-slate-200`;
 };
-
-export const getBorderColorClass = (tag) => {
-  if (!tag) return "border-l-slate-300";
-
-  const lowerTag = String(tag).toLowerCase();
-
-  if (lowerTag.includes("to amend")) return "border-l-rose-400";
-  if (lowerTag.includes("render review")) return "border-l-indigo-400";
-  if (lowerTag.includes("revised")) return "border-l-teal-400";
-  if (lowerTag.includes("creative approved")) return "border-l-blue-400";
-  if (lowerTag.includes("content approved")) return "border-l-purple-400";
-  if (lowerTag.includes("client review") || lowerTag.includes("content review"))
-    return "border-l-yellow-400";
-  if (lowerTag.includes("motion")) return "border-l-emerald-400";
-  if (lowerTag.includes("digital")) return "border-l-cyan-400";
-  if (lowerTag.includes("prep for delivery")) return "border-l-orange-400";
-  if (lowerTag === "delivering" || lowerTag === "delivery")
-    return "border-l-yellow-500";
-  if (lowerTag.includes("on hold")) return "border-l-red-400";
-  if (lowerTag.includes("pm")) return "border-l-fuchsia-400";
-
-  return "border-l-transparent";
-};

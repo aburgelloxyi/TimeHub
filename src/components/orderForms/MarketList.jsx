@@ -87,7 +87,9 @@ export default function MarketList({ file, today, matcher, onOpen, arriving = fa
     [file, matcher]
   );
   const inWrike = useMemo(() => new Map([...wrike].map(([name, w]) => [name, w.inWrike])), [wrike]);
-  const [showDelivered, setShowDelivered] = useState(false);
+  // Open to begin with, so a PM new to the page sees where delivered markets
+  // went; it can still be folded away.
+  const [showDelivered, setShowDelivered] = useState(true);
 
   // What the last Refresh changed in a market and hasn't been looked at.
   const changedIn = useMemo(() => {
@@ -110,7 +112,7 @@ export default function MarketList({ file, today, matcher, onOpen, arriving = fa
   // Markets with no orders yet get a list of their own under the table, so
   // they don't sit between the ones a PM has something to read in.
   // Delivered markets, every order's task done in Wrike, go in a table of
-  // their own too, folded away: they need nothing more.
+  // their own too, below the ones that still need something.
   const isDelivered = (m) => !!wrike.get(m.name)?.done;
   const active = rows.filter((m) => m.status !== "notStarted" && !isDelivered(m));
   const idle = rows.filter((m) => m.status === "notStarted");

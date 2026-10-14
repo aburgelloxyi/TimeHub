@@ -52,7 +52,9 @@ export default function HeaderSearch({ files, matcher, today }) {
   const reveal = `grid ${held} transition-[grid-template-columns,opacity] duration-300 ease-[cubic-bezier(0.16,1,0.3,1)] motion-reduce:transition-none group-hover:grid-cols-[1fr] group-hover:opacity-100 group-focus-within:grid-cols-[1fr] group-focus-within:opacity-100 [@media(hover:none)]:grid-cols-[1fr] [@media(hover:none)]:opacity-100`;
 
   return (
-    <div ref={wrap} className="relative">
+    // Drawn above its neighbour, so the G's glow passes under the glass and
+    // is blurred with the rest of what's behind it.
+    <div ref={wrap} className="relative z-10">
       <label
         className="group flex items-center h-10 rounded-full border overflow-hidden cursor-text bg-white/15 hover:bg-white/25 focus-within:bg-white/25 border-white/25 text-white backdrop-blur-sm transition-colors duration-300"
         aria-label="Search every order"

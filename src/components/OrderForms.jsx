@@ -367,7 +367,9 @@ export default function OrderForms({ wrikeData }) {
         title="Client Orders"
         subtitle="Market orders at a glance"
       >
-        <div className="flex items-center gap-2">
+        {/* Apart enough that the connected G's glow fades before the search's
+            glass, which would otherwise cut it off in a hard line. */}
+        <div className="flex items-center gap-3.5">
           {files?.length > 0 && <HeaderSearch files={files} matcher={matcher} today={today} />}
           {googleConfigured() && <GoogleButton />}
         </div>

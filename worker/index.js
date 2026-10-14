@@ -1,5 +1,6 @@
 import { isBoardTask, isStale } from "../src/lib/jobFilter";
 import { folderPatchPlan, folderEntries, parentsToRead } from "../src/lib/folderMirror";
+import { makeGoogleAuth } from "./googleAuth.js";
 // Cloudflare Worker: Wrike OAuth (authorization code flow) + API proxy.
 //
 // Members never see a Wrike token. After /api/wrike/oauth/start and Wrike's
@@ -45,10 +46,27 @@ const unpersistedTokens = new Map();
 // reconnect; anything else is transient and must not look like a sign-out.
 class WrikeAuthInvalid extends Error {}
 
+// Google's sign-in, kept here as Wrike's is (googleAuth.js). Whose it is comes
+// from the Wrike session: a person connects Google once TimeHub knows them.
+const handleGoogle = makeGoogleAuth({
+  parseCookies, setCookie, clearCookie, json, sbFetch,
+  whoIs: async (request, env) => {
+    const session = parseCookies(request)[SESSION_COOKIE];
+    if (!session) return null;
+    const row = await getTokenRowBySession(env, session);
+    return row?.wrike_user_id || null;
+  },
+});
+
 export default {
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
     const isHttps = url.protocol === "https:";
+
+    if (url.pathname.startsWith("/api/google/")) {
+      const answered = await handleGoogle(request, url, env, ctx, isHttps);
+      if (answered) return answered;
+    }
 
     if (url.pathname === "/api/embed/video") {
       return handleVideoEmbed(url, env);

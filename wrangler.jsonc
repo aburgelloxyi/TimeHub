@@ -20,6 +20,9 @@
   ],
   "vars": {
     "WRIKE_CLIENT_ID": "EzRrr1FJ",
+    // Public, like Wrike's: it names the app to Google. The secret is a
+    // Worker secret (GOOGLE_CLIENT_SECRET).
+    "GOOGLE_CLIENT_ID": "1047837005704-h04jm219u2mm5rojhpv1vo797rei5v3a.apps.googleusercontent.com",
     "SUPABASE_URL": "https://oozopadfrupwujsagagn.supabase.co"
   }
 }

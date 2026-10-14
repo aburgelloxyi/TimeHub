@@ -184,3 +184,13 @@ check("a request past its deadline is overdue", orderUrgency(order("requested", 
   check("a cancelled order doesn't hold its market open, but a market of nothing but cancelled ones isn't delivered",
     [marketDelivery([t("Delivered"), t("Cancelled")], 2).done, marketDelivery([t("Cancelled")], 1).done], [true, false]);
 }
+
+// The Control Centre keeps orders whose work is still going out.
+{
+  const { ordersByMarket } = await import("../src/lib/orderForms/status.js");
+  const o = (row) => ({ tab: "T", row, status: "requested", deliveryDeadline: "2026-10-15", artwork: "A", xyi: { title: `A_B_${row}` } });
+  const file = { id: "f", name: "F", kind: "motion", loadedAt: "t", source: { clientId: "paramount" }, markets: [{ name: "NZ", orders: [o(1), o(2), o(3), o(4)] }] };
+  const statuses = ["Delivering", "Prep for delivery", "Delivered", "Cancelled"];
+  const got = ordersByMarket([file], "2026-10-12", (f, m) => m.orders.map((_, i) => ({ task: { customStatusName: statuses[i] } })));
+  check("delivering and prep for delivery still count; delivered and cancelled don't", got.dueSoon[0].orders.map((x) => x.row), [1, 2]);
+}

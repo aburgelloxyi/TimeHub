@@ -23,23 +23,11 @@ import { fetchTasksByIds } from "../hooks/useWrikeCache";
 import {
   RefreshCw,
   XCircle,
-  ChevronDown,
-  Tag,
-  Search,
   Check,
   ChevronRight,
   CheckCircle,
-  Lock,
-  LayoutList,
-  MessagesSquare,
-  MessageSquareWarning,
-  Merge,
-  X,
   AlertCircle,
-  Copy,
   Plus,
-  Layers,
-  Settings,
 } from "lucide-react";
 import {
   TERRITORIES,
@@ -55,11 +43,10 @@ import { fetchFolderDictionary } from "../hooks/useBoardTasks";
 import { countryFieldIds, warmCountryFields } from "../lib/countryField";
 import { secondsToHM } from "../utils/timeHelpers";
 import { coinDrop } from "../utils/coinDrop";
-import { COLUMNS, DAYS, TIME_OPTIONS, getDarkTagStyle } from "./legacy/legacyConstants";
+import { COLUMNS, DAYS, TIME_OPTIONS } from "./legacy/legacyConstants";
 import PageHeader from "./shared/PageHeader";
 import TableSearchableSelect from "./legacy/TableSearchableSelect";
 import MultiCountrySelect from "./shared/MultiCountrySelect";
-import PasteNextSteps from "./shared/PasteNextSteps";
 import { toIsoDate, isoToday } from "../utils/dates";
 import {
   splitTerritories,
@@ -73,29 +60,19 @@ import { useTimesheetPrefs } from "../hooks/useTimesheetPrefs";
 import { mergeIntoSheet, mergeCheck, mergeRows } from "../utils/mergeMultiCountry";
 import { categoryForTaskWithSource } from "../utils/categoryFamily";
 import { countryPullSource, categoryPullSource } from "../utils/pullSource";
-import PullDefaultsPopover from "./legacy/PullDefaultsPopover";
 import CommentTrailModal from "./legacy/CommentTrailModal";
 import ReportProblemModal from "./legacy/ReportProblemModal";
-import PullTimesButton from "./legacy/PullTimesButton";
-import { motion } from "framer-motion";
 import { PAGES } from "../lib/departments";
 import { BOOKMARKLET_VERSION } from "../lib/bookmarkletVersion";
 
-// Bottom-bar tools that are an icon until hovered or focused. The label's
-// width is animated, so the button grows instead of a tooltip appearing; on a
-// touch screen it stays an icon and aria-label names it.
-const quietToolClass =
-  "group/tool flex items-center p-3 bg-white hover:bg-slate-50 text-[#122027] text-sm font-bold border border-[#dce4ec] rounded-xl shadow-sm transition-[background-color,transform] active:scale-95 focus:outline-none focus-visible:ring-4 focus-visible:ring-[#12a0e1]/30";
-// The table settings opening and closing: a spring to the real width of the
-// controls, soft enough to settle without a visible bounce.
-const TONGUE_SPRING = { type: "spring", stiffness: 210, damping: 26, mass: 0.9 };
-const tongueFold = (shown) => ({ width: shown ? "auto" : 0, opacity: shown ? 1 : 0 });
-
-const quietToolLabelClass =
-  "max-w-0 overflow-hidden whitespace-nowrap opacity-0 transition-[max-width,opacity,margin] duration-500 ease-in-out [@media(hover:hover)]:group-hover/tool:max-w-[10rem] [@media(hover:hover)]:group-hover/tool:opacity-100 [@media(hover:hover)]:group-hover/tool:ml-2 group-focus-visible/tool:max-w-[10rem] group-focus-visible/tool:opacity-100 group-focus-visible/tool:ml-2";
 import { HoverLabel } from "./shared/FloatingCard";
 import { Rolling, Tick, prefersReducedMotion } from "./shared/motion";
 import { snapshotRows, glideRows, sweepRows, nudge, picturesOf } from "./legacy/rowMotion";
+import WrikeHubModal from "./legacy/WrikeHubModal";
+import UnloggedReminderModal from "./legacy/UnloggedReminderModal";
+import BatchEditBar from "./legacy/BatchEditBar";
+import DayTabs from "./legacy/DayTabs";
+import TimesheetActionBar from "./legacy/TimesheetActionBar";
 import { newRowId } from "../utils/rowId";
 
 const ACTIVE_DAY_KEY = "xyi_legacy_activeDay";
@@ -205,102 +182,6 @@ function RowCheck({ checked, onChange, disabled, label }) {
     >
       {checked && <Tick draw={justTicked} className="w-3 h-3 text-white" />}
     </button>
-  );
-}
-
-// The category picker in the batch-edit bar. Its own compact list rather than
-// TableSearchableSelect: that component's menu is built for a table cell and
-// anchored to it, and this one has to open UPWARD out of a floating bar sitting
-// at the foot of the table.
-function BatchCategoryPicker({ onPick, pinned = [] }) {
-  const [open, setOpen] = useState(false);
-  const [search, setSearch] = useState("");
-  const wrapRef = useRef(null);
-
-  useEffect(() => {
-    if (!open) { setSearch(""); return; }
-    const onDown = (e) => {
-      if (wrapRef.current && !wrapRef.current.contains(e.target)) setOpen(false);
-    };
-    const onKey = (e) => { if (e.key === "Escape") setOpen(false); };
-    document.addEventListener("mousedown", onDown);
-    document.addEventListener("keydown", onKey);
-    return () => {
-      document.removeEventListener("mousedown", onDown);
-      document.removeEventListener("keydown", onKey);
-    };
-  }, [open]);
-
-  const filtered = search
-    ? CATEGORIES.filter((c) => c.toLowerCase().includes(search.toLowerCase()))
-    : CATEGORIES;
-
-  return (
-    <div className="relative" ref={wrapRef}>
-      <button
-        onClick={() => setOpen((v) => !v)}
-        className="flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-bold bg-white/10 hover:bg-white/20 transition-colors"
-      >
-        <Tag className="w-3.5 h-3.5" />
-        Set category
-        <ChevronDown className={`w-3 h-3 transition-transform ${open ? "rotate-180" : ""}`} />
-      </button>
-
-      {open && (
-        <div className="absolute bottom-full mb-2 left-1/2 -translate-x-1/2 w-[300px]">
-          <div className="w-full bg-white text-[#122027] border border-[#dce4ec] rounded-2xl shadow-xl overflow-hidden animate-in fade-in slide-in-from-bottom-2 duration-200">
-            <div className="p-2.5 pb-2">
-              <div className="flex items-center gap-2 bg-slate-50 border border-[#dce4ec] rounded-xl px-2.5 py-1.5">
-                <Search className="w-3.5 h-3.5 text-[#768994] shrink-0" />
-                <input
-                  autoFocus
-                  value={search}
-                  onChange={(e) => setSearch(e.target.value)}
-                  placeholder="Search categories…"
-                  className="w-full bg-transparent text-xs outline-none placeholder:text-[#768994]"
-                />
-              </div>
-            </div>
-            <div className="max-h-56 overflow-y-auto overscroll-contain px-2 pb-2">
-              {/* Same shortlist as the row dropdown, and only while unfiltered
-                  — once you are searching, a shortlist above the matches is
-                  just a duplicate of some of them. */}
-              {!search && pinned.length > 0 && (
-                <>
-                  <p className="px-2.5 pt-1 pb-1 text-[9px] font-black uppercase tracking-widest text-[#12a0e1]">
-                    Most used
-                  </p>
-                  {pinned.map((c) => (
-                    <button
-                      key={`pinned-${c}`}
-                      onClick={() => { onPick(c); setOpen(false); }}
-                      className="w-full text-left px-2.5 py-1.5 rounded-lg text-[11px] font-bold hover:bg-slate-50 transition-colors truncate"
-                    >
-                      {c}
-                    </button>
-                  ))}
-                  <div className="my-1 border-t border-slate-100" />
-                </>
-              )}
-              {filtered.map((c) => (
-                <button
-                  key={c}
-                  onClick={() => { onPick(c); setOpen(false); }}
-                  className="w-full text-left px-2.5 py-1.5 rounded-lg text-[11px] hover:bg-slate-50 transition-colors truncate"
-                >
-                  {c}
-                </button>
-              ))}
-              {filtered.length === 0 && (
-                <p className="px-2.5 py-3 text-[11px] text-[#768994] text-center">
-                  No category matches “{search}”.
-                </p>
-              )}
-            </div>
-          </div>
-        </div>
-      )}
-    </div>
   );
 }
 
@@ -2871,467 +2752,25 @@ export default function LegacyTimesheet({ wrikeData, isAdmin = false }) {
       )}
 
       {showReminderModal && (
-        <div
-          className="fixed inset-0 z-[100001] flex items-center justify-center p-4"
-          onClick={() => setShowReminderModal(false)}
-        >
-          <div className="absolute inset-0 bg-black/40 backdrop-blur-sm" />
-          <div
-            className="relative w-full max-w-md bg-gradient-to-b from-[#1c2333] to-[#141b28] border border-white/10 rounded-2xl shadow-2xl flex flex-col max-h-[80vh] animate-in fade-in zoom-in-95 duration-200"
-            onClick={(e) => e.stopPropagation()}
-          >
-            {/* Glossy top edge */}
-            <div className="absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-white/25 to-transparent" />
-            {/* Header */}
-            <div className="px-5 pt-5 pb-4 border-b border-white/5 flex items-start justify-between gap-3">
-              <div>
-                <h2 className="text-sm font-bold text-white">
-                  Anything left to log?
-                </h2>
-                <p className="text-xs text-slate-400 mt-0.5">
-                  These tasks don't have hours yet for{" "}
-                  <span className="text-slate-200">{activeDay}</span>
-                </p>
-              </div>
-              <button
-                onClick={() => setShowReminderModal(false)}
-                className="text-slate-500 hover:text-white transition-colors mt-0.5 shrink-0"
-              >
-                <X className="w-4 h-4" />
-              </button>
-            </div>
-            {/* Body */}
-            {/* flex-1 + min-h-0 so this scrolls inside the max-h-[80vh] column
-                rather than growing past it — min-h-0 is what lets a flex child
-                shrink below its content. Safe to clip here because
-                TableSearchableSelect positions its dropdown `fixed` on open
-                precisely so it escapes containers like this one. */}
-            <div className="p-4 space-y-2 flex-1 min-h-0 overflow-y-auto">
-              {unloggedTasks.length === 0 ? (
-                <div className="text-center py-8">
-                  <CheckCircle className="w-8 h-8 text-emerald-400 mx-auto mb-2 opacity-80" />
-                  <p className="text-white font-semibold text-sm">All good!</p>
-                  <p className="text-slate-500 text-xs mt-1">
-                    Nothing missing for {activeDay}
-                  </p>
-                </div>
-              ) : (
-                unloggedTasks.map((task) => (
-                  <div
-                    key={task.id}
-                    className="bg-white/[0.04] hover:bg-white/[0.07] border border-white/[0.07] rounded-xl p-3.5 flex items-center gap-3 transition-colors"
-                  >
-                    <div className="flex-1 min-w-0">
-                      <p
-                        className="text-sm font-semibold text-white truncate"
-                        title={task.title}
-                      >
-                        {task.title}
-                      </p>
-                      <div className="flex flex-wrap gap-1.5 mt-1.5">
-                        <span className={getDarkTagStyle(task.wrikeStatus)}>
-                          {task.wrikeStatus}
-                        </span>
-                        <span className="text-slate-500 text-[11px]">
-                          {task.wrikeCategory}
-                        </span>
-                        {task.wrikeLocation !== "⚠️ Unassigned" && (
-                          <span className="text-slate-500 text-[11px]">
-                            {TERRITORY_FLAGS[task.wrikeLocation]}{" "}
-                            {task.wrikeLocation}
-                          </span>
-                        )}
-                      </div>
-                    </div>
-                    <div className="w-24 shrink-0">
-                      <TableSearchableSelect
-                        options={TIME_OPTIONS}
-                        value={"none"}
-                        onChange={(val) =>
-                          handleModalTimeChange(task, activeDay, val)
-                        }
-                        placeholder="none"
-                        dropdownId={`reminder-time-${task.id}`}
-                        activeDropdown={activeDropdown}
-                        setActiveDropdown={setActiveDropdown}
-                        isTime={true}
-                        isDarkModal={true}
-                      />
-                    </div>
-                  </div>
-                ))
-              )}
-            </div>
-            {/* Footer */}
-            <div className="px-4 pb-4 pt-2 border-t border-white/5">
-              <button
-                onClick={() => setShowReminderModal(false)}
-                className="w-full py-2 text-xs font-semibold text-slate-500 hover:text-slate-300 transition-colors rounded-xl hover:bg-white/5"
-              >
-                Got it, close
-              </button>
-            </div>
-          </div>
-        </div>
+        <UnloggedReminderModal
+          activeDay={activeDay} activeDropdown={activeDropdown}
+          handleModalTimeChange={handleModalTimeChange} setActiveDropdown={setActiveDropdown}
+          setShowReminderModal={setShowReminderModal} unloggedTasks={unloggedTasks}
+        />
       )}
 
       {/* --- DESIGN PACK: PREMIUM MODERN WRIKE TIMESHEET MODAL --- */}
       {isWrikeModalOpen && (
-        <div className="fixed inset-0 z-[99999] bg-[#0b0f17]/95 backdrop-blur-xl flex flex-col text-slate-300 animate-in fade-in duration-200">
-          {/* Header */}
-          <div className="bg-[#121824]/90 border-b border-[#222f3e] px-8 py-5 flex justify-between items-center shrink-0 shadow-lg relative z-10 backdrop-blur-md">
-            <div className="flex items-center gap-8">
-              <div className="flex items-center gap-3">
-                <div className="w-3 h-3 rounded-full bg-[#12a0e1] shadow-[0_0_12px_#12a0e1]"></div>
-                <h1 className="text-xl font-black text-white tracking-tight uppercase">
-                  Wrike Hub
-                </h1>
-              </div>
-              <div className="flex gap-1.5 p-1 bg-[#090d14] rounded-xl border border-[#1e293b]">
-                <button
-                  onClick={() => setModalTab("timesheet")}
-                  className={`px-4 py-1.5 text-xs font-black tracking-wide uppercase transition-[background-color,color,box-shadow] rounded-lg ${
-                    modalTab === "timesheet"
-                      ? "bg-[#12a0e1] text-white shadow-md"
-                      : "text-slate-500 hover:text-slate-300"
-                  }`}
-                >
-                  My Timesheet
-                </button>
-                <button
-                  onClick={() => setShowReminderModal(true)}
-                  className="px-4 py-1.5 text-xs font-black tracking-wide uppercase transition-[color] rounded-lg flex items-center gap-2 text-slate-500 hover:text-slate-300"
-                >
-                  Reminders
-                  {unloggedTasks.length > 0 && (
-                    <span className="bg-amber-500/80 text-white text-[10px] font-black px-2 py-0.5 rounded-full leading-none">
-                      {unloggedTasks.length}
-                    </span>
-                  )}
-                </button>
-              </div>
-            </div>
-            <button
-              onClick={() => setIsWrikeModalOpen(false)}
-              className="p-2.5 bg-[#1a2333] hover:bg-[#253247] border border-[#2d3d52] text-slate-400 hover:text-white rounded-xl transition-[background-color,color,box-shadow,transform] shadow-md active:scale-95"
-            >
-              <X className="w-4 h-4" />
-            </button>
-          </div>
-
-          {/* Sub Header */}
-          {modalTab === "timesheet" && (
-            <div className="bg-[#121824]/50 border-b border-[#222f3e] px-8 py-3 flex items-center justify-between gap-6 text-xs font-bold uppercase tracking-wider shrink-0 text-slate-400">
-              <span className="flex items-center gap-2.5">
-                <div className="w-6 h-6 bg-gradient-to-tr from-[#12a0e1] to-[#1cc1a5] rounded-lg flex items-center justify-center text-white text-xs font-black shadow-md shadow-[#12a0e1]/10">
-                  {wrikeFullName.charAt(0)}
-                </div>
-                <span className="text-slate-200">{wrikeFullName}</span>
-              </span>
-              <span className="flex items-center gap-2 bg-[#090d14] px-3 py-1.5 rounded-lg border border-[#1e293b]">
-                <RefreshCw
-                  className={`w-3.5 h-3.5 text-[#1cc1a5] ${
-                    isFetchingModalData ? "animate-spin" : ""
-                  }`}
-                />
-                Current Reporting Week
-              </span>
-            </div>
-          )}
-
-          {/* Table Container */}
-          <div className="flex-1 overflow-auto bg-[#0b0f17] custom-scrollbar">
-            {/* TIMESHEET TAB */}
-            {modalTab === "timesheet" && (
-              <table className="w-full text-left text-[12px] border-collapse whitespace-nowrap [&_td]:overflow-hidden" style={{ tableLayout: "fixed", minWidth: `${WRIKE_TS_COLS.reduce((s, c) => s + wtWidths[c.key], 0)}px` }}>
-                <colgroup>
-                  {WRIKE_TS_COLS.map((c) => <col key={c.key} style={{ width: wtWidths[c.key] }} />)}
-                </colgroup>
-                <thead className="bg-[#121824] text-slate-400 font-bold uppercase tracking-wider sticky top-0 z-20 shadow-md border-b border-[#222f3e]">
-                  <tr>
-                    <th className="relative px-5 py-3.5 border-r border-[#222f3e] overflow-hidden">
-                      Assignment Title{wtHandle("title")}
-                    </th>
-                    <th className="relative px-5 py-3.5 border-r border-[#222f3e] overflow-hidden">
-                      Status{wtHandle("status")}
-                    </th>
-                    <th className="relative px-5 py-3.5 border-r border-[#222f3e] overflow-hidden">
-                      Category Link{wtHandle("category")}
-                    </th>
-                    <th className="relative px-5 py-3.5 border-r border-[#222f3e] overflow-hidden">
-                      Job Key{wtHandle("jobkey")}
-                    </th>
-                    <th className="relative px-5 py-3.5 border-r border-[#222f3e] overflow-hidden">
-                      Due Date{wtHandle("due")}
-                    </th>
-                    <th className="relative px-5 py-3.5 border-r border-[#222f3e] overflow-hidden">
-                      Location{wtHandle("location")}
-                    </th>
-                    {["Mo", "Tu", "We", "Th", "Fr", "Sa", "Su"].map((d, i) => {
-                      const dayName = DAYS[i];
-                      const isCurrent = todayDayName === dayName;
-                      const isEnd = d === "Sa" || d === "Su";
-                      return (
-                        <th
-                          key={d}
-                          className={`relative px-4 py-3.5 border-r border-[#222f3e] text-center overflow-hidden last:border-r-0 ${
-                            isCurrent
-                              ? "bg-[#12a0e1]/15 text-[#38bdf8] font-black"
-                              : isEnd
-                              ? "text-rose-400/60"
-                              : ""
-                          }`}
-                        >
-                          {d}{wtHandle(`day_${d}`)}
-                        </th>
-                      );
-                    })}
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-[#1e293b]/60">
-                  {isFetchingModalData ? (
-                    <tr>
-                      <td
-                        colSpan="12"
-                        className="text-center py-24 text-slate-500 font-medium italic"
-                      >
-                        Synchronizing week metrics with Wrike...
-                      </td>
-                    </tr>
-                  ) : Object.keys(wrikeTimesheetData).length === 0 ? (
-                    <tr>
-                      <td
-                        colSpan="12"
-                        className="text-center py-24 text-slate-500 font-medium italic"
-                      >
-                        No workspace records detected.
-                      </td>
-                    </tr>
-                  ) : (
-                    Object.entries(wrikeTimesheetData)
-                      // --- SMART SORTING ALGORITHM FOR GROUPS ---
-                      .sort((a, b) => {
-                        const minDueA = Math.min(
-                          ...a[1].map((t) => getTaskSortValues(t).due)
-                        );
-                        const minDueB = Math.min(
-                          ...b[1].map((t) => getTaskSortValues(t).due)
-                        );
-
-                        if (minDueA !== minDueB) return minDueA - minDueB;
-
-                        const maxCreatedA = Math.max(
-                          ...a[1].map((t) => getTaskSortValues(t).created)
-                        );
-                        const maxCreatedB = Math.max(
-                          ...b[1].map((t) => getTaskSortValues(t).created)
-                        );
-
-                        if (maxCreatedA !== maxCreatedB)
-                          return maxCreatedB - maxCreatedA;
-
-                        return a[0].localeCompare(b[0]);
-                      })
-                      .map(([groupName, tasks]) => {
-                        // --- SMART SORTING ALGORITHM FOR TASKS INSIDE GROUPS ---
-                        const sortedTasks = [...tasks].sort((tA, tB) => {
-                          const datesA = getTaskSortValues(tA);
-                          const datesB = getTaskSortValues(tB);
-
-                          if (datesA.due !== datesB.due)
-                            return datesA.due - datesB.due;
-                          return datesB.created - datesA.created;
-                        });
-
-                        return (
-                          <React.Fragment key={groupName}>
-                            {/* Group Header Row */}
-                            <tr
-                              className="bg-[#141b27] hover:bg-[#1a2436] transition-[background-color] cursor-pointer border-y border-[#222f3e]"
-                              onClick={() => toggleGroup(groupName)}
-                            >
-                              <td
-                                colSpan="6"
-                                className="px-5 py-2.5 border-r border-[#222f3e] font-black text-slate-200 tracking-tight text-xs"
-                              >
-                                <div className="flex items-center gap-2.5">
-                                  {expandedGroups[groupName] ? (
-                                    <ChevronDown className="w-4 h-4 text-[#12a0e1]" />
-                                  ) : (
-                                    <ChevronRight className="w-4 h-4 text-slate-500" />
-                                  )}
-                                  <span>{groupName}</span>
-                                  <span className="bg-[#090d14] text-slate-500 font-bold px-2 py-0.5 rounded-full text-[10px] border border-[#1e293b]">
-                                    {tasks.length}
-                                  </span>
-                                </div>
-                              </td>
-                              {DAYS.map((d) => (
-                                <td
-                                  key={d}
-                                  className={`border-r border-[#222f3e] last:border-r-0 ${
-                                    todayDayName === d
-                                      ? "bg-[#12a0e1]/8"
-                                      : "bg-[#0f141f] opacity-40"
-                                  }`}
-                                ></td>
-                              ))}
-                            </tr>
-
-                            {/* Child Rows */}
-                            {expandedGroups[groupName] &&
-                              sortedTasks.map((task) => {
-                                const isAddedToActiveDay = rows.some(
-                                  (r) =>
-                                    r.taskId === task.id &&
-                                    r.dayOfWeek === activeDay
-                                );
-
-                                return (
-                                  <tr
-                                    key={task.id}
-                                    className={`transition-[background-color] group border-b border-[#1e293b]/40 ${
-                                      isAddedToActiveDay
-                                        ? "bg-[#10b981]/15 hover:bg-[#10b981]/25 border-l-2 border-l-[#10b981] shadow-[inset_0_0_15px_rgba(52,211,153,0.05)] text-emerald-100"
-                                        : "hover:bg-[#121824]"
-                                    }`}
-                                  >
-                                    <td
-                                      className="px-5 py-3 border-r border-[#222f3e] truncate max-w-[320px] pl-10 font-medium"
-                                      title={task.title}
-                                    >
-                                      {task.permalink ? (
-                                        <a
-                                          href={task.permalink}
-                                          target="_blank"
-                                          rel="noopener noreferrer"
-                                          className="hover:text-[#12a0e1] transition-colors hover:underline underline-offset-2"
-                                          onClick={(e) => e.stopPropagation()}
-                                        >
-                                          {task.title}
-                                        </a>
-                                      ) : (
-                                        task.title
-                                      )}
-                                    </td>
-                                    <td className="px-5 py-3 border-r border-[#222f3e] align-middle">
-                                      <span
-                                        className={getDarkTagStyle(
-                                          task.wrikeStatus
-                                        )}
-                                      >
-                                        {task.wrikeStatus}
-                                      </span>
-                                    </td>
-                                    <td className="px-3 py-1 border-r border-[#222f3e] align-middle w-[240px]">
-                                      <TableSearchableSelect
-                                        options={CATEGORIES}
-                                        value={task.wrikeCategory}
-                                        onChange={(val) =>
-                                          handleModalCategoryChange(
-                                            groupName,
-                                            task.id,
-                                            val
-                                          )
-                                        }
-                                        placeholder="Category"
-                                        isGrouped={true}
-                                        dropdownId={`modal-category-${task.id}`}
-                                        activeDropdown={activeDropdown}
-                                        setActiveDropdown={setActiveDropdown}
-                                        isCategory={true}
-                                        isDarkModal={true}
-                                      />
-                                    </td>
-                                    <td className="px-5 py-3 border-r border-[#222f3e] font-mono text-[11px] text-slate-500 font-semibold">
-                                      {task.wrikeJob}
-                                    </td>
-                                    <td className="px-5 py-3 border-r border-[#222f3e] w-[110px]">
-                                      {task.dueDate ? (
-                                        (() => {
-                                          const [y, m, d] = task.dueDate
-                                            .split("T")[0]
-                                            .split("-")
-                                            .map(Number);
-                                          const due = new Date(y, m - 1, d);
-                                          const today = new Date();
-                                          today.setHours(0, 0, 0, 0);
-                                          const diffDays = Math.round(
-                                            (due - today) / 86400000
-                                          );
-                                          const label = due.toLocaleDateString(
-                                            "en-GB",
-                                            { day: "numeric", month: "short" }
-                                          );
-                                          const isOverdue = diffDays < 0;
-                                          const isToday = diffDays === 0;
-                                          const isTomorrow = diffDays === 1;
-                                          return (
-                                            <span
-                                              className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[11px] font-bold border w-fit ${
-                                                isOverdue
-                                                  ? "bg-rose-500/10 text-rose-400 border-rose-500/20"
-                                                  : isToday
-                                                  ? "bg-amber-500/10 text-amber-400 border-amber-500/20"
-                                                  : isTomorrow
-                                                  ? "bg-yellow-500/10 text-yellow-400 border-yellow-500/20"
-                                                  : "bg-[#1e2530] text-slate-400 border-[#2d3748]"
-                                              }`}
-                                            >
-                                              {label}
-                                              {isOverdue && (
-                                                <span className="text-[10px] font-black uppercase tracking-wider text-rose-500">
-                                                  overdue
-                                                </span>
-                                              )}
-                                              {isToday && (
-                                                <span className="text-[10px] font-black uppercase tracking-wider text-amber-500">
-                                                  today
-                                                </span>
-                                              )}
-                                              {isTomorrow && (
-                                                <span className="text-[10px] font-black uppercase tracking-wider text-yellow-500">
-                                                  tmrw
-                                                </span>
-                                              )}
-                                            </span>
-                                          );
-                                        })()
-                                      ) : (
-                                        <span className="text-slate-600 text-[11px]">
-                                          —
-                                        </span>
-                                      )}
-                                    </td>
-                                    <td className="px-5 py-3 border-r border-[#222f3e]">
-                                      {task.wrikeLocation !==
-                                        "⚠️ Unassigned" && (
-                                        <span className="bg-[#1e2530] text-slate-300 px-2.5 py-1 rounded-lg text-[11px] font-bold border border-[#2d3748] shadow-sm flex items-center gap-1.5 w-fit">
-                                          {TERRITORY_FLAGS[task.wrikeLocation]}{" "}
-                                          {task.wrikeLocation}
-                                        </span>
-                                      )}
-                                    </td>
-
-                                    {renderDayCell(task, "Monday")}
-                                    {renderDayCell(task, "Tuesday")}
-                                    {renderDayCell(task, "Wednesday")}
-                                    {renderDayCell(task, "Thursday")}
-                                    {renderDayCell(task, "Friday")}
-                                    {renderDayCell(task, "Saturday")}
-                                    {renderDayCell(task, "Sunday")}
-                                  </tr>
-                                );
-                              })}
-                          </React.Fragment>
-                        );
-                      })
-                  )}
-                </tbody>
-              </table>
-            )}
-          </div>
-        </div>
+        <WrikeHubModal
+          WRIKE_TS_COLS={WRIKE_TS_COLS} activeDay={activeDay} activeDropdown={activeDropdown}
+          expandedGroups={expandedGroups} getTaskSortValues={getTaskSortValues}
+          handleModalCategoryChange={handleModalCategoryChange} isFetchingModalData={isFetchingModalData}
+          modalTab={modalTab} renderDayCell={renderDayCell} rows={rows}
+          setActiveDropdown={setActiveDropdown} setIsWrikeModalOpen={setIsWrikeModalOpen}
+          setModalTab={setModalTab} setShowReminderModal={setShowReminderModal} todayDayName={todayDayName}
+          toggleGroup={toggleGroup} unloggedTasks={unloggedTasks} wrikeFullName={wrikeFullName}
+          wrikeTimesheetData={wrikeTimesheetData} wtHandle={wtHandle} wtWidths={wtWidths}
+        />
       )}
 
       {/* --- HEADER --- */}
@@ -3352,78 +2791,10 @@ export default function LegacyTimesheet({ wrikeData, isAdmin = false }) {
       {/* --- STANDARD UI --- */}
       <div className="max-w-[1800px] mx-auto bg-white shadow-sm rounded-2xl relative flex flex-col border border-[#dce4ec]">
         {/* --- MODERN TABS --- */}
-        <div className="flex px-2 sm:px-4 pt-4 bg-slate-50 gap-1 sm:gap-2 rounded-t-2xl">
-          {DAYS.map((day) => {
-            const isWeekend = day === "Saturday" || day === "Sunday";
-            const isActive = activeDay === day;
-
-            // Original light folder tabs; the strip's border-b is the thin
-            // line the light bleeds into, sitting just above the dark table
-            // header.
-            let tabColors = "";
-            if (isActive) {
-              tabColors = isWeekend
-                ? "bg-white text-rose-500 shadow-[0_-4px_6px_-1px_rgba(0,0,0,0.05)] border-t border-x border-[#dce4ec]"
-                : "bg-white text-[#12a0e1] shadow-[0_-4px_6px_-1px_rgba(0,0,0,0.05)] border-t border-x border-[#dce4ec]";
-            } else {
-              tabColors = isWeekend
-                ? "bg-rose-50 text-rose-400 hover:bg-rose-100 hover:text-rose-600 border-t border-x border-transparent"
-                : "bg-slate-100 text-[#768994] hover:bg-slate-200 hover:text-[#122027] border-t border-x border-transparent";
-              // On the dark themes the idle fills come out as six dark boxes
-              // that outweigh the selected tab. See .day-tab-idle.
-              tabColors += " day-tab-idle";
-            }
-
-            return (
-              <button
-                key={day}
-                onClick={() => setActiveDay(day)}
-                className={`flex-1 min-w-0 py-3 text-[11px] sm:text-[13px] font-bold text-center rounded-t-xl transition-[background-color,color,border-color,box-shadow] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#12a0e1]/40 ${tabColors} ${
-                  isActive ? "relative z-10 top-[1px]" : ""
-                }`}
-              >
-                <div className="flex flex-col items-center gap-0.5">
-                  <div className="flex items-center justify-center gap-1.5">
-                    {frozenDays[day] && <Lock className="w-3 h-3 opacity-60 shrink-0" />}
-                    {/* Seven full day names can't fit a phone's width, and a
-                        flex row that can't shrink pushed the whole document
-                        wider than the screen — hence the three-letter form. */}
-                    <span className="sm:hidden">{day.slice(0, 3)}</span>
-                    <span className="hidden sm:inline">{day}</span>
-                    {rows.filter((r) => r.dayOfWeek === day).length > 0 && (
-                      <span
-                        className={`hidden sm:inline-block ml-1.5 text-[10px] px-2 py-0.5 rounded-full ${
-                          isActive
-                            ? isWeekend
-                              ? "bg-rose-100 text-rose-600"
-                              : "bg-[#12a0e1]/10 text-[#12a0e1]"
-                            : isWeekend
-                            ? "bg-rose-200/50 text-rose-500"
-                            : "bg-slate-200 text-[#768994]"
-                        }`}
-                      >
-                        {rows.filter((r) => r.dayOfWeek === day).length}
-                      </span>
-                    )}
-                  </div>
-                  {getDayTotal(day) > 0 && (
-                    <span
-                      className={`text-[10px] font-mono font-bold ${
-                        isActive
-                          ? isWeekend
-                            ? "text-rose-500"
-                            : "text-[#12a0e1]"
-                          : "text-[#768994]"
-                      }`}
-                    >
-                      <Rolling amount={getDayTotal(day)}>{formatDayTotal(getDayTotal(day))}h</Rolling>
-                    </span>
-                  )}
-                </div>
-              </button>
-            );
-          })}
-        </div>
+        <DayTabs
+          activeDay={activeDay} formatDayTotal={formatDayTotal} frozenDays={frozenDays}
+          getDayTotal={getDayTotal} rows={rows} setActiveDay={setActiveDay}
+        />
 
         {/* Fade band from the light tabs down into the dark table header —
             white at the top, the header's shade at the bottom. */}
@@ -4044,238 +3415,30 @@ export default function LegacyTimesheet({ wrikeData, isAdmin = false }) {
         {/* Batch-edit bar: floats over the top edge of the action bar while
             rows are ticked. */}
         {selectedCount > 0 && (
-          <div className="relative z-20 -mb-4 flex justify-center pointer-events-none">
-            <div className="pointer-events-auto flex flex-wrap justify-center items-center gap-2 max-w-full glass-bar text-white rounded-3xl sm:rounded-full shadow-lg px-2 py-1.5 animate-in fade-in slide-in-from-bottom-2 duration-200">
-              <span className="text-[11px] font-black uppercase tracking-widest pl-2">
-                {selectedCount} selected
-              </span>
-              <span className="w-px h-4 bg-white/20 shrink-0" />
-              <BatchCategoryPicker
-                pinned={topCategories}
-                onPick={(val) => applyToSelected("category", val)}
-              />
-              {/* The locked reason stays a title: a disabled button sends no
-                  hover events for the card to open on. */}
-              <HoverLabel label="Copy the ticked row(s), hours left blank">
-                <button
-                  onClick={duplicateSelected}
-                  disabled={!rowsAreEditable}
-                  title={rowsAreEditable ? undefined : `${activeDay} is locked`}
-                  className="flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] font-bold text-white/80 hover:text-white hover:bg-white/10 transition-colors disabled:opacity-40 disabled:hover:bg-transparent disabled:cursor-not-allowed"
-                >
-                  <Copy className="w-3.5 h-3.5" />
-                  Duplicate
-                </button>
-              </HoverLabel>
-              {/* Stays hoverable when it can't merge, so the reason shows. */}
-              <HoverLabel
-                label={
-                  !rowsAreEditable
-                    ? `${activeDay} is locked`
-                    : mergeState.ok
-                    ? "Merge into one entry: times added up, markets combined"
-                    : mergeState.reason
-                }
-              >
-                <button
-                  onClick={mergeSelected}
-                  aria-disabled={!rowsAreEditable || !mergeState.ok || isMerging}
-                  aria-label="Merge the ticked rows into one entry"
-                  className={`flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] font-bold transition-colors ${
-                    !rowsAreEditable || !mergeState.ok || isMerging
-                      ? "text-white/80 opacity-40 cursor-not-allowed"
-                      : "text-white/80 hover:text-white hover:bg-white/10"
-                  }`}
-                >
-                  <Merge className="w-3.5 h-3.5" />
-                  {isMerging ? "Merging…" : "Merge"}
-                </button>
-              </HoverLabel>
-              <span className="w-px h-4 bg-white/20 shrink-0" />
-              <button
-                onClick={clearSelection}
-                className="flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] font-bold text-white/60 hover:text-white transition-colors"
-              >
-                <X className="w-3.5 h-3.5" />
-                Clear
-              </button>
-            </div>
-          </div>
+          <BatchEditBar
+            activeDay={activeDay} applyToSelected={applyToSelected} clearSelection={clearSelection}
+            duplicateSelected={duplicateSelected} isMerging={isMerging} mergeSelected={mergeSelected}
+            mergeState={mergeState} rowsAreEditable={rowsAreEditable} selectedCount={selectedCount}
+            topCategories={topCategories}
+          />
         )}
 
         {/* Bottom Action Bar. The batch-edit bar above hangs 16px into it, so
             below 2xl, where the buttons can reach the centre, the extra top
             padding keeps them clear of it. */}
-        <div className="p-4 pt-7 2xl:pt-4 border-t border-[#dce4ec] bg-slate-50 rounded-b-2xl flex flex-wrap gap-3 justify-between items-center">
-          {/* The two occasional tools: icons at rest, opening out to their
-              names on hover or keyboard focus. */}
-          <div className="flex gap-3 flex-wrap items-center">
-            <button
-              onClick={handleOpenWrikeModal}
-              aria-label="Wrike Timesheets"
-              className={quietToolClass}
-            >
-              <LayoutList className="w-4 h-4 shrink-0" />
-              <span className={quietToolLabelClass}>Wrike Timesheets</span>
-            </button>
-            <button
-              onClick={() => {
-                if (!wrikeUserId) {
-                  showToast("Please connect Wrike in Profile → Settings first.");
-                  return;
-                }
-                setShowReportProblem(true);
-              }}
-              aria-label="Report a problem"
-              className={quietToolClass}
-            >
-              <MessageSquareWarning className="w-4 h-4 shrink-0" />
-              <span className={quietToolLabelClass}>Report a problem</span>
-            </button>
-            {/* The table's view controls, behind a cog: a third tool that
-                opens out along the bar to Consolidated, Lock and the pull
-                defaults (see tongueOpen for when). The cog is tinted when one
-                of them is switched on, a locked day most of all, so that
-                isn't hidden while it's closed. */}
-            <div
-              ref={tongueRef}
-              // Mouse only: a touch fires pointerenter too, and would open it
-              // with nothing to close it. It stays open a little after the
-              // pointer leaves, so drifting off it on the way to a control
-              // doesn't shut it.
-              onPointerEnter={(e) => {
-                if (e.pointerType !== "mouse") return;
-                clearTimeout(tongueLeaveTimer.current);
-                setTongueHover(true);
-              }}
-              onPointerLeave={() => {
-                clearTimeout(tongueLeaveTimer.current);
-                tongueLeaveTimer.current = setTimeout(() => setTongueHover(false), 500);
-              }}
-              // Keyboard focus only, so a mouse click on a control doesn't hold
-              // it open after the pointer has gone.
-              onFocus={(e) => setTongueFocus(e.target.matches(":focus-visible"))}
-              onBlur={(e) => {
-                if (!e.currentTarget.contains(e.relatedTarget)) setTongueFocus(false);
-              }}
-              className="flex items-center bg-white border border-[#dce4ec] rounded-xl shadow-sm"
-            >
-              <button
-                onClick={() => setTonguePinned((v) => !v)}
-                aria-label="Table settings"
-                aria-expanded={tongueOpen}
-                // h-11 with the wrapper's border is the height of the two tools
-                // beside it, whose (hidden) labels set a taller line than an icon.
-                className={`flex items-center justify-center h-11 px-3 rounded-xl hover:bg-slate-50 transition-[background-color,transform] active:scale-95 focus:outline-none focus-visible:ring-4 focus-visible:ring-[#12a0e1]/30 ${
-                  isDayFrozen ? "text-amber-600"
-                  : consolidatedView || defaultCategory || groupMultiCountry ? "text-[#12a0e1]"
-                  : "text-[#122027]"
-                }`}
-              >
-                <motion.span initial={false} animate={{ rotate: tongueOpen ? 120 : 0 }} transition={TONGUE_SPRING} className="flex">
-                  <Settings className="w-4 h-4 shrink-0" />
-                </motion.span>
-              </button>
-              <motion.div initial={false} animate={tongueFold(tongueOpen)} transition={TONGUE_SPRING} className="overflow-hidden min-w-0">
-                <div className="flex items-center gap-1 pr-2 whitespace-nowrap">
-                  <HoverLabel label="One row per job, with its markets and categories nested underneath">
-                    <button
-                      onClick={() => switchConsolidated()}
-                      className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-bold transition-colors ${
-                        consolidatedView ? "text-[#12a0e1]" : "text-[#768994] hover:text-[#122027]"
-                      }`}
-                    >
-                      <Layers className="w-3.5 h-3.5" />
-                      Consolidated
-                      <span className={`ml-0.5 text-[10px] font-black px-1.5 py-0.5 rounded ${consolidatedView ? "bg-[#12a0e1] text-white" : "bg-slate-100 text-slate-600"}`}>
-                        {consolidatedView ? "ON" : "OFF"}
-                      </span>
-                    </button>
-                  </HoverLabel>
-                  <span className="w-px h-4 bg-[#dce4ec] shrink-0" />
-                  <HoverLabel label={isDayFrozen ? "Unlock day to allow edits" : "Lock this day to prevent edits"}>
-                    <button
-                      onClick={toggleFreeze}
-                      className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-bold transition-colors ${
-                        isDayFrozen ? "text-amber-600" : "text-[#768994] hover:text-[#122027]"
-                      }`}
-                    >
-                      <Lock ref={lockIconRef} className="w-3.5 h-3.5" />
-                      {isDayFrozen ? `${activeDay} locked` : `Lock ${activeDay}`}
-                    </button>
-                  </HoverLabel>
-                  <span className="w-px h-4 bg-[#dce4ec] shrink-0" />
-                  <PullDefaultsPopover
-                    defaultCategory={defaultCategory}
-                    groupMultiCountry={groupMultiCountry}
-                    setPrefs={setPrefs}
-                    onOpenChange={setPullDefaultsOpen}
-                    pinnedCategories={topCategories}
-                  />
-                </div>
-              </motion.div>
-            </div>
-          </div>
-          {/* Left to right in the order they're used: get rows in (from
-              comments, or from Wrike's own times), then copy them out. */}
-          <div className="flex gap-3 flex-wrap">
-            <HoverLabel label="Suggests rows from your Wrike comments">
-              <button
-                onClick={() => {
-                  if (!wrikeUserId) {
-                    showToast("Please connect Wrike in Profile → Settings first.");
-                    return;
-                  }
-                  setShowCommentTrail(true);
-                }}
-                className="flex items-center gap-2 px-5 py-2.5 text-sm font-bold bg-white hover:bg-slate-50 text-[#122027] border border-[#dce4ec] rounded-xl shadow-sm transition-[background-color,transform] active:scale-95"
-              >
-                <MessagesSquare className="w-4 h-4" />
-                Where Did My Day Go?
-              </button>
-            </HoverLabel>
-            {/* isAdmin stays in the OR so the admin keeps the date picker
-                without waiting on (or depending on) the profile read landing. */}
-            <PullTimesButton
-              isPulling={isPulling}
-              disabled={isDayFrozen}
-              canPickDate={isAdmin || canDebugPull}
-              onPull={handlePullTimes}
-            />
-            {/* The steps hang off the button that produced them, so the answer
-                to "what do I do with this?" is where the question was asked.
-                Upward and right-aligned: this is the bottom action bar, and the
-                right-hand end of it. */}
-            <div className="relative">
-              <HoverLabel label="Copies this week's rows, ready to paste into your timesheet bookmark">
-                <button
-                  onClick={handleCopyJSON}
-                  data-bubble-avoid
-                  className={`flex items-center gap-2 px-5 py-2.5 text-sm font-bold rounded-xl shadow-sm transition-[background-color,box-shadow,transform] active:scale-95 ${
-                    jsonCopied
-                      ? "bg-[#1cc1a5] text-white shadow-[#1cc1a5]/30"
-                      : "bg-[#12a0e1] hover:bg-[#0d8bc4] text-white shadow-[#12a0e1]/30"
-                  }`}
-                >
-                  {jsonCopied ? (
-                    <CheckCircle className="pop-in w-4 h-4" />
-                  ) : (
-                    <Copy className="w-4 h-4" />
-                  )}
-                  {jsonCopied ? "Copied!" : "Copy Me!"}
-                </button>
-              </HoverLabel>
-
-              {showPasteSteps && (
-                <PasteNextSteps
-                  copied
-                  popover
-                  onDismiss={() => setShowPasteSteps(false)}
-                />
-              )}
-            </div>
-          </div>
-        </div>
+        <TimesheetActionBar
+          activeDay={activeDay} canDebugPull={canDebugPull} consolidatedView={consolidatedView}
+          defaultCategory={defaultCategory} groupMultiCountry={groupMultiCountry}
+          handleCopyJSON={handleCopyJSON} handleOpenWrikeModal={handleOpenWrikeModal}
+          handlePullTimes={handlePullTimes} isAdmin={isAdmin} isDayFrozen={isDayFrozen} isPulling={isPulling}
+          jsonCopied={jsonCopied} lockIconRef={lockIconRef} setPrefs={setPrefs}
+          setPullDefaultsOpen={setPullDefaultsOpen} setShowCommentTrail={setShowCommentTrail}
+          setShowPasteSteps={setShowPasteSteps} setShowReportProblem={setShowReportProblem}
+          setTongueFocus={setTongueFocus} setTongueHover={setTongueHover} setTonguePinned={setTonguePinned}
+          showPasteSteps={showPasteSteps} showToast={showToast} switchConsolidated={switchConsolidated}
+          toggleFreeze={toggleFreeze} tongueLeaveTimer={tongueLeaveTimer} tongueOpen={tongueOpen}
+          tongueRef={tongueRef} topCategories={topCategories} wrikeUserId={wrikeUserId}
+        />
       </div>
       </div>
     </div>

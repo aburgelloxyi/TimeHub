@@ -24,6 +24,10 @@ export function sheetFilm(fileName) {
   return { film: found[1].trim(), medium: /print/i.test(found[2]) ? "print" : "motion" };
 }
 
+// A folder the clients keep beside the markets for trying things out
+// ("AA_Test_Market"). Not a market: it is left out of every film.
+export const isTestFolder = (folderName) => /(^|[^a-z])test([^a-z]|$)/i.test(String(folderName ?? ""));
+
 // "BULGARIA (BG)" → "Bulgaria (BG)". Names already in mixed case are kept.
 export function marketName(folderName) {
   const text = String(folderName ?? "").trim();

@@ -5,7 +5,7 @@
 import { mapPool } from "../fetchPool";
 import { FILM_MAPPINGS } from "../../constants";
 import { listFolders, listSheetsIn, downloadSheet, GoogleError, GOOGLE_SHEET } from "./googleApi";
-import { clientFor, filmsIn } from "./driveTree";
+import { clientFor, filmsIn, isTestFolder } from "./driveTree";
 import { sheetsFromBuffer } from "./readXlsx";
 import { marketFromSheets } from "./parseWorkbook";
 
@@ -25,7 +25,7 @@ const missing = (name, reason) => ({ name, code: "", kind: null, unreadable: rea
 export async function listFilms(clientId) {
   const client = clientFor(clientId);
   if (!client) return [];
-  const folders = await listFolders(client.folderId);
+  const folders = (await listFolders(client.folderId)).filter((f) => !isTestFolder(f.name));
   return filmsIn(folders, await listSheetsIn(folders.map((f) => f.id)), FILM_MAPPINGS);
 }
 

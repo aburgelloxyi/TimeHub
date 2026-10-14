@@ -543,6 +543,13 @@ html.dark-theme body {
 .dark-theme textarea::placeholder { color: #64748b !important; }
 .dark-theme .placeholder-\[\#b0bec5\]::placeholder,
 .dark-theme .placeholder\:text-\[\#768994\]::placeholder { color: #64748b !important; }
+/* Inputs on a page header's gradient (Client Orders' search) are glass in
+   every theme: white text and a soft white placeholder, not the slate the
+   rule above gives inputs on dark cards. */
+.dark-theme .page-header input,
+.oled-theme .page-header input { color: #fff !important; }
+.dark-theme .page-header input::placeholder,
+.oled-theme .page-header input::placeholder { color: rgb(255 255 255 / 0.6) !important; }
 
 /* Scrollbars: the light thumb was hardcoded, and there is already a
    .scrollbar-thin-dark for exactly this. */

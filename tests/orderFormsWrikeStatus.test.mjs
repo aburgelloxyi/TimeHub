@@ -11,3 +11,10 @@ check("a delivered task, greyed", [taskStatus({ customStatusId: "S1" }, statuses
 check("Wrike's fresh status wins over the cached one", taskStatus({ customStatusId: "S1" }, statuses, "S2").name, "On hold");
 check("an unknown status still shows its name, untinted", [taskStatus({ customStatusId: "X", customStatusName: "Review" }, statuses).name, taskStatus({ customStatusId: "X", customStatusName: "Review" }, statuses).style.row], ["Review", ""]);
 check("no task, no status", taskStatus(null, statuses), null);
+
+// The Motion Board's colours win over Wrike's own.
+{
+  const named = statusesOf([{ customStatuses: ["Cancelled", "Delivering", "Prep for Delivery", "On hold", "Delivered"].map((name, i) => ({ id: `N${i}`, name, color: "Gray" })) }]);
+  check("statuses the board colours keep those colours", ["N0", "N1", "N2", "N3", "N4"].map((id) => taskStatus({ customStatusId: id }, named).style.row),
+    ["bg-red-50", "bg-yellow-50", "bg-orange-50", "bg-red-50", "bg-slate-100"]);
+}

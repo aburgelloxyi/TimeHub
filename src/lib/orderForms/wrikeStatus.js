@@ -32,6 +32,29 @@ const PLAIN = { pill: "bg-slate-100 text-slate-700", bar: "bg-slate-300", row: "
 export const statusStyle = (color) =>
   STYLE[FAMILY[String(color || "").toLowerCase().replace(/[^a-z]/g, "")]] || PLAIN;
 
+// Statuses the Motion Board already colours (getTagStyle in
+// src/utils/tagStyles.js) keep those colours here, whatever Wrike's own
+// colour for them, so one status looks the same across TimeHub. First
+// match wins, so "prep for delivery" is checked before "delivering".
+const BY_NAME = [
+  [/cancel/, "red"],
+  [/on hold/, "red"],
+  [/to amend/, "red"],
+  [/prep for delivery/, "orange"],
+  [/^deliver(ing|y)$/, "yellow"],
+  [/client review|content review/, "yellow"],
+  [/render review/, "indigo"],
+  [/revised/, "teal"],
+  [/creative approved/, "blue"],
+  [/content approved/, "purple"],
+  [/backlog/, "slate"],
+];
+const styleFor = (name, color) => {
+  const n = String(name || "").trim().toLowerCase();
+  const hit = BY_NAME.find(([re]) => re.test(n));
+  return hit ? STYLE[hit[1]] : statusStyle(color);
+};
+
 // { statusId: { name, color, group } } from Wrike's workflows.
 export function statusesOf(workflows) {
   const out = {};
@@ -51,7 +74,7 @@ export function taskStatus(task, statuses, freshId) {
   if (!task) return null;
   const id = freshId || task.customStatusId;
   const known = id && statuses?.[id];
-  if (known) return { ...known, style: statusStyle(known.color) };
+  if (known) return { ...known, style: styleFor(known.name, known.color) };
   const name = task.customStatusName || task.status || "";
-  return name ? { name, color: "", group: "", style: PLAIN } : null;
+  return name ? { name, color: "", group: "", style: styleFor(name, "") } : null;
 }

@@ -2656,31 +2656,6 @@ export default function LegacyTimesheet({ wrikeData, isAdmin = false }) {
   );
   const mergeState = useMemo(() => mergeCheck(selectedRows), [selectedRows]);
 
-  // Ticked entries that were made by merging and remember their parts.
-  const unmergeable = useMemo(() => selectedRows.filter(canUnmerge), [selectedRows]);
-  const unmergeSelected = useCallback(async () => {
-    if (frozenDays[activeDay] || isMerging || !unmergeable.length) return;
-    const split = unmergeable.map((entry) => ({ entry, ...unmergeRow(entry) }));
-    // An entry changed after it was merged no longer adds up to its parts, and
-    // unmerging puts the parts' own times back. Said before it happens.
-    const edited = split.filter((s) => s.edited).length;
-    if (edited && !(await confirmAction({
-      title: "Unmerge and go back to the original times?",
-      message: `${edited === 1 ? "This entry's time was changed" : `${edited} of these entries' times were changed`} after merging. Unmerging puts each market's own time back as it was when merged.`,
-      confirmLabel: "Unmerge",
-    }))) return;
-    setIsMerging(true);
-    try {
-      const parts = split.flatMap((s) => s.rows.map((r) => ({ ...r, id: newRowId() })));
-      if (!(await addRows(parts))) return;
-      await deleteRows(unmergeable.map((e) => e.id));
-      clearSelection();
-      showToast(`Unmerged into ${parts.length} rows, one per market.`, "success");
-    } finally {
-      setIsMerging(false);
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [unmergeable, activeDay, frozenDays, isMerging, addRows, deleteRows, clearSelection]);
   const [isMerging, setIsMerging] = useState(false);
   const mergeSelected = useCallback(async () => {
     if (frozenDays[activeDay] || isMerging) return;
@@ -2724,6 +2699,32 @@ export default function LegacyTimesheet({ wrikeData, isAdmin = false }) {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedRows, activeDay, frozenDays, isMerging, addRows, deleteRows, clearSelection]);
+
+  // Ticked entries that were made by merging and remember their parts.
+  const unmergeable = useMemo(() => selectedRows.filter(canUnmerge), [selectedRows]);
+  const unmergeSelected = useCallback(async () => {
+    if (frozenDays[activeDay] || isMerging || !unmergeable.length) return;
+    const split = unmergeable.map((entry) => ({ entry, ...unmergeRow(entry) }));
+    // An entry changed after it was merged no longer adds up to its parts, and
+    // unmerging puts the parts' own times back. Said before it happens.
+    const edited = split.filter((s) => s.edited).length;
+    if (edited && !(await confirmAction({
+      title: "Unmerge and go back to the original times?",
+      message: `${edited === 1 ? "This entry's time was changed" : `${edited} of these entries' times were changed`} after merging. Unmerging puts each market's own time back as it was when merged.`,
+      confirmLabel: "Unmerge",
+    }))) return;
+    setIsMerging(true);
+    try {
+      const parts = split.flatMap((s) => s.rows.map((r) => ({ ...r, id: newRowId() })));
+      if (!(await addRows(parts))) return;
+      await deleteRows(unmergeable.map((e) => e.id));
+      clearSelection();
+      showToast(`Unmerged into ${parts.length} rows, one per market.`, "success");
+    } finally {
+      setIsMerging(false);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [unmergeable, activeDay, frozenDays, isMerging, addRows, deleteRows, clearSelection]);
 
   const textAreaClass = `w-full bg-transparent border border-transparent hover:border-slate-300 focus:border-[#12a0e1] focus:ring-2 focus:ring-[#12a0e1]/20 outline-none text-[12px] text-[#122027] font-medium p-2 transition-[border-color,box-shadow] rounded-xl resize-none overflow-hidden leading-tight placeholder:text-slate-500 ${
     !rowsAreEditable ? "opacity-60 cursor-not-allowed" : ""

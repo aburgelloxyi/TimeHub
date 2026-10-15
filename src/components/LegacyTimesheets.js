@@ -1867,9 +1867,13 @@ export default function LegacyTimesheet({ wrikeData, isAdmin = false }) {
       return;
     }
     if (replaces.length) await deleteRows(replaces);
-    if (added.length < newRows.length + replaces.length) {
-      showToast(`Added as ${added.length} ${added.length === 1 ? "entry" : "entries"}, with markets merged.`, "success");
-    }
+    const n = `${newRows.length} ${newRows.length === 1 ? "row" : "rows"}`;
+    showToast(
+      added.length < newRows.length + replaces.length
+        ? `Added ${n} to ${dayName} as ${added.length} ${added.length === 1 ? "entry" : "entries"}, with markets merged.`
+        : `Added ${n} to ${dayName}.`,
+      "success"
+    );
   };
 
   const handlePullTimes = async (dateStr = null) => {

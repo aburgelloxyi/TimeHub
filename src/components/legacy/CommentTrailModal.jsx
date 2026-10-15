@@ -9,7 +9,6 @@ import {
   ChevronRight,
   Trash2,
   CalendarDays,
-  CheckCircle,
   AlertCircle,
   Check,
 } from "lucide-react";
@@ -159,12 +158,11 @@ export default function CommentTrailModal({
   const [byDay, setByDay] = useState({});
   // Per "iso:taskId": what the member changed — { on, hours, extra }.
   const [edits, setEdits] = useState({});
-  const [added, setAdded] = useState(null);
   const [marks, setMarks] = useState(() => {
     const keep = new Set(days.map((d) => d.iso));
     return Object.fromEntries(Object.entries(readStored(MARKS_KEY)).filter(([iso]) => keep.has(iso)));
   });
-  const [markJobs, setMarkJobs] = useState(() => readStored(MARK_JOBS_KEY));
+  const [markJobs] = useState(() => readStored(MARK_JOBS_KEY));
   const presets = useMemo(
     () => [
       ...STANDING_PRESETS,
@@ -573,34 +571,26 @@ export default function CommentTrailModal({
     return entries.length < built.length || replaces.length ? { rows: built.length, entries: entries.length, joining: replaces.length } : null;
   })();
 
+  // Adding is the last step, so the modal closes and the rows are seen
+  // arriving on the sheet; the timesheet confirms what went in.
   const handleAdd = () => {
     if (!toAdd || isFrozen) return;
     const markIds = Object.fromEntries(pickedMarks.map((m) => [m.id, newRowId()]));
-    const newRows = buildRows(markIds);
-    onAddRows(newRows, day.name);
+    onAddRows(buildRows(markIds), day.name);
     if (pickedMarks.length) {
       const counts = { ...markJobs };
       pickedMarks.forEach((m) => (counts[m.jobNumber] = (counts[m.jobNumber] || 0) + 1));
-      setMarkJobs(counts);
       writeStored(MARK_JOBS_KEY, counts);
+      // Kept, as added: it still holds its time against the estimates. Stored
+      // here, not in a state update, since the modal is gone before one runs.
+      const next = {
+        ...marks,
+        [dayIso]: (marks[dayIso] || []).map((m) => (markIds[m.id] != null ? { ...m, added: true, addedRowId: markIds[m.id] } : m)),
+      };
+      writeStored(MARKS_KEY, next);
     }
-    // Kept, as added: it still holds its time against the estimates.
-    setDayMarks((list) => list.map((m) => (markIds[m.id] != null ? { ...m, added: true, addedRowId: markIds[m.id] } : m)));
-    // The suggestions recompute against the new rows; drop what was typed for
-    // them so a leftover shortfall starts from the fresh figure.
-    setEdits((p) => {
-      const next = { ...p };
-      picked.forEach((s) => delete next[s.key]);
-      return next;
-    });
-    setAdded({ n: newRows.length, hours: pickedRegular, extra: pickedExtra, day: day.name });
+    onClose();
   };
-
-  useEffect(() => {
-    if (!added) return;
-    const t = setTimeout(() => setAdded(null), 5000);
-    return () => clearTimeout(t);
-  }, [added]);
 
   return (
     <div className="fixed inset-0 z-[100001] flex items-center justify-center p-4" onClick={onClose}>
@@ -834,13 +824,7 @@ export default function CommentTrailModal({
         {/* Footer */}
         <div className="px-6 py-3.5 border-t border-white/5 bg-black/20 rounded-b-2xl flex flex-wrap items-center justify-between gap-3">
           <div className="text-xs text-slate-400 min-h-[1.25rem] flex items-center gap-2">
-            {added ? (
-              <span className="flex items-center gap-1.5 text-emerald-400 font-bold">
-                <CheckCircle className="w-4 h-4" />
-                Added {plural(added.n, "row")} ({hm(added.hours)}
-                {added.extra > 0 ? `, plus ${hm(added.extra)} add. time` : ""}) to {added.day}
-              </span>
-            ) : isFrozen ? (
+            {isFrozen ? (
               <span className="flex items-center gap-1.5 text-amber-400">
                 <Lock className="w-3.5 h-3.5" />
                 {day.name} is locked. Unlock the day to add rows.

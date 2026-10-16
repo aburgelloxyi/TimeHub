@@ -116,11 +116,10 @@ const TOOL_BUTTON = {
   fontSize: 12, fontWeight: 600, cursor: "pointer", whiteSpace: "nowrap",
 };
 
-// Full page: the board fills the window, above the app and any modal it sits
-// in, and asks the browser for full screen too (Esc leaves both). Excalidraw
-// puts its dialogs on <body> at its own z-index, so a class on <body> lifts
-// them above the board while it is full page (see tailwind.css).
-const FULL_PAGE_Z = 100005;
+// Full page: the board fills the app beside the sidebar, above the page and
+// any modal it sits in (see .sketch-board-full in tailwind.css). Excalidraw
+// puts its dialogs on <body>, so a class on <body> lifts them, and the
+// sidebar, above the board while it is full page.
 const FULL_PAGE_CLASS = "sketch-full-page";
 
 const VIDEO_FALLBACK_SIZE = { width: 480, height: 270 };
@@ -360,9 +359,8 @@ export default function ExcalidrawPageEditor({ pageId, content, onChange }) {
   }, []);
 
   useLayoutEffect(() => {
-    Object.assign(host.style, full
-      ? { position: "fixed", inset: "0", zIndex: String(FULL_PAGE_Z) }
-      : { position: "absolute", inset: "0", zIndex: "" });
+    host.className = full ? "sketch-board-full" : "";
+    Object.assign(host.style, full ? { position: "", inset: "" } : { position: "absolute", inset: "0" });
     const parent = full ? document.body : slotRef.current;
     if (!parent) return;
     parent.appendChild(host);
@@ -376,22 +374,15 @@ export default function ExcalidrawPageEditor({ pageId, content, onChange }) {
     document.body.classList.remove(FULL_PAGE_CLASS);
   }, [host]);
 
-  // Leaving the browser's full screen (Esc) leaves full page with it.
+  // Going to another page hides this one but keeps it mounted, and the board
+  // on <body> would stay over the new page; the slot collapsing says so.
   useEffect(() => {
-    if (!full) return;
-    const onChange = () => { if (!document.fullscreenElement) setFull(false); };
-    document.addEventListener("fullscreenchange", onChange);
-    return () => {
-      document.removeEventListener("fullscreenchange", onChange);
-      if (document.fullscreenElement) document.exitFullscreen?.().catch(() => {});
-    };
+    const slot = slotRef.current;
+    if (!full || !slot) return;
+    const watch = new ResizeObserver(() => { if (!slot.offsetWidth) setFull(false); });
+    watch.observe(slot);
+    return () => watch.disconnect();
   }, [full]);
-
-  // The browser may refuse full screen; the board still fills the window.
-  const toggleFull = () => {
-    if (!full) document.documentElement.requestFullscreen?.().catch(() => {});
-    setFull(!full);
-  };
 
   if (!initialData) {
     return <div className="h-full min-h-[640px] bg-[#faf7f2] animate-pulse" />;
@@ -428,8 +419,8 @@ export default function ExcalidrawPageEditor({ pageId, content, onChange }) {
               </button>
               <button
                 type="button"
-                onClick={toggleFull}
-                title={full ? "Leave full page (Esc)" : "Full page"}
+                onClick={() => setFull((v) => !v)}
+                title={full ? "Leave full page" : "Full page"}
                 aria-label={full ? "Leave full page" : "Full page"}
                 style={{ ...TOOL_BUTTON, width: 32, padding: 0, justifyContent: "center" }}
               >

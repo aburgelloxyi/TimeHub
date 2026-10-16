@@ -71,7 +71,7 @@ export default function Rail({ activePage, setActivePage }) {
   return (
     <>
       {/* ── Phone: bottom bar ────────────────────────────────────────────── */}
-      <nav className="md:hidden fixed inset-x-0 bottom-0 z-40 flex items-center gap-1 px-2 pt-1.5 pb-[max(0.375rem,env(safe-area-inset-bottom))] bg-white/95 backdrop-blur-md border-t border-black/5">
+      <nav data-rail className="md:hidden fixed inset-x-0 bottom-0 z-40 flex items-center gap-1 px-2 pt-1.5 pb-[max(0.375rem,env(safe-area-inset-bottom))] bg-white/95 backdrop-blur-md border-t border-black/5">
         <button
           onClick={() => setActivePage("home")}
           aria-label="Home"
@@ -114,7 +114,7 @@ export default function Rail({ activePage, setActivePage }) {
           clips the labels flush to the animating width. The expansion is behind
           (hover: hover) so a touch device — where :hover sticks after a tap —
           never gets stranded with the rail open across the page. */}
-      <nav className="group/rail hidden md:flex fixed left-0 top-0 bottom-0 z-40 w-20 [@media(hover:hover)]:hover:w-64 overflow-hidden flex-col gap-1.5 px-3 py-5 bg-white/80 [@media(hover:hover)]:hover:bg-white/95 backdrop-blur-md border-r border-black/5 transition-[width,background-color] duration-300 ease-out">
+      <nav data-rail className="group/rail hidden md:flex fixed left-0 top-0 bottom-0 z-40 w-20 [@media(hover:hover)]:hover:w-64 overflow-hidden flex-col gap-1.5 px-3 py-5 bg-white/80 [@media(hover:hover)]:hover:bg-white/95 backdrop-blur-md border-r border-black/5 transition-[width,background-color] duration-300 ease-out">
         {/* Colour wash at the rail's top — the active page's gradient, faded
             out downward, so the rail head picks up the header's colour instead
             of reading as a detached white strip. Sits over the nav's white bg

@@ -1,4 +1,6 @@
-import React, { useRef, useCallback, useEffect, useState } from "react";
+import React, { useRef, useCallback, useEffect, useLayoutEffect, useState } from "react";
+import { createPortal } from "react-dom";
+import { Maximize2, Minimize2 } from "lucide-react";
 import {
   Excalidraw,
   getSceneVersion,
@@ -107,6 +109,20 @@ const validateEmbeddable = (url) => {
   }
 };
 
+const TOOL_BUTTON = {
+  display: "flex", alignItems: "center", gap: 6, height: 32, padding: "0 10px",
+  borderRadius: 8, border: "1px solid var(--default-border-color, #e3e8ef)",
+  background: "var(--island-bg-color, #fff)", color: "var(--text-primary-color, #1b1b1f)",
+  fontSize: 12, fontWeight: 600, cursor: "pointer", whiteSpace: "nowrap",
+};
+
+// Full page: the board fills the window, above the app and any modal it sits
+// in, and asks the browser for full screen too (Esc leaves both). Excalidraw
+// puts its dialogs on <body> at its own z-index, so a class on <body> lifts
+// them above the board while it is full page (see tailwind.css).
+const FULL_PAGE_Z = 100005;
+const FULL_PAGE_CLASS = "sketch-full-page";
+
 const VIDEO_FALLBACK_SIZE = { width: 480, height: 270 };
 
 // Read the clip's real dimensions so the element lands with the right aspect
@@ -156,6 +172,17 @@ export default function ExcalidrawPageEditor({ pageId, content, onChange }) {
   const apiRef = useRef(null);
   const videoInputRef = useRef(null);
   const [busy, setBusy] = useState(false);
+  const [full, setFull] = useState(false);
+  // The board is drawn into this element, which moves between its slot on
+  // the page and <body>. Moving it keeps Excalidraw mounted, so the drawing,
+  // its undo history and the view all carry over; rendering it somewhere else
+  // would start it again. <body>, so no transformed or clipping ancestor can
+  // hold a fixed board inside the card.
+  const slotRef = useRef(null);
+  const [host] = useState(() => document.createElement("div"));
+  // Excalidraw measures its box as it mounts, so it is drawn only once the
+  // element is on the page.
+  const [placed, setPlaced] = useState(false);
 
   // Drop a clip onto the canvas and it lands where the pointer let go; use
   // the toolbar button and it lands in the middle of what you're looking at.
@@ -332,6 +359,40 @@ export default function ExcalidrawPageEditor({ pageId, content, onChange }) {
     }
   }, []);
 
+  useLayoutEffect(() => {
+    Object.assign(host.style, full
+      ? { position: "fixed", inset: "0", zIndex: String(FULL_PAGE_Z) }
+      : { position: "absolute", inset: "0", zIndex: "" });
+    const parent = full ? document.body : slotRef.current;
+    if (!parent) return;
+    parent.appendChild(host);
+    setPlaced(true);
+    document.body.classList.toggle(FULL_PAGE_CLASS, full);
+    apiRef.current?.refresh(); // where the board is on screen changed
+  }, [full, host, initialData]);
+
+  useEffect(() => () => {
+    host.remove();
+    document.body.classList.remove(FULL_PAGE_CLASS);
+  }, [host]);
+
+  // Leaving the browser's full screen (Esc) leaves full page with it.
+  useEffect(() => {
+    if (!full) return;
+    const onChange = () => { if (!document.fullscreenElement) setFull(false); };
+    document.addEventListener("fullscreenchange", onChange);
+    return () => {
+      document.removeEventListener("fullscreenchange", onChange);
+      if (document.fullscreenElement) document.exitFullscreen?.().catch(() => {});
+    };
+  }, [full]);
+
+  // The browser may refuse full screen; the board still fills the window.
+  const toggleFull = () => {
+    if (!full) document.documentElement.requestFullscreen?.().catch(() => {});
+    setFull(!full);
+  };
+
   if (!initialData) {
     return <div className="h-full min-h-[640px] bg-[#faf7f2] animate-pulse" />;
   }
@@ -343,7 +404,8 @@ export default function ExcalidrawPageEditor({ pageId, content, onChange }) {
     // the inverse (1/1.1) of the app-wide `zoom: 1.1`, with 110% width/height
     // to undo that layer's own visual shrink. The app-wide zoom is gone, so
     // the subtree is already at 1 and the inner layer just fills its parent.
-    <div style={{ height: "100%", minHeight: 640, position: "relative", overflow: "hidden" }}>
+    <div ref={slotRef} style={{ height: "100%", minHeight: 640, position: "relative", overflow: "hidden" }}>
+      {placed && createPortal(
       <div
         style={{ position: "absolute", top: 0, left: 0, width: "100%", height: "100%" }}
         onDropCapture={onDropCapture}
@@ -354,24 +416,31 @@ export default function ExcalidrawPageEditor({ pageId, content, onChange }) {
           excalidrawAPI={(api) => { apiRef.current = api; }}
           validateEmbeddable={validateEmbeddable}
           renderTopRightUI={() => (
-            <button
-              type="button"
-              onClick={() => videoInputRef.current?.click()}
-              disabled={busy}
-              title="Add a video to this board"
-              style={{
-                display: "flex", alignItems: "center", gap: 6, height: 32, padding: "0 10px",
-                borderRadius: 8, border: "1px solid var(--default-border-color, #e3e8ef)",
-                background: "var(--island-bg-color, #fff)", color: "var(--text-primary-color, #1b1b1f)",
-                fontSize: 12, fontWeight: 600, cursor: busy ? "wait" : "pointer",
-                opacity: busy ? 0.6 : 1, whiteSpace: "nowrap",
-              }}
-            >
-              {busy ? "Uploading…" : "🎬 Video"}
-            </button>
+            <div style={{ display: "flex", gap: 6 }}>
+              <button
+                type="button"
+                onClick={() => videoInputRef.current?.click()}
+                disabled={busy}
+                title="Add a video to this board"
+                style={{ ...TOOL_BUTTON, cursor: busy ? "wait" : "pointer", opacity: busy ? 0.6 : 1 }}
+              >
+                {busy ? "Uploading…" : "🎬 Video"}
+              </button>
+              <button
+                type="button"
+                onClick={toggleFull}
+                title={full ? "Leave full page (Esc)" : "Full page"}
+                aria-label={full ? "Leave full page" : "Full page"}
+                style={{ ...TOOL_BUTTON, width: 32, padding: 0, justifyContent: "center" }}
+              >
+                {full ? <Minimize2 size={15} /> : <Maximize2 size={15} />}
+              </button>
+            </div>
           )}
         />
-      </div>
+      </div>,
+      host
+      )}
       <input
         ref={videoInputRef}
         type="file"

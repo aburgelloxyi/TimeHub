@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { supabase } from "../lib/supabaseClient";
-import { rememberAdmin } from "../lib/access";
+import { rememberAccess } from "../lib/access";
 
 const CACHE_KEY = "xyi_department";
 const PREVIEW_KEY = "xyi_department_preview";
@@ -55,9 +55,9 @@ export function useDepartment() {
       .maybeSingle()
       .then(({ data }) => {
         if (cancelled) return;
-        // Administration access rides on the same read; the tick re-renders
-        // the pages offered if it changed.
-        rememberAdmin(uid, data);
+        // Administration and Client Orders access ride on the same read; the
+        // tick re-renders the pages offered if they changed.
+        rememberAccess(uid, data);
         setAccessTick((n) => n + 1);
         const dept = data?.department || null;
         if (dept) localStorage.setItem(CACHE_KEY, dept);

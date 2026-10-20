@@ -9,7 +9,7 @@ import {
   ClipboardList,
 } from "lucide-react";
 import { PAGE_GRADIENTS } from "./pageGradients";
-import { isManager, MANAGER_PAGE_IDS } from "./access";
+import { canUseClientOrders, isManager, MANAGER_PAGE_IDS } from "./access";
 
 // ── The pages registry ───────────────────────────────────────────────────────
 // Single source of truth for every top-level page: label, description (Home
@@ -89,7 +89,8 @@ export const PAGES = {
 //   features  department-specific tools: on Canvas, "launchTracker"
 //             (per-market print requests) and "doohSpecs" (screen specs by
 //             country); on the profile, "ordersToday" (what needs attention
-//             across the loaded client orders, in place of Active Jobs)
+//             across the loaded client orders, in place of Active Jobs, for
+//             those with Client Orders; see hasOrdersToday)
 //   quickFilter  the first job-search chip on the Timesheeter
 //   countedStatus  a Wrike status the board header counts, in place of the
 //             default "overdue" count
@@ -120,6 +121,10 @@ const UNTAGGED_PAGE_IDS = ["todayslist", "legacy", "profile"];
 
 export const hasFeature = (department, feature) =>
   !!department && settingsFor(department).features.includes(feature);
+
+// The Control Centre is Client Orders' own view, so it follows that page.
+export const hasOrdersToday = (department, wrikeUserId) =>
+  hasFeature(department, "ordersToday") && pageIdsFor(department, wrikeUserId).includes("orderforms");
 
 // Departments whose members' Wrike tasks the shared cache keeps: the ones with a
 // team board. The Canvas, search and the Toolbox panel all read that cache.
@@ -152,10 +157,13 @@ const wipLast = (ids) => [
 // Everything that offers or opens a page (Home, the Rail, the quick-actions
 // bubble, App's own guard) asks this, so a page can't be hidden in one place
 // and reachable in another.
+//
+// Client Orders is then dropped for anyone not granted it (canUseClientOrders).
 export function pageIdsFor(department, wrikeUserId) {
-  const ids = department ? settingsFor(department).pages : UNTAGGED_PAGE_IDS;
-  if (!isManager(wrikeUserId)) return wipLast(ids);
-  return wipLast([...MANAGER_PAGE_IDS.filter((id) => !ids.includes(id)), ...ids]);
+  const own = department ? settingsFor(department).pages : UNTAGGED_PAGE_IDS;
+  const ids = isManager(wrikeUserId) ? [...MANAGER_PAGE_IDS.filter((id) => !own.includes(id)), ...own] : own;
+  const orders = canUseClientOrders(wrikeUserId);
+  return wipLast(orders === false ? ids.filter((id) => id !== "orderforms") : ids);
 }
 
 // Returns the page object with any department-specific overrides applied

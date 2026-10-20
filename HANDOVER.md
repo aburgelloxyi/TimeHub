@@ -205,6 +205,11 @@ Administration › People (`profiles.is_admin`). Only an administrator can chang
 it, the last one can't be removed, and someone marked as left loses it. The
 database enforces this; `src/lib/access.js` only decides what the app shows.
 
+**Who can open Client Orders** is the "Client Orders" button beside it
+(`profiles.can_client_orders`), granted the same way. Being a PM or an admin
+isn't enough. The Worker's `/api/orders` refuses anyone without it, which is
+what keeps the orders themselves private; the Control Centre follows it too.
+
 
 ## Keeping an eye on it
 

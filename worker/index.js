@@ -227,10 +227,9 @@ async function handleJobsFeed(request, env) {
 // row-level security on and no policies: the public key can't read a row, and
 // everything goes through here with the service key.
 //
-// Open to the people the app offers the page to: the departments below, and
-// anyone ticked as an admin (see pageIdsFor in src/lib/departments.js, which
-// this mirrors; the Worker can't import it).
-const ORDER_DEPARTMENTS = ["PM"];
+// Open only to the people granted Client Orders (profiles.can_client_orders,
+// ticked in Administration › People); the app offers the page by the same
+// flag (see canUseClientOrders in src/lib/access.js).
 const ORDERS_MAX_BYTES = 8 * 1024 * 1024;
 // What a PM decides about a film's orders, saved on their own so that setting
 // a row aside from an older copy of the film can't undo someone's Refresh.
@@ -247,10 +246,10 @@ async function ordersCaller(request, env) {
     return { error: json({ error: "backend_unavailable" }, { status: 503 }) };
   }
   if (!row) return { error: json({ error: "not_connected" }, { status: 401 }) };
-  const res = await sbFetch(env, `/profiles?wrike_user_id=eq.${encodeURIComponent(row.wrike_user_id)}&select=department,is_admin,left_at,first_name,last_name`);
+  const res = await sbFetch(env, `/profiles?wrike_user_id=eq.${encodeURIComponent(row.wrike_user_id)}&select=can_client_orders,left_at,first_name,last_name`);
   if (!res.ok) return { error: json({ error: "backend_unavailable" }, { status: 503 }) };
   const profile = (await res.json())[0];
-  const allowed = profile && !profile.left_at && (profile.is_admin || ORDER_DEPARTMENTS.includes(profile.department));
+  const allowed = profile && !profile.left_at && profile.can_client_orders;
   if (!allowed) return { error: json({ error: "forbidden" }, { status: 403 }) };
   // Who did it goes on the film, so the others' pages can say whose change it was.
   const name = [profile.first_name, profile.last_name].filter(Boolean).join(" ").trim();

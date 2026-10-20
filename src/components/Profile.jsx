@@ -32,7 +32,7 @@ import {
   Tag,
 } from "lucide-react";
 import { PAGE_GRADIENTS } from "../lib/pageGradients";
-import { hasFeature } from "../lib/departments";
+import { hasOrdersToday } from "../lib/departments";
 import { useDepartment } from "../hooks/useDepartment";
 import ControlCentre from "./orderForms/ControlCentre";
 import { supabase } from "../lib/supabaseClient";
@@ -1992,7 +1992,8 @@ function SettingsSection({ onSave }) {
   );
 }
 
-// For a department with the "ordersToday" feature (see lib/departments.js),
+// For a department with the "ordersToday" feature, to those with Client
+// Orders (see hasOrdersToday in lib/departments.js),
 // the hub's featured row is this in place of Active Jobs. A trial: a PM's day
 // is the client orders, not a list of Wrike tasks assigned to them.
 const ORDERS_SECTION = {
@@ -2012,7 +2013,7 @@ export default function Profile({ wrikeData, onTokenChange, activeSection: activ
   const setActiveSection = setActiveSectionProp ?? _setActiveSection;
   const department = useDepartment();
   const sections = useMemo(
-    () => (hasFeature(department, "ordersToday") ? [ORDERS_SECTION, ...SECTIONS.filter((s) => !s.featured)] : SECTIONS),
+    () => (hasOrdersToday(department, localStorage.getItem("wrike_user_id")) ? [ORDERS_SECTION, ...SECTIONS.filter((s) => !s.featured)] : SECTIONS),
     [department]
   );
   // Looked up across both, so a link straight to Active Jobs still has its header.

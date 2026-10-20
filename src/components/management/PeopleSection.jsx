@@ -91,15 +91,16 @@ export function PeopleSection() {
     }
   };
 
-  // Checked by the database: only an administrator can change it, and the last
-  // one can't be removed. A refused change is put back.
-  const toggleAdmin = async (p) => {
-    const is_admin = !p.is_admin;
-    setPeople(prev => prev.map(x => x.wrike_user_id === p.wrike_user_id ? { ...x, is_admin } : x));
-    const { error } = await supabase.from("profiles").update({ is_admin }).eq("wrike_user_id", p.wrike_user_id);
+  // Checked by the database: only an administrator can change a grant, and
+  // the last administrator can't be removed. A refused change is put back.
+  const toggleGrant = async (p, column, what) => {
+    const on = !p[column];
+    const set = (value) => setPeople(prev => prev.map(x => x.wrike_user_id === p.wrike_user_id ? { ...x, [column]: value } : x));
+    set(on);
+    const { error } = await supabase.from("profiles").update({ [column]: on }).eq("wrike_user_id", p.wrike_user_id);
     if (error) {
-      setPeople(prev => prev.map(x => x.wrike_user_id === p.wrike_user_id ? { ...x, is_admin: !is_admin } : x));
-      setSyncMsg(`Couldn't change Administration access: ${error.message}`);
+      set(!on);
+      setSyncMsg(`Couldn't change ${what} access: ${error.message}`);
     }
   };
 
@@ -251,8 +252,18 @@ export function PeopleSection() {
               options={["No position", ...positions.map(pos => pos.title)]}
             />
           </div>
+          {"can_client_orders" in p && !hasLeft(p) && (
+            <button onClick={() => toggleGrant(p, "can_client_orders", "Client Orders")}
+              aria-pressed={!!p.can_client_orders}
+              title={p.can_client_orders ? "Can open Client Orders. Click to remove." : "Give access to Client Orders"}
+              className={`shrink-0 text-[11px] font-bold px-2.5 py-1.5 rounded-lg border ${p.can_client_orders
+                ? "border-[#12a0e1] bg-[#12a0e1] text-white hover:bg-[#0d8bc4]"
+                : "border-[#dce4ec] text-[#768994] hover:border-[#12a0e1] hover:text-[#122027]"}`}>
+              Client Orders
+            </button>
+          )}
           {"is_admin" in p && !hasLeft(p) && (
-            <button onClick={() => toggleAdmin(p)}
+            <button onClick={() => toggleGrant(p, "is_admin", "Administration")}
               aria-pressed={!!p.is_admin}
               title={p.is_admin ? "Can open Administration. Click to remove." : "Give access to Administration"}
               className={`shrink-0 text-[11px] font-bold px-2.5 py-1.5 rounded-lg border ${p.is_admin

@@ -92,9 +92,10 @@ const ACTIONS = [
     page: "profile",
     section: "orders",
     gradient: PAGE_GRADIENTS.orderforms,
-    requires: "profile",
-    // The profile only has this section for desks with the "ordersToday"
-    // feature (lib/departments.js), so it is offered only where named below.
+    // A profile section, but Client Orders' own view, so it needs that page
+    // (see hasOrdersToday). The profile only has it for desks with the
+    // "ordersToday" feature, so it is offered only where named below.
+    requires: "orderforms",
     deskOnly: true,
   },
   {

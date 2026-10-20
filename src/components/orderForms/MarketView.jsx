@@ -244,6 +244,26 @@ export default function MarketView({ market, kind, filmTitle, clientId, filmKey,
   // An order can be briefed when it isn't in Wrike yet and has its artwork.
   const briefable = (i) => !matches[i] && hasArtwork(orders[i]);
   const tickable = orders.map((_, i) => i).filter((i) => !briefing || briefable(i));
+  const canTick = editing || !!briefing?.ok;
+  // Ticks a row, or with Shift the run from the last one ticked or unticked to
+  // it, all set the way this row goes, as in a mail list. Rows that can't be
+  // ticked in the run are skipped.
+  const tickAnchor = useRef(null);
+  const tickRow = (i, run) => {
+    const from = run && tickAnchor.current != null ? tickAnchor.current : i;
+    const [lo, hi] = from < i ? [from, i] : [i, from];
+    setTicked((prev) => {
+      const on = !prev.has(i);
+      const next = new Set(prev);
+      for (const j of tickable) if (j >= lo && j <= hi) { if (on) next.add(j); else next.delete(j); }
+      return next;
+    });
+    tickAnchor.current = i;
+  };
+  // ⌘ or Ctrl (or Shift) and a click anywhere on a row ticks it, rather than
+  // opening it, wherever the click isn't on one of the row's own controls.
+  const onControl = (e) => !!e.target.closest?.("input, select, textarea, button, a, label");
+  const tickClick = (e) => canTick && (e.metaKey || e.ctrlKey || e.shiftKey) && !onControl(e);
   const waitingForArtwork = orders.filter((o, i) => !matches[i] && !hasArtwork(o)).length;
   const toBrief = orders.filter((_, i) => !matches[i] && hasArtwork(orders[i])).length;
   // What the last Refresh changed here and hasn't been acknowledged, and which
@@ -259,9 +279,9 @@ export default function MarketView({ market, kind, filmTitle, clientId, filmKey,
     return (i) => tags.get(keys[i]) || "";
   }, [changed, orders]);
 
-  useEffect(() => { setSelected(0); setExpanded(null); setEditing(false); setEdits({}); setUndo(null); setTicked(new Set()); setBriefing(null); }, [market.name]);
+  useEffect(() => { setSelected(0); setExpanded(null); setEditing(false); setEdits({}); setUndo(null); setTicked(new Set()); tickAnchor.current = null; setBriefing(null); }, [market.name]);
   // A fresh read replaces the orders, and with them what each cell held.
-  useEffect(() => { setEdits({}); setChoices({}); setExpanded(null); setTicked(new Set()); asked.current = new Set(); }, [orders]);
+  useEffect(() => { setEdits({}); setChoices({}); setExpanded(null); setTicked(new Set()); tickAnchor.current = null; asked.current = new Set(); }, [orders]);
 
   useEffect(() => {
     const current = orders[selected];
@@ -992,7 +1012,7 @@ export default function MarketView({ market, kind, filmTitle, clientId, filmKey,
                         type="checkbox"
                         aria-label="Tick every order"
                         checked={tickable.length > 0 && ticked.size === tickable.length}
-                        onChange={() => setTicked(ticked.size === tickable.length ? new Set() : new Set(tickable))}
+                        onChange={() => { tickAnchor.current = null; setTicked(ticked.size === tickable.length ? new Set() : new Set(tickable)); }}
                         className="accent-indigo-600"
                       />
                     )}
@@ -1015,7 +1035,13 @@ export default function MarketView({ market, kind, filmTitle, clientId, filmKey,
                     <tr
                       data-order-row={o.row}
                       {...rowMenu.bind(() => itemsFor(i))}
-                      onClick={() => { if (!editing) toggleRow(i); setSelected(i); }}
+                      onClick={(e) => {
+                        setSelected(i);
+                        if (tickClick(e)) { if (tickable.includes(i)) tickRow(i, e.shiftKey); return; }
+                        if (!editing) toggleRow(i);
+                      }}
+                      // Shift-clicking would otherwise select the text between.
+                      onMouseDown={(e) => { if (e.shiftKey && tickClick(e)) e.preventDefault(); }}
                       title={editing ? undefined : "Open this order's details"}
                       style={{ "--i": i }}
                       className={`list-row-in group ${editing ? "" : "cursor-pointer"} ${
@@ -1031,9 +1057,14 @@ export default function MarketView({ market, kind, filmTitle, clientId, filmKey,
                             // An order already in Wrike isn't briefed again, and
                             // one without its artwork isn't ready to be.
                             disabled={!!briefing && !briefable(i)}
-                            title={briefing && matches[i] ? "Already in Wrike" : briefing && !hasArtwork(o) ? "No artwork selected yet" : undefined}
+                            title={briefing && matches[i] ? "Already in Wrike" : briefing && !hasArtwork(o) ? "No artwork selected yet" : "Shift-click to tick every row from the last one"}
                             checked={ticked.has(i)}
-                            onChange={() => setTicked((prev) => { const next = new Set(prev); if (!next.delete(i)) next.add(i); return next; })}
+                            // A checkbox's change comes from its click, which
+                            // carries Shift.
+                            onChange={(e) => tickRow(i, e.nativeEvent.shiftKey)}
+                            // Ticking isn't opening the row.
+                            onClick={(e) => { e.stopPropagation(); setSelected(i); }}
+                            onMouseDown={(e) => { if (e.shiftKey) e.preventDefault(); }}
                             className="accent-indigo-600 shrink-0"
                           />
                         )}

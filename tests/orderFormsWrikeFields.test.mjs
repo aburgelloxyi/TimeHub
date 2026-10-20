@@ -34,7 +34,16 @@ check("the upload's fields, per order", plan.byKey.r4, [
   { id: "AR", value: "2.13" }, { id: "ART", value: "LieDetector" }, { id: "FM", value: '["Digital Mech"]' }, { id: "Q", value: "Approved" },
 ]);
 check("an empty cell is left empty; the artwork stands in for Art", plan.byKey.r5.map((f) => f.id), ["JN", "DP", "AR", "ART"]);
-check("the batch carries the job number", plan.batch, [{ id: "JN", value: "XY026216_INTL_PRINT_Outdoor_Campaign_Markets" }]);
+check("the batch carries the job number and the only deadline", plan.batch, [{ id: "JN", value: "XY026216_INTL_PRINT_Outdoor_Campaign_Markets" }, { id: "MD", value: "2026-10-13" }]);
+{
+  const dated = (row, marketDeadline) => order(row, { marketDeadline });
+  const fields = resolveFields(account);
+  const plan = (orders, overrides) => planFields(orders, { fields, jobNumber: "J", keyOf: (o) => `r${o.row}`, overrides });
+  const deadline = (p) => p.batch.find((f) => f.id === "MD")?.value;
+  check("the batch's Market Deadline is its orders' earliest", deadline(plan([dated(4, "2026-10-26"), dated(5, "2026-10-21"), dated(6, "")])), "2026-10-21");
+  check("one set for the batch counts, where it is used", deadline(plan([dated(4, "2026-10-26"), dated(5, "")], { "Market Deadline": { raw: "2026-10-20" } })), "2026-10-20");
+  check("no deadline on the batch when no order has one", deadline(plan([dated(4, ""), dated(5, "")])), undefined);
+}
 check("what is missing and refused is said", [plan.missing, plan.refused], [["Reporting"], [{ title: "Quote", reason: '"Maybe" isn\'t one of its options', rows: [5] }]]);
 
 // Values set in the preview for the batch.
@@ -51,6 +60,6 @@ check("what is missing and refused is said", [plan.missing, plan.refused], [["Re
   check("nothing refused once the gaps are filled", gaps.refused, []);
   const all = planFields(orders, { fields, jobNumber: "J", keyOf: (o) => `r${o.row}`, overrides: { Quote: { raw: "Pending", all: true }, "Job Number": { raw: "XY9", all: true } } });
   check("or, asked to, every order", [4, 5, 6].map((r) => val(all, r, "Q")), ["Pending", "Pending", "Pending"]);
-  check("the batch's job number follows", all.batch, [{ id: "JN", value: "XY9" }]);
+  check("the batch's job number follows", all.batch.filter((f) => f.id === "JN"), [{ id: "JN", value: "XY9" }]);
   check("a value the field won't take is ignored", val(planFields(orders, { fields, jobNumber: "J", keyOf: (o) => `r${o.row}`, overrides: { Quote: { raw: "Nope" } } }), 6, "Q"), undefined);
 }

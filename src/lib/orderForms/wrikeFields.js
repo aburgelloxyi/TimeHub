@@ -7,9 +7,11 @@ const norm = (s) => String(s || "").toLowerCase().replace(/[^a-z0-9]/g, "");
 
 // Each field, and where its value comes from. `context.jobNumber` is the
 // film's Markets folder title, which is what the job number field holds.
+// `batch` puts it on the batch task too: true for the same value, "earliest"
+// for the soonest of its orders' dates, the one the batch has to meet.
 export const BRIEF_FIELDS = [
   { title: "Job Number", from: (_, context) => context.jobNumber, batch: true },
-  { title: "Market Deadline", from: (o) => o.xyi?.marketDeadline },
+  { title: "Market Deadline", from: (o) => o.xyi?.marketDeadline, batch: "earliest" },
   { title: "Department", from: (o) => o.xyi?.department },
   { title: "Aspect ratio", from: (o) => o.xyi?.aspectRatio },
   { title: "Art", from: (o) => o.xyi?.art || o.artwork },
@@ -79,7 +81,7 @@ export function fieldValue(field, raw) {
 // gives nothing Wrike will take. It never goes back to the sheet.
 
 // What briefing `orders` would fill in. { byKey: { orderKey: [{ id, value }] },
-// batch: [{ id, value }], filled: [title], missing: [title] (no such field in
+// batch: [{ id, value }] (see `batch` in BRIEF_FIELDS), filled: [title], missing: [title] (no such field in
 // Wrike), refused: [{ title, reason, rows }], summary }. A value a field won't
 // take is left out and reported; the rest of the order's fields are still
 // set. `summary` is, per field, what the sheet alone gives: its distinct
@@ -102,6 +104,7 @@ export function planFields(orders, { fields, jobNumber, keyOf, overrides = {} })
     const set = own?.raw ? fieldValue(field, own.raw) : null;
     const usable = set?.value ? set : null;
     const values = new Set();
+    const given = []; // what each order is given, for the batch's earliest
     let empty = 0;
     let wrong = 0;
     for (const o of orders) {
@@ -117,9 +120,13 @@ export function planFields(orders, { fields, jobNumber, keyOf, overrides = {} })
         continue;
       }
       (byKey[keyOf(o)] ||= []).push({ id: field.id, value: got.value });
+      given.push(got.value);
       filled.add(spec.title);
     }
-    if (spec.batch) {
+    if (spec.batch === "earliest") {
+      // Dates are YYYY-MM-DD, so the smallest string is the soonest.
+      if (given.length) batch.push({ id: field.id, value: given.reduce((a, b) => (b < a ? b : a)) });
+    } else if (spec.batch) {
       const fromSheet = fieldValue(field, spec.from(null, { jobNumber }));
       const got = usable && (own.all || !fromSheet?.value) ? usable : fromSheet;
       if (got?.value) batch.push({ id: field.id, value: got.value });

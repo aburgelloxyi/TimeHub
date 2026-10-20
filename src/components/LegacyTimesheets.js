@@ -3090,7 +3090,10 @@ export default function LegacyTimesheet({ wrikeData, isAdmin = false }) {
                               <ChevronRight className={`w-3.5 h-3.5 transition-transform duration-300 ${collapsed ? "" : "rotate-90"}`} />
                             </button>
                           </HoverLabel>
-                          {g.jobNumber ? (
+                          {/* The job is the group's, so it is changed here for
+                              every entry under it; they join that job's group
+                              if it has one today. */}
+                          {g.jobNumber && !rowsAreEditable ? (
                             <span className="font-black text-[12px] text-[#122027] truncate">
                               {g.jobNumber}
                             </span>
@@ -3098,9 +3101,9 @@ export default function LegacyTimesheet({ wrikeData, isAdmin = false }) {
                             <div className="flex-1 min-w-0">
                               <TableSearchableSelect
                                 options={jobOptions}
-                                value=""
+                                value={g.jobNumber || ""}
                                 onChange={(val) => {
-                                  if (val) g._subRows.forEach((sub) => handleUpdateRow(sub.id, "jobNumber", val));
+                                  if (val && val !== g.jobNumber) g._subRows.forEach((sub) => handleUpdateRow(sub.id, "jobNumber", val));
                                 }}
                                 placeholder="Set job for these entries…"
                                 isGrouped={true}

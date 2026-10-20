@@ -5,6 +5,7 @@ import DropZone from "./orderForms/DropZone";
 import FilmBar from "./orderForms/FilmBar";
 import GoogleSource, { googleMessage } from "./orderForms/GoogleSource";
 import HeaderSearch from "./orderForms/HeaderSearch";
+import ReportButton from "./orderForms/ReportButton";
 import MarketList from "./orderForms/MarketList";
 import MarketView from "./orderForms/MarketView";
 import Corrections from "./orderForms/Corrections";
@@ -383,6 +384,7 @@ export default function OrderForms({ wrikeData }) {
         <div className="flex items-center gap-3.5">
           {files?.length > 0 && <HeaderSearch files={files} matcher={matcher} today={today} />}
           {googleConfigured() && <GoogleButton />}
+          <ReportButton />
         </div>
       </PageHeader>
 

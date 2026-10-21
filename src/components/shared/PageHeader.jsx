@@ -66,13 +66,13 @@ export default function PageHeader({ pageId, icon: Icon, title, subtitle, childr
         <div className={`${maxWidthClass} mx-auto px-4 sm:px-6 py-2 flex items-center gap-3`}>
           <Key className="w-4 h-4 text-amber-600 shrink-0" />
           <p className="text-xs font-bold text-amber-800 flex-1">
-            Wrike not connected — some features won't work until you connect it.
+            Wrike isn't connected.
           </p>
           <button
             onClick={connect}
             className="text-xs font-black text-amber-600 hover:text-amber-800 underline underline-offset-2 shrink-0 transition-colors"
           >
-            Add in Profile →
+            Connect
           </button>
         </div>
       </div>

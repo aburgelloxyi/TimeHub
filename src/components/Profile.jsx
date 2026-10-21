@@ -88,7 +88,7 @@ const SECTIONS = [
     id: "jobs",
     label: "Active Jobs",
     icon: Briefcase,
-    desc: "Your live workload — open a job to see the brief, files & log time",
+    desc: "Your live jobs, briefs and files",
     gradient: "from-[#12a0e1] to-[#1cc1a5]",
     featured: true,
   },
@@ -1809,12 +1809,12 @@ function SettingsSection({ onSave }) {
         </div>
         <div className="p-5 space-y-4">
           <p className="text-xs text-[#768994] leading-relaxed">
-            Fetches your tasks, timelogs and timers. You approve access on Wrike's site and can disconnect here any time.
+            Lets TimeHub read your tasks, timelogs and timers.
           </p>
           {unknown ? (
             <div className="space-y-2">
               <p className="text-xs text-[#768994] leading-relaxed">
-                Couldn't check the connection. That doesn't mean you're disconnected. Try again in a moment.
+                Couldn't reach Wrike to check.
               </p>
               <button
                 onClick={checkStatus}
@@ -1896,7 +1896,7 @@ function SettingsSection({ onSave }) {
               Merge markets into one entry
             </p>
             <p className="text-xs text-[#768994] mt-0.5 leading-relaxed">
-              Pulled rows with the same job, day and category become one entry covering every market, with the time added up.
+              Pulled rows with the same job, day and category become one entry, time added up.
             </p>
           </div>
           <button
@@ -1920,7 +1920,7 @@ function SettingsSection({ onSave }) {
           <div className="flex-1 min-w-0">
             <p className="text-sm font-bold text-[#122027]">Fun mode</p>
             <p className="text-xs text-[#768994] mt-0.5 leading-relaxed">
-              Playful little additions around the platform.
+              Small extras around the app.
             </p>
           </div>
           <button
@@ -1944,7 +1944,7 @@ function SettingsSection({ onSave }) {
           <div>
             <p className="text-sm font-bold text-[#122027]">Default category</p>
             <p className="text-xs text-[#768994] mt-0.5 leading-relaxed">
-              Pulled rows get this category. Left empty, it's guessed from the task name: production/localisation or revisions.
+              For pulled rows. Without one, it's guessed from the task name.
             </p>
           </div>
           <SearchableSelect
@@ -1963,29 +1963,6 @@ function SettingsSection({ onSave }) {
               Clear default
             </button>
           )}
-        </div>
-      </div>
-
-      {/* Info card */}
-      <div className="bg-slate-50 border border-[#dce4ec] rounded-2xl p-5">
-        <p className="text-xs font-black text-[#768994] uppercase tracking-widest mb-3">
-          What connecting unlocks
-        </p>
-        <div className="space-y-2">
-          {[
-            "Pull today's timelogs into your timesheet",
-            "Show live timer activity on your profile",
-            "Fetch active and completed Wrike jobs",
-            "Sync lifetime task count",
-          ].map((item) => (
-            <div
-              key={item}
-              className="flex items-center gap-2 text-sm text-[#768994]"
-            >
-              <Check className="w-3.5 h-3.5 text-[#1cc1a5] shrink-0" />
-              {item}
-            </div>
-          ))}
         </div>
       </div>
     </div>

@@ -10,7 +10,7 @@ import React, {
 import { motion, AnimatePresence, MotionConfig } from "framer-motion";
 import {
   Bell,
-  CheckCircle2,
+  Link2,
   X,
 } from "lucide-react";
 import "./Timesheeter.css";
@@ -375,7 +375,7 @@ export default function App() {
   const isAdmin = wrikeUserId === ADMIN_WRIKE_ID;
 
   const wrikeConnection = useMemo(
-    () => ({ connected: hasToken, connect: () => setActivePage("profile") }),
+    () => ({ connected: hasToken, connect: startWrikeOAuth }),
     [hasToken]
   );
 
@@ -388,56 +388,47 @@ export default function App() {
 
       {/* ── Onboarding modal ─────────────────────────────────────────────── */}
       {showOnboarding && (
-        <div className="fixed inset-0 z-[9999] flex items-center justify-center p-4 bg-[#122027]/70 backdrop-blur-sm">
-          <div className="bg-white rounded-3xl w-full max-w-md shadow-2xl border border-[#dce4ec] overflow-hidden">
-            <div className="h-1.5 bg-gradient-to-r from-[#12a0e1] to-[#1cc1a5]" />
-            <div className="p-8">
-              <div className="w-14 h-14 rounded-2xl bg-gradient-to-br from-[#12a0e1] to-[#1cc1a5] flex items-center justify-center mb-5 shadow-lg shadow-[#12a0e1]/20">
-                <CheckCircle2 className="w-7 h-7 text-white" />
+        <div className="fixed inset-0 z-[9999] flex items-center justify-center p-4">
+          <div className="absolute inset-0 bg-black/50 backdrop-blur-sm" />
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="onboarding-title"
+            className="relative w-full max-w-sm bg-gradient-to-b from-[#1c2333] to-[#141b28] border border-white/10 rounded-2xl shadow-2xl text-slate-300 animate-in fade-in zoom-in-95 duration-200"
+          >
+            <div className="absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-white/25 to-transparent" />
+            <div className="px-6 pt-6 pb-5 flex items-start gap-3">
+              <div className="w-9 h-9 shrink-0 rounded-xl bg-[#12a0e1]/15 text-[#38bdf8] flex items-center justify-center">
+                <Link2 className="w-[18px] h-[18px]" />
               </div>
-              <h2 className="text-2xl font-black text-[#122027] tracking-tight">
-                Welcome to Timesheeter
-              </h2>
-              <p className="text-sm text-[#768994] mt-2 leading-relaxed">
-                To get started, connect your{" "}
-                <span className="font-bold text-[#122027]">Wrike account</span>
-                . This lets the app fetch your tasks, timelogs, and timers
-                automatically — no token to copy or paste.
-              </p>
-              <div className="mt-5 space-y-3">
-                {[
-                  "Click Connect to Wrike below",
-                  "Approve access on Wrike's own site",
-                  "You're back here, fully set up",
-                ].map((step, i) => (
-                  <div key={i} className="flex items-start gap-3">
-                    <span className="w-5 h-5 rounded-full bg-[#12a0e1]/10 text-[#12a0e1] text-[10px] font-black flex items-center justify-center shrink-0 mt-0.5">
-                      {i + 1}
-                    </span>
-                    <p className="text-sm text-[#768994] font-medium">{step}</p>
-                  </div>
-                ))}
+              <div className="min-w-0">
+                <h2 id="onboarding-title" className="text-base font-bold text-white">
+                  Connect Wrike
+                </h2>
+                <p className="text-xs text-slate-400 mt-0.5 leading-relaxed">
+                  TimeHub reads your tasks, timelogs and timers from Wrike.
+                </p>
               </div>
-              <div className="mt-6 flex gap-3">
-                <button
-                  onClick={() => {
-                    localStorage.setItem("xyi_onboarded", "1");
-                    startWrikeOAuth();
-                  }}
-                  className="flex-1 bg-[#12a0e1] hover:bg-[#0d8bc4] text-white text-sm font-black py-3 rounded-xl transition-colors shadow-sm"
-                >
-                  Connect to Wrike →
-                </button>
-                <button
-                  onClick={() => {
-                    setShowOnboarding(false);
-                    localStorage.setItem("xyi_onboarded", "1");
-                  }}
-                  className="px-4 py-3 text-sm font-bold text-[#768994] hover:text-[#122027] rounded-xl hover:bg-slate-50 transition-colors border border-[#dce4ec]"
-                >
-                  Skip
-                </button>
-              </div>
+            </div>
+            <div className="px-6 py-3.5 border-t border-white/5 bg-black/20 rounded-b-2xl flex justify-end gap-2">
+              <button
+                onClick={() => {
+                  setShowOnboarding(false);
+                  localStorage.setItem("xyi_onboarded", "1");
+                }}
+                className="px-4 py-2 text-xs font-bold rounded-lg text-slate-400 hover:text-white border border-white/10 hover:bg-white/5 transition-colors"
+              >
+                Not now
+              </button>
+              <button
+                onClick={() => {
+                  localStorage.setItem("xyi_onboarded", "1");
+                  startWrikeOAuth();
+                }}
+                className="px-4 py-2 text-xs font-bold rounded-lg bg-[#12a0e1] hover:bg-[#0d8bc4] text-white shadow-md shadow-[#12a0e1]/20 transition-colors"
+              >
+                Connect
+              </button>
             </div>
           </div>
         </div>

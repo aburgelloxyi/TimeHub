@@ -11,6 +11,7 @@ import {
   CalendarDays,
   AlertCircle,
   Check,
+  RotateCcw,
 } from "lucide-react";
 import { motion, animate, AnimatePresence } from "framer-motion";
 import FloatingCard, { HoverLabel } from "../shared/FloatingCard";
@@ -424,6 +425,8 @@ export default function CommentTrailModal({
         on: !locked && (e.on ?? false),
         hours: e.hours ?? gapRegular,
         extra: e.extra ?? gapExtra,
+        suggestedHours: gapRegular,
+        suggestedExtra: gapExtra,
         // Not shown or edited here: rows carry the task's title as their note.
         notes: task?.title || "",
       };
@@ -1659,6 +1662,7 @@ function Suggestion({ s, index, frozen, edit, jump }) {
             <Stepper
               label={showExtra ? "Time" : null}
               value={s.hours}
+              suggested={s.suggestedHours}
               frozen={frozen}
               plusRef={plusRef}
               onChange={(hours) => edit(s.key, { hours, on: hours + s.extra > 0 })}
@@ -1667,6 +1671,7 @@ function Suggestion({ s, index, frozen, edit, jump }) {
               <Stepper
                 label="Add. time"
                 value={s.extra}
+                suggested={s.suggestedExtra}
                 frozen={frozen}
                 onChange={(extra) => edit(s.key, { extra, hours: s.hours, on: s.hours + extra > 0 })}
               />
@@ -1718,8 +1723,11 @@ function QuickTime({ quick, s, edit, activeDropdown, setActiveDropdown }) {
 }
 
 // A time in 0:15 steps. The empty value reads 0:00, greyed: a dash next to
-// the minus button looked like a second minus.
-function Stepper({ label, value, frozen, onChange, plusRef }) {
+// the minus button looked like a second minus. Given a `suggested` time, a
+// button beside it clears the time in one go, then puts the suggestion back.
+function Stepper({ label, value, suggested, frozen, onChange, plusRef }) {
+  const clear = value > 0;
+  const restore = !clear && suggested > 0;
   return (
     <div className="flex items-center gap-2">
       {label && <span className="text-[10px] font-bold uppercase tracking-wider text-slate-500">{label}</span>}
@@ -1745,6 +1753,17 @@ function Stepper({ label, value, frozen, onChange, plusRef }) {
           <Plus className="w-3.5 h-3.5" />
         </button>
       </div>
+      {suggested !== undefined && (
+        <button
+          onClick={() => onChange(clear ? 0 : suggested)}
+          disabled={frozen || !(clear || restore)}
+          aria-label={clear ? `Clear ${(label || "time").toLowerCase()}` : `Use the suggested ${hm(suggested)}`}
+          title={clear ? "Clear" : `Use the suggested ${hm(suggested)}`}
+          className="w-6 h-6 -ml-1 flex items-center justify-center rounded-md text-slate-500 hover:text-white hover:bg-white/10 transition-colors disabled:invisible"
+        >
+          {clear ? <X className="w-3.5 h-3.5" /> : <RotateCcw className="w-3 h-3" />}
+        </button>
+      )}
     </div>
   );
 }

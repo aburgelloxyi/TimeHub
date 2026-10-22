@@ -21,12 +21,14 @@ const STATE_MAX_AGE = 600; // 10 minutes
 // token about to go.
 const EARLY_MS = 2 * 60 * 1000;
 
-// Reading Drive, editing sheets (Fill links, Apply), and who the account is.
+// Reading Drive, editing sheets (Fill links, Apply), reading your calendar
+// ("Where did my day go?"), and who the account is.
 export const GOOGLE_SCOPES = [
   "openid",
   "email",
   "https://www.googleapis.com/auth/drive.readonly",
   "https://www.googleapis.com/auth/spreadsheets",
+  "https://www.googleapis.com/auth/calendar.events.readonly",
 ];
 
 class GoogleAuthInvalid extends Error {}

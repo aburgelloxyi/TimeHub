@@ -29,6 +29,7 @@ import {
   Sun,
   ClipboardList,
   SlidersHorizontal,
+  CalendarDays,
   Tag,
 } from "lucide-react";
 import { PAGE_GRADIENTS } from "../lib/pageGradients";
@@ -46,6 +47,7 @@ import { fetchTasksByIds } from "../hooks/useWrikeCache";
 import { startWrikeOAuth, disconnectWrike, fetchWrikeOAuthStatus, fetchContactTimelogs } from "../lib/wrikeApi";
 import { subscribeToWrikeTaskEvents, idsWorthFetching } from "../lib/wrikeWebhookSubscription";
 import { useTimesheetPrefs } from "../hooks/useTimesheetPrefs";
+import { connectGoogle, disconnectGoogle, googleAccount, googleConnected, onGoogleChange } from "../lib/orderForms/googleApi";
 import SearchableSelect from "./shared/SearchableSelect";
 import { CATEGORIES } from "../constants.js";
 import TaskDetailModal, { CsvPreviewModal } from "./TaskDetailModal";
@@ -1733,6 +1735,58 @@ const THEME_OPTIONS = [
   { id: "oled", label: "OLED", icon: MoonStar },
 ];
 
+// The one Google connection: your calendar in "Where did my day go?", and
+// Drive and Sheets in Client Orders. The Worker keeps it until it's
+// disconnected here, in Client Orders, or in Google.
+function GoogleCard() {
+  const [connected, setConnected] = useState(googleConnected);
+  const [working, setWorking] = useState(false);
+  useEffect(() => onGoogleChange(() => setConnected(googleConnected())), []);
+  const connect = async () => {
+    setWorking(true);
+    try {
+      await connectGoogle();
+    } catch {
+      setWorking(false);
+    }
+  };
+  return (
+    <div className="border border-[#dce4ec] rounded-2xl overflow-hidden">
+      <div className="bg-slate-50 border-b border-[#dce4ec] px-5 py-3 flex items-center gap-2">
+        <CalendarDays className="w-4 h-4 text-[#12a0e1]" />
+        <span className="text-sm font-black text-[#122027]">Google Connection</span>
+        {connected && (
+          <span className="ml-auto text-[10px] font-black text-[#1cc1a5] bg-[#1cc1a5]/10 px-2 py-0.5 rounded-full uppercase tracking-wider flex items-center gap-1">
+            <div className="w-1.5 h-1.5 rounded-full bg-[#1cc1a5]" /> Connected
+          </span>
+        )}
+      </div>
+      <div className="p-5 space-y-4">
+        <p className="text-xs text-[#768994] leading-relaxed">
+          Your calendar in "Where did my day go?", and Drive in Client Orders.
+          {connected && googleAccount() && <span className="block mt-1 font-bold text-[#122027]">{googleAccount()}</span>}
+        </p>
+        {connected ? (
+          <button
+            onClick={disconnectGoogle}
+            className="flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-bold text-red-500 hover:bg-red-50 border border-red-200 transition-colors"
+          >
+            <LogOut className="w-4 h-4" /> Disconnect Google
+          </button>
+        ) : (
+          <button
+            onClick={connect}
+            disabled={working}
+            className="flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-bold bg-[#12a0e1] hover:bg-[#0d8bc4] text-white shadow-sm transition-colors disabled:opacity-60"
+          >
+            <ExternalLink className="w-4 h-4" /> Connect Google
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function SettingsSection({ onSave }) {
   const [status, setStatus] = useState({ checked: false, connected: false });
   const [disconnecting, setDisconnecting] = useState(false);
@@ -1842,6 +1896,8 @@ function SettingsSection({ onSave }) {
           )}
         </div>
       </div>
+
+      <GoogleCard />
 
       {/* Appearance card */}
       <div className="border border-[#dce4ec] rounded-2xl overflow-hidden">

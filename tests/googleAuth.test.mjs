@@ -33,8 +33,9 @@ const req = (path, { cookie = "wrike_session=s", method = "GET" } = {}) =>
 
 check("the approval link asks for offline access, the scopes and a fresh consent", (() => {
   const u = new URL(authorizeUrl({ clientId: "cid", redirectUri: "https://th.test/cb", state: "st" }));
-  return [u.searchParams.get("access_type"), u.searchParams.get("prompt"), u.searchParams.get("scope").includes("spreadsheets"), u.searchParams.get("state")];
-})(), ["offline", "consent", true, "st"]);
+  const scope = u.searchParams.get("scope");
+  return [u.searchParams.get("access_type"), u.searchParams.get("prompt"), scope.includes("spreadsheets"), scope.includes("calendar.events.readonly"), u.searchParams.get("state")];
+})(), ["offline", "consent", true, true, "st"]);
 check("the email in Google's id token", emailFromIdToken(`x.${btoa(JSON.stringify({ email: "pm@xyi.com" })).replace(/=+$/, "")}.y`), "pm@xyi.com");
 check("only paths on this site to go back to", ["/#orderforms", "//evil.com", "https://evil.com", ""].map(safeReturn), ["/#orderforms", "/", "/", "/"]);
 

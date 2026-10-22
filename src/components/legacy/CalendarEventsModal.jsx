@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { CalendarDays, Check, Plus, RefreshCw, X } from "lucide-react";
-import { calendarConnected, connectCalendar, fetchEventsForDay } from "../../lib/googleCalendar";
+import { calendarConnected, calendarReady, connectCalendar, fetchEventsForDay } from "../../lib/googleCalendar";
 import { pickMeetings } from "../../lib/calendarEvents";
 
 // One day of your Google Calendar, as "Where did my day go?" would read it:
@@ -14,19 +14,27 @@ const length = (minutes) => `${Math.floor(minutes / 60)}:${String(minutes % 60).
 
 const MESSAGES = {
   "not-configured": "Google sign-in isn't set up for this site.",
-  offline: "Couldn't reach Google. Check your connection and try again.",
-  denied: "Google didn't grant access to your calendar.",
-  cancelled: "The Google sign-in window was closed before it finished.",
-  popup: "The Google sign-in window was blocked. Allow popups for this site and try again.",
-  "signed-out": "Your Google sign-in has lapsed. Connect again.",
-  "no-access": "Google refused the request. The Calendar API may not be enabled for this app yet.",
-  failed: "Google returned an error reading your calendar.",
+  "signed-out": "Google isn't connected. Connect again.",
+  "no-access": "Google refused to share your calendar.",
+  failed: "Couldn't read your calendar. Try again.",
 };
 
 export default function CalendarEventsModal({ day, onClose, canAdd, addedIds, onAdd }) {
   const [connected, setConnected] = useState(calendarConnected);
   // { status: "idle" | "loading" | "ready" | "error", meetings, leftOut, error }
-  const [state, setState] = useState({ status: "idle" });
+  const [state, setState] = useState(() => ({ status: calendarConnected() ? "idle" : "loading" }));
+
+  // Connected in another tab or browser, or this page hasn't asked yet.
+  useEffect(() => {
+    if (connected) return;
+    let live = true;
+    calendarReady().then((ok) => {
+      if (!live) return;
+      if (ok) setConnected(true);
+      else setState({ status: "idle" });
+    });
+    return () => { live = false; };
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const load = useCallback(async () => {
     setState({ status: "loading" });
@@ -53,6 +61,7 @@ export default function CalendarEventsModal({ day, onClose, canAdd, addedIds, on
     return () => window.removeEventListener("keydown", onKey, true);
   }, [onClose]);
 
+  // Usually leaves for Google's page and comes back to this day.
   const connect = async () => {
     setState({ status: "loading" });
     try {

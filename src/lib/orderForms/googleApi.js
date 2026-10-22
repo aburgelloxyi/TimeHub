@@ -3,8 +3,9 @@
 // The sign-in is kept by the Worker (worker/googleAuth.js), as Wrike's is: a
 // member approves TimeHub once on Google's page, and the Worker holds the
 // refresh token and hands this page an access token whenever it asks. One
-// approval covers reading Drive and editing sheets (Corrections, Fill links),
-// and it lasts until it is disconnected or revoked in Google. The page calls
+// approval covers reading Drive, editing sheets (Corrections, Fill links) and
+// reading your calendar (lib/googleCalendar.js), and it lasts until it is
+// disconnected or revoked in Google. The page calls
 // Google itself with the token, so what it reads goes from Google to the
 // browser and nowhere else.
 //
@@ -14,13 +15,11 @@
 import { cellRange } from "./cells";
 
 // Public by design, like the Supabase anon key: it names the app to Google and
-// only works from the origins registered for it in Google Cloud. The Calendar
-// sign-in (googleCalendar.js) still uses it with Google's in-browser library.
+// only works from the origins registered for it in Google Cloud.
 export const CLIENT_ID =
   // Optional: the tests run this file outside Vite, where there is no env.
   import.meta.env?.VITE_GOOGLE_CLIENT_ID ||
   "1047837005704-h04jm219u2mm5rojhpv1vo797rei5v3a.apps.googleusercontent.com";
-const GSI_SRC = "https://accounts.google.com/gsi/client";
 const WRITE_SCOPE = "https://www.googleapis.com/auth/spreadsheets";
 const DRIVE = "https://www.googleapis.com/drive/v3";
 const SHEETS = "https://sheets.googleapis.com/v4/spreadsheets";
@@ -36,7 +35,6 @@ let token = null;
 let expiresAt = 0;
 let scopes = "";
 let email = "";
-let gsiLoading = null;
 
 const TOKEN_KEY = "xyi_google_token";
 
@@ -158,21 +156,6 @@ export function disconnectGoogle() {
   fetch("/api/google/oauth/disconnect", { method: "POST" }).catch(() => {});
 }
 
-export function loadGsi() {
-  if (window.google?.accounts?.oauth2) return Promise.resolve();
-  if (!gsiLoading) {
-    gsiLoading = new Promise((resolve, reject) => {
-      const script = document.createElement("script");
-      script.src = GSI_SRC;
-      script.async = true;
-      script.onload = resolve;
-      script.onerror = () => { gsiLoading = null; reject(new GoogleError("offline")); };
-      document.head.appendChild(script);
-    });
-  }
-  return gsiLoading;
-}
-
 // Off to Google's approval page through the Worker, and back to this page.
 // The page is left, so the promise is never settled.
 function goApprove() {
@@ -198,7 +181,7 @@ async function bearer() {
   throw new GoogleError("signed-out");
 }
 
-async function gfetch(url, tries = 4, renewed = false) {
+export async function gfetch(url, tries = 4, renewed = false) {
   const res = await fetch(url, { headers: { Authorization: `Bearer ${await bearer()}` } });
   if (res.ok) return res;
   // Google turned the token down: one more try with a fresh one first.
@@ -310,15 +293,19 @@ export async function readCellChoices(spreadsheetId, tab, cells) {
 
 // ── Writing a correction ──────────────────────────────────────────────────────
 
-// Editing sheets is part of the one approval. A connection made without it
-// goes back through Google's page to add it.
-export const googleCanWrite = () => googleConnected() && scopes.includes(WRITE_SCOPE);
+// Every scope is part of the one approval. A connection made before one was
+// added goes back through Google's page to add it.
+export const googleHas = (scope) => googleConnected() && scopes.split(" ").includes(scope);
 
-export async function connectGoogleForWriting() {
-  if (googleCanWrite()) return;
-  if ((await refreshGoogle()) && googleCanWrite()) return;
+export async function connectGoogleWith(scope) {
+  if (!CLIENT_ID) throw new GoogleError("not-configured");
+  if (googleHas(scope)) return;
+  if ((await refreshGoogle()) && googleHas(scope)) return;
   return goApprove();
 }
+
+export const googleCanWrite = () => googleHas(WRITE_SCOPE);
+export const connectGoogleForWriting = () => connectGoogleWith(WRITE_SCOPE);
 
 async function wfetch(url, init) {
   if (!googleCanWrite() && !((await refreshGoogle()) && googleCanWrite())) throw new GoogleError("signed-out");

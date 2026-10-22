@@ -1,16 +1,20 @@
 # The panel routes
 
 Two read-only routes in `worker/index.js` that let apps outside the website read
-Wrike jobs and comments without a Wrike login. Two apps depend on them:
+Wrike jobs and comments without a Wrike login. Three apps depend on them:
 
 - **XYi Toolbox** (`aburgello/XYiToolbox`), the Adobe panel: Active Jobs and the
   amend notes on each deliverable. Code: `src/js/main/lib/jobsFeed.ts`.
 - **XYi Reviewer** (`aburgello/XYiCompare`), the Mac app creative directors use
   to review market renders: the "For your review" list and last round's notes.
   Code: `app/Sources/XYiCompare/WrikeFeed.swift`.
+- **XYi in Motion** (`aburgello/XYiCompare`, `app/Sources/XYiHub`), the Mac
+  app for the Motion team: each person's jobs for today and the team board.
+  It shares the Reviewer's `WrikeFeed.swift`.
 
-Neither app writes to Wrike. **Before changing either route, read "Changing
-these routes" at the end.**
+None of them writes to Wrike. **Before changing either route, read "Changing
+these routes".** XYi in Motion also reads (and in one place writes) TimeHub's
+database directly: see the last section.
 
 ## Access
 
@@ -150,15 +154,15 @@ One Wrike call per task, cached in the Worker for three minutes.
 
 ## Which app reads what
 
-| | Toolbox | Reviewer |
-|---|---|---|
-| `member` | The name the machine is tagged with, usually a first name | The name the reviewer types, ideally their full name |
-| `refresh=1` | After showing the cached list, at most every two minutes, and on its refresh button | Never |
-| `fresh=1` | On its refresh button | On its ↻ button |
-| `id`, `title`, `status`, `permalink`, `subtasks[].id`, `subtasks[].name` | ✓ | ✓ |
-| `assignee`, `updated_at`, `subtask_count`, `subtasks_done`, `subtasks[].status`, `subtasks[].customStatusName` | ✓ | |
-| `due_date` | | |
-| `comment`, `recent` (`text`, `author`, `date`) | ✓ | ✓ |
+| | Toolbox | Reviewer | XYi in Motion |
+|---|---|---|---|
+| `member` | The name the machine is tagged with, usually a first name | The name the reviewer types, ideally their full name | Each team member's name from the team folder (one call per person, for the team board) |
+| `refresh=1` | After showing the cached list, at most every two minutes, and on its refresh button | Never | Never |
+| `fresh=1` | On its refresh button | On its ↻ button | Doesn't read comments |
+| `id`, `title`, `status`, `permalink`, `subtasks[].id`, `subtasks[].name` | ✓ | ✓ | ✓ |
+| `assignee`, `updated_at`, `subtask_count`, `subtasks_done`, `subtasks[].status`, `subtasks[].customStatusName` | ✓ | | |
+| `due_date` | | | ✓ (Today, Tomorrow, "2 days late" on the board) |
+| `comment`, `recent` (`text`, `author`, `date`) | ✓ | ✓ | |
 
 What each app relies on beyond the fields:
 
@@ -168,6 +172,9 @@ What each app relies on beyond the fields:
   by reading `recent` for a comment that names the render. Renaming that status
   in Wrike, or giving subtasks titles that aren't deliverable names, breaks the
   Reviewer's list.
+- **XYi in Motion** groups the team board by `status` as given, places each
+  job on its batch the Reviewer's way (`subtasks[].name`), and reads
+  `due_date` as `yyyy-MM-ddTHH:mm:ss`.
 - **The Toolbox** reads amends the same way (both apps parse comments with the
   rules in the Toolbox's `amendNotes.ts`) and uses `subtasks[].customStatusName`
   to tell a batch waiting for localisation from one in flight.
@@ -181,9 +188,9 @@ What each app relies on beyond the fields:
 - **A new subtask field reaches the Toolbox only if its `normalise()` in
   `jobsFeed.ts` copies it**; that function rebuilds each subtask field by field.
 - **Bump `X-Panel-Build`** with any change to `/api/panel/jobs`.
-- **Check both apps** against the deployed Worker before calling it done:
+- **Check all three apps** against the deployed Worker before calling it done:
   the Toolbox's Active Jobs and a job's notes; the Reviewer's "For your review"
-  list and the notes panel on a render.
+  list and the notes panel on a render; XYi in Motion's Today and Team.
 - **Update this page** in the same commit.
 
 ## Known limits
@@ -196,3 +203,46 @@ What each app relies on beyond the fields:
   `wrike_tasks_cache`. Motion's tasks are always there (Motion has a team
   board). Other departments' tasks may lag, and the Reviewer, used by creative
   directors, never asks for a live read.
+
+## XYi in Motion and the database
+
+Besides the panel routes, XYi in Motion reaches Supabase the way the website
+does: TimeHub's public website key (`src/lib/supabaseClient.js`) and an
+anonymous session, one per Mac (each adds an anonymous account to Supabase's
+sign-in list, as a new browser does). Code: `app/Sources/XYiHub/TimeHub.swift`.
+The access rules in `supabase/schema.sql` are what allow it, so changing a
+policy on these tables changes what the app can do.
+
+**It reads:**
+
+| Table | Columns | For |
+|---|---|---|
+| `profiles` | `wrike_user_id`, `first_name`, `last_name`, `department`, `canvas_color`, `avatar_url`, `left_at` | Names and colours; who you are when writing |
+| `canvas_notes_folders` | `id`, `name`, `parent_id`, `owner_wrike_id`, `department` (Motion's) | The Notes screen |
+| `canvas_notes_pages` | `id`, `folder_id`, `title`, `kind`, `updated_at`, `content` | The Notes screen (text pages laid out; sketches open the website) |
+| `campaign_eoc_notes` | `campaign_id`, `author_id`, `updated_at`, `positives`, `negatives`, `improvements` (Motion's) | End of Campaign |
+| `canvas_manual_campaigns` | `id`, `title` | Campaign names |
+| `wrike_tasks_cache` | `task_data->>title`, `projectName`, `extractedPathData`, `status`, MATRIX tasks only | The Canvas's campaign list, rebuilt the way `Canvas.js` builds it |
+| `board_now` | `wrike_user_id`, `task_id`, `task_title`, `note`, `user_name`, `user_color`, `updated_at`, `active` (Motion's) | Who's working on what now |
+
+**It writes one thing:** the person's own row in `campaign_eoc_notes`, upserted
+on `campaign_id,department,author_id` with `department` Motion, exactly as the
+End of Campaign page saves it: each section a JSON-stringified TipTap document,
+and `updated_at` set. Before saving it reads the row again and stops (asking the
+person) if `updated_at` changed since it was opened, so it never overwrites an
+edit made on the website. It only edits paragraphs, headings, lists, checklists,
+quotes, code, dividers and bold/italic/struck/code/link text; a section holding
+anything else (an image, a video, coloured text) is left exactly as it is.
+
+**If you change any of this, check XYi in Motion:**
+
+- **Campaign ids.** The app makes them the way `Canvas.js` does
+  (`wrike-<title, lower case, dashes>` from a MATRIX task's project name, else
+  the folder above `Digital`, else a title-prefix guess, then the hand-added
+  campaigns). Change that and the app's End of Campaign write-ups land under ids
+  the website no longer shows.
+- **The End of Campaign format.** New columns, a new section, or sections stored
+  differently need the app changed too (`EOCText.swift`, `NotesView.swift`).
+- **The notes formats** (TipTap pages, `kind`) and the columns above.
+- **The access rules** on these tables.
+

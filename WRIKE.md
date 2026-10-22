@@ -387,11 +387,14 @@ people's rows.
 
 **The XYi Toolbox panel** is an Adobe extension designers use inside their
 apps. It asks the Worker (`/api/panel/jobs` and `/api/panel/comment`) for the
-jobs assigned to whoever the machine belongs to, and for a job's latest Wrike
-comment, which is where amends get written. It authenticates with a shared key
+jobs assigned to whoever the machine belongs to, and for a job's newest Wrike
+comments, which is where amends get written. It authenticates with a shared key
 (`PANEL_KEY`) rather than a Wrike login. The job list is read from
 `wrike_tasks_cache`, not from Wrike, so it costs nothing against the rate
-limit. Only the latest comment is fetched live.
+limit. Only the comments are fetched live. The XYi Reviewer (the creative
+directors' Mac app) reads the same two routes. PANEL_API.md lists every
+parameter and field, which app uses which, and what to check before changing
+them.
 
 The machine is tagged with a person's name (usually a first name), which the
 Worker matches against profiles: an exact full name first, then first name,

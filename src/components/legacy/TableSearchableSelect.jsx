@@ -251,7 +251,9 @@ export default function TableSearchableSelect({
           onMouseDown={(e) => {
             e.stopPropagation();
             setActiveDropdown(null);
-            commit(searchTerm);
+            // Unchanged, closing isn't a choice. "Where did my day go?" ticks
+            // a task on any choice, so this would tick it on a dismiss.
+            if (searchTerm !== value) commit(searchTerm);
           }}
         />
       )}

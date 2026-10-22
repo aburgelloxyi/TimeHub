@@ -15,6 +15,7 @@ import {
 import { motion, animate, AnimatePresence } from "framer-motion";
 import FloatingCard, { HoverLabel } from "../shared/FloatingCard";
 import TableSearchableSelect from "./TableSearchableSelect";
+import { TIME_OPTIONS } from "./legacyConstants";
 import MultiCountrySelect from "../shared/MultiCountrySelect";
 import CalendarEventsModal from "./CalendarEventsModal";
 import { CATEGORIES } from "../../constants";
@@ -78,6 +79,7 @@ const shortfall = (estimate, logged) => {
 // this browser for the days the timesheet can still hold, so a reload doesn't
 // lose a morning's marks; older days are dropped on the next save.
 const MARK_COLOUR = "#e2e8f0";
+const QUICK_ID = "ct-quick-time";
 const MARKS_KEY = "xyi_dayMarks";
 const MARK_JOBS_KEY = "xyi_markJobs";
 const readStored = (key) => {
@@ -174,6 +176,12 @@ export default function CommentTrailModal({
     [markJobs]
   );
   const [activeDropdown, setActiveDropdown] = useState(null);
+  // A task's time picked straight from the timeline: { key, rect } of the
+  // right-clicked dot. Open while its dropdown is.
+  const [quick, setQuick] = useState(null);
+  useEffect(() => {
+    if (quick && activeDropdown !== QUICK_ID) setQuick(null);
+  }, [quick, activeDropdown]);
   const [showCalendar, setShowCalendar] = useState(false);
   // Which tasks are listed, by what you did on them. This only hides rows:
   // the estimate is always worked out from the whole day, so a hidden task
@@ -760,6 +768,10 @@ export default function CommentTrailModal({
                 onPickMark={(id) => setJump({ key: `${dayIso}:mark:${id}`, itemId: null, n: Date.now() })}
                 presets={presets}
                 canMark={!isFrozen}
+                onQuickTime={(s, rect) => {
+                  setQuick({ key: s.key, rect });
+                  setActiveDropdown(QUICK_ID);
+                }}
               />
 
               {(state.truncated || view.folderOnly > 0) && (
@@ -878,6 +890,7 @@ export default function CommentTrailModal({
             </button>
           </div>
         </div>
+        {quick && view && <QuickTime quick={quick} s={view.suggestions.find((x) => x.key === quick.key)} edit={edit} activeDropdown={activeDropdown} setActiveDropdown={setActiveDropdown} />}
       </div>
       {showCalendar && (
         <CalendarEventsModal
@@ -1295,7 +1308,7 @@ function Mark({ colour, active, glow, className = "", style, ...rest }) {
 // gets a filled dot at its start instead, and the changes behind a stretch are
 // in its hover card. Every one is still listed under the task's Activity.
 // Clicking a comment or a bar takes you to that task's row, to set its time.
-function Timeline({ view, activeItemId, onPick, marks, onMark, onMoveMark, onPickMark, presets, canMark }) {
+function Timeline({ view, activeItemId, onPick, marks, onMark, onMoveMark, onPickMark, presets, canMark, onQuickTime }) {
   // { s, item } for a comment or lane name, { s, bar } for a stretch, + rect.
   const [hover, setHover] = useState(null);
 
@@ -1320,6 +1333,13 @@ function Timeline({ view, activeItemId, onPick, marks, onMark, onMoveMark, onPic
   // the comments and changes along it, the action that closed it.
   const within = (s, b) => s.items.filter((x) => x.minute >= b.from - 1 && x.minute <= b.to + 1);
   const openedBy = (s, b) => s.items.find((x) => x.type === "cue" && Math.abs(x.minute - b.from) <= 1);
+  // Right-click sets the task's time from the timesheet's time list and ticks it.
+  const quickTime = (s) => (e) => {
+    if (!canMark || s.locked) return;
+    e.preventDefault();
+    hide();
+    onQuickTime(s, e.currentTarget.getBoundingClientRect());
+  };
 
   return (
     <div className="px-6 py-4 overflow-x-auto custom-scrollbar">
@@ -1371,6 +1391,7 @@ function Timeline({ view, activeItemId, onPick, marks, onMark, onMoveMark, onPic
                         hide();
                         onPick(s, within(s, b).find((x) => x.type === "comment") || within(s, b)[0] || { id: null });
                       }}
+                      onContextMenu={quickTime(s)}
                       aria-label={`${s.title}, ${clock(b.from)} to ${clock(b.to)}. Go to it to set its time`}
                       className={`absolute top-[11px] h-2.5 rounded bg-[color-mix(in_srgb,var(--c)_28%,transparent)] hover:bg-[color-mix(in_srgb,var(--c)_48%,transparent)] transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-white/60 ${
                         missing && !comments.length ? "mark-glow" : ""
@@ -1404,6 +1425,7 @@ function Timeline({ view, activeItemId, onPick, marks, onMark, onMoveMark, onPic
                         hide();
                         onPick(s, item);
                       }}
+                      onContextMenu={quickTime(s)}
                       aria-label={`${clock(item.minute)}: ${item.text || "attachment"}. Go to ${s.title} to set its time`}
                       className={`absolute top-1/2 -translate-y-1/2 transition-transform hover:scale-125 focus:outline-none focus-visible:ring-2 focus-visible:ring-white/60 ${
                         isActive ? "scale-125" : ""
@@ -1667,6 +1689,31 @@ function Suggestion({ s, index, frozen, edit, jump }) {
         )}
       </div>
     </li>
+  );
+}
+
+// The timesheet's time list, opened under the dot that was right-clicked.
+// Picking a time sets the task's time and ticks it; "none" unticks it.
+function QuickTime({ quick, s, edit, activeDropdown, setActiveDropdown }) {
+  if (!s) return null;
+  const { rect } = quick;
+  return (
+    <div className="fixed w-24" style={{ left: rect.left + rect.width / 2 - 48, top: rect.bottom + 4 }}>
+      <TableSearchableSelect
+        options={TIME_OPTIONS}
+        value={s.hours > 0 ? secondsToHM(Math.round(s.hours * 3600)) : "none"}
+        onChange={(val) => {
+          const hours = val === "none" ? 0 : hmToHours(val);
+          edit(s.key, { hours, on: hours + s.extra > 0 });
+        }}
+        placeholder="none"
+        dropdownId={QUICK_ID}
+        activeDropdown={activeDropdown}
+        setActiveDropdown={setActiveDropdown}
+        isTime={true}
+        isDarkModal={true}
+      />
+    </div>
   );
 }
 

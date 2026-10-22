@@ -13,7 +13,7 @@ Wrike jobs and comments without a Wrike login. Three apps depend on them:
   It shares the Reviewer's `WrikeFeed.swift`.
 
 None of them writes to Wrike. **Before changing either route, read "Changing
-these routes".** XYi in Motion also reads (and in one place writes) TimeHub's
+these routes".** XYi in Motion also reads (and in two places writes) TimeHub's
 database directly: see the last section.
 
 ## Access
@@ -225,7 +225,7 @@ policy on these tables changes what the app can do.
 | `wrike_tasks_cache` | `task_data->>title`, `projectName`, `extractedPathData`, `status`, MATRIX tasks only | The Canvas's campaign list, rebuilt the way `Canvas.js` builds it |
 | `board_now` | `wrike_user_id`, `task_id`, `task_title`, `note`, `user_name`, `user_color`, `updated_at`, `active` (Motion's) | Who's working on what now |
 
-**It writes one thing:** the person's own row in `campaign_eoc_notes`, upserted
+**It writes two things.** First, the person's own row in `campaign_eoc_notes`, upserted
 on `campaign_id,department,author_id` with `department` Motion, exactly as the
 End of Campaign page saves it: each section a JSON-stringified TipTap document,
 and `updated_at` set. Before saving it reads the row again and stops (asking the
@@ -233,6 +233,18 @@ person) if `updated_at` changed since it was opened, so it never overwrites an
 edit made on the website. It only edits paragraphs, headings, lists, checklists,
 quotes, code, dividers and bold/italic/struck/code/link text; a section holding
 anything else (an image, a video, coloured text) is left exactly as it is.
+
+Second, **notes pages** in `canvas_notes_pages`: editing a text page's `title`
+and `content`, and making a new text page (`folder_id`, `title`, `content: []`,
+`kind: "text"`). An edit is saved the way `RichNoteEditor` saves with
+collaboration off: `content` the TipTap document, **`ydoc` set to null** so the
+next collaborative open re-seeds from that JSON, and `updated_at`. It reads the
+page again first and stops if `updated_at` changed since it was opened, and a
+page changed in the last two minutes waits for the person's go-ahead, since
+someone may have it open live. It never touches sketch pages or a page holding
+what its plain-text editor can't (the same rule as above). The gap it can't
+close: a browser that already had the page open live keeps its own Yjs state,
+and if that person types on, their save puts their version back.
 
 **If you change any of this, check XYi in Motion:**
 
@@ -243,6 +255,8 @@ anything else (an image, a video, coloured text) is left exactly as it is.
   the website no longer shows.
 - **The End of Campaign format.** New columns, a new section, or sections stored
   differently need the app changed too (`EOCText.swift`, `NotesView.swift`).
-- **The notes formats** (TipTap pages, `kind`) and the columns above.
+- **The notes formats** (TipTap pages, `kind`) and the columns above, and how a
+  non-collaborative save treats `ydoc` (the app relies on null meaning "re-seed
+  from `content`").
 - **The access rules** on these tables.
 

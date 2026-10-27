@@ -154,7 +154,10 @@ create table public.clients (
   name text not null,
   created_at timestamp with time zone default now(),
   -- The currency this client's rate card is in.
-  currency text not null default 'USD' check (currency in ('USD', 'GBP', 'EUR', 'AUD'))
+  currency text not null default 'USD' check (currency in ('USD', 'GBP', 'EUR', 'AUD')),
+  -- Billable blocks in Project/Time's Billable view round up to this many
+  -- minutes. Per client because they don't all bill alike.
+  increment_minutes integer not null default 30 check (increment_minutes > 0 and increment_minutes <= 240)
 );
 
 -- A client's rate card: what an hour of each rate-card position costs them.

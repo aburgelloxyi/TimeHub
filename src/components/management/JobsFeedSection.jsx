@@ -4,7 +4,7 @@
 // Part of Administration. Split out of components/Management.jsx, which is
 // still the entry point and re-exports what other screens import.
 import { useState, useEffect, useCallback, useMemo } from "react";
-import { Check, Search, Download, UploadCloud } from "lucide-react";
+import { Check, Search, Download, Layers } from "lucide-react";
 import { supabase, selectAll } from "../../lib/supabaseClient";
 import { jobKey, bookFilmTitle } from "../../utils/wrikeHelpers";
 import { parseTimeToHours, parseTimeToSeconds, secondsToHM } from "../../utils/timeHelpers";
@@ -12,8 +12,8 @@ import { useColumnResize } from "../../lib/useColumnResize";
 import { toIsoDate } from "../../utils/dates";
 import { fullName as cleanFullName } from "../../lib/formatName";
 import { clientKey, formatMoney, hourlyRate, indexRates } from "../../lib/rateCards";
+import { consolidateRows, incrementFor } from "../../lib/consolidate";
 import { FeedSelect } from "./fields";
-import { ImportModal } from "./ImportModal";
 
 // ── Jobs Feed ─────────────────────────────────────────────────────────────────
 // Exported: also rendered inside the PMs' standalone Job Book page (JobBook.jsx).
@@ -78,6 +78,32 @@ const feedDesc = (e) => {
 // anywhere: this feeds the rate × hours money column, so a "2" (two hours,
 // which is what the 0.25-step dropdown writes) was billed as 0.03 hours.
 const hoursOf = parseTimeToHours;
+
+// A consolidated block rendered as a feed row. The feed's existing columns keep
+// their meaning: Date is the week it belongs to, and Time carries the billed
+// amount because that is what goes on the timesheet. Logged sits beside it, so
+// the difference is visible rather than implied.
+const blockToRow = (g) => {
+  const first = g.rows[0] || {};
+  return {
+    ...first,
+    id: g.key,
+    date: g.week,
+    _iso: g.week,
+    client: g.client,
+    category: g.category,
+    territory: g.territory,
+    // A block only shows a tick when every entry in it carries the flag. A
+    // half-flagged block is visible in the raw export.
+    client_amends: g.rows.every(r => r.client_amends),
+    is_3d: g.rows.every(r => r.is_3d),
+    time_spent: secondsToHM(g.billedSeconds, "0:00"),
+    additional_time: "none",
+    _entries: g.rows.length,
+    _loggedSeconds: g.seconds,
+    _upliftSeconds: g.upliftSeconds,
+  };
+};
 export function JobsFeedSection() {
   const [entries, setEntries] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -98,7 +124,9 @@ export function JobsFeedSection() {
   const [staffFilter, setStaffFilter] = useState("");
   const [officeFilter, setOfficeFilter] = useState("");
   const [fixedCostFilter, setFixedCostFilter] = useState("Both"); // Both | Yes | No
-  const [showImport, setShowImport] = useState(false);
+  // Billable shows the week consolidated into billing blocks instead of raw
+  // rows. It changes the view and what Export writes; it never changes rows.
+  const [billable, setBillable] = useState(false);
   // Matches the report this replaces, which defaults to leaving unbilled time
   // (waiting time and anything else zero-rated) out of the totals.
   const [includeUnbilled, setIncludeUnbilled] = useState(false);
@@ -174,7 +202,7 @@ export function JobsFeedSection() {
         : Promise.resolve({ data: [] }),
       supabase.from("positions").select("id, rate_role_id"),
       supabase.from("job_categories").select("name, unbilled, rate_role_id"),
-      supabase.from("clients").select("id, name, currency"),
+      supabase.from("clients").select("*"),
       supabase.from("client_rates").select("client_id, rate_role_id, hourly_rate"),
     ]);
 
@@ -209,6 +237,9 @@ export function JobsFeedSection() {
         _name: p ? cleanFullName(p.first_name, p.last_name) : "—",
         _dept: p?.department || "",
         _unbilled: unbilled,
+        // Carried onto the row so the Billable view doesn't need a second
+        // lookup per group. Falls back to 30 when the client is unknown.
+        _increment: incrementFor(client?.increment_minutes),
         _rate: hourlyRate({
           unbilled,
           categoryRoleId: cat?.rate_role_id,
@@ -301,6 +332,13 @@ export function JobsFeedSection() {
   }, [entries, search, range, includeUnbilled, jobNoFilter, clientFilter, deptFilter,
       filmFilter, categoryFilter, staffFilter, officeFilter, fixedCostFilter]);
 
+  // Unbilled categories are left out whatever the "include unbilled hours"
+  // control says: they must never become a billable block.
+  const consolidated = useMemo(
+    () => consolidateRows(filtered.filter(e => !e._unbilled), { jobOf: feedJobNo }),
+    [filtered]
+  );
+
   const fmtDate = (d) => {
     if (!d) return "—";
     try {
@@ -344,6 +382,16 @@ export function JobsFeedSection() {
 
   const { widths, resizeHandle } = useColumnResize("mgmt-jobsfeed-cols", COLS);
 
+  // Appended only in Billable mode. The twenty columns above keep their order
+  // and meaning in both the table and the file, so anything reading the export
+  // doesn't see a different shape when the toggle is on.
+  const BILL_EXTRA = [
+    { key: "territory", label: ["Territory"], px: 90, extra: true },
+    { key: "entries",   label: ["Entries"],   px: 54, extra: true },
+    { key: "logged",    label: ["Logged"],    px: 62, extra: true },
+    { key: "uplift",    label: ["Uplift"],    px: 58, extra: true },
+  ];
+
   const getCellValue = (e, key) => {
     const j = e._job || {};
     switch (key) {
@@ -374,6 +422,11 @@ export function JobsFeedSection() {
         const hrs = hoursOf(e.time_spent) + hoursOf(e.additional_time);
         return hrs > 0 && e._rate != null ? formatMoney(e._rate * hrs, e._currency) : "—";
       }
+      // Billable-only columns, see BILL_EXTRA.
+      case "territory":           return e.territory || "—";
+      case "entries":             return e._entries ?? "—";
+      case "logged":              return secondsToHM(e._loggedSeconds, "0:00");
+      case "uplift":              return e._upliftSeconds > 0 ? `+${secondsToHM(e._upliftSeconds)}` : "";
       default:                    return "—";
     }
   };
@@ -391,9 +444,7 @@ export function JobsFeedSection() {
   // so there's no need for an xlsx-writing dependency just for this.
   // Exports whatever the filter bar is currently showing, not the full
   // unfiltered table.
-  const exportToExcel = () => {
-    const headers = COLS.map(c => c.label.join(" "));
-    const rows = filtered.map(e => COLS.map(c => getCellText(e, c.key)));
+  const downloadCsv = (suffix, headers, rows) => {
     // Leading BOM — Excel doesn't sniff UTF-8 for a local CSV file without
     // one and falls back to Windows-1252, which mangles the em-dash
     // placeholder (and anything else non-ASCII) into "â€"".
@@ -404,11 +455,22 @@ export function JobsFeedSection() {
     const a = document.createElement("a");
     a.href = url;
     const scope = range ? `${range.from}_to_${range.to}` : "All";
-    a.download = `ProjectTime_${scope}_${new Date().toISOString().split("T")[0]}.csv`;
+    a.download = `ProjectTime_${scope}${suffix}_${new Date().toISOString().split("T")[0]}.csv`;
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
     URL.revokeObjectURL(url);
+  };
+
+  // One schema for both modes: the same columns in the same order, with the
+  // block detail appended when Billable is on.
+  const cols = billable ? [...COLS, ...BILL_EXTRA] : COLS;
+  const rows = billable ? consolidated.map(blockToRow) : filtered;
+
+  const exportToExcel = () => {
+    downloadCsv(billable ? "_billable" : "",
+      cols.map(c => c.label.join(" ")),
+      rows.map(e => cols.map(c => getCellText(e, c.key))));
   };
 
   return (
@@ -476,70 +538,73 @@ export function JobsFeedSection() {
         </div>
         <div className="flex items-center gap-3 ml-auto">
           <span className="text-xs font-bold text-[#768994]">
-            {loading ? "Loading…" : `${filtered.length} entr${filtered.length === 1 ? "y" : "ies"}`}
+            {loading ? "Loading…" : billable
+              ? `${rows.length} block${rows.length === 1 ? "" : "s"}`
+              : `${rows.length} entr${rows.length === 1 ? "y" : "ies"}`}
           </span>
           <button
-            onClick={() => setShowImport(true)}
-            className="flex items-center gap-1.5 px-3.5 py-2 bg-white border border-[#dce4ec] hover:border-[#1cc1a5] text-[#122027] text-xs font-bold rounded-xl transition-[border-color] ease-[cubic-bezier(0.16,1,0.3,1)]"
-          >
-            <UploadCloud className="w-3.5 h-3.5" />
-            Import CSV
-          </button>
-          <button
             onClick={exportToExcel}
-            disabled={loading || filtered.length === 0}
+            disabled={loading || rows.length === 0}
             className="flex items-center gap-1.5 px-3.5 py-2 bg-white border border-[#dce4ec] hover:border-slate-300 text-[#122027] text-xs font-bold rounded-xl transition-[border-color] ease-[cubic-bezier(0.16,1,0.3,1)] disabled:opacity-50"
           >
             <Download className="w-3.5 h-3.5" />
-            Export to Excel
+            Export
+          </button>
+          <button
+            onClick={() => setBillable(v => !v)}
+            aria-pressed={billable}
+            title="Group each person's week into billable blocks"
+            className={`flex items-center gap-1.5 px-3.5 py-2 border text-xs font-bold rounded-xl transition-colors ${
+              billable
+                ? "bg-[#1cc1a5] border-[#1cc1a5] text-white hover:bg-[#19ad94]"
+                : "bg-white border-[#dce4ec] text-[#122027] hover:border-[#1cc1a5]"
+            }`}
+          >
+            <Layers className="w-3.5 h-3.5" />
+            Billable
           </button>
         </div>
       </div>
 
-      {showImport && (
-        <ImportModal
-          onClose={() => setShowImport(false)}
-          onImported={load}
-        />
-      )}
-
-      {/* Table */}
+      {/* Table. Same columns in both modes; Billable appends its four. */}
       <div className="overflow-x-auto rounded-xl border border-[#dce4ec] shadow-sm">
-        <table className="border-collapse text-[11px] w-full" style={{ tableLayout: "fixed", minWidth: `${COLS.reduce((s, c) => s + widths[c.key], 0)}px` }}>
+        <table className="border-collapse text-[11px] w-full" style={{ tableLayout: "fixed", minWidth: `${cols.reduce((s, c) => s + (widths[c.key] || c.px), 0)}px` }}>
           <colgroup>
-            {COLS.map(c => <col key={c.key} style={{ width: widths[c.key] }} />)}
+            {cols.map(c => <col key={c.key} style={{ width: widths[c.key] || c.px }} />)}
           </colgroup>
           <thead>
             <tr>
-              {COLS.map(c => (
+              {cols.map(c => (
                 <th
                   key={c.key}
                   className="relative px-2 py-2.5 text-center font-black uppercase tracking-widest text-[9px] text-white bg-[#0d1b22] border-r border-white/5 last:border-r-0 whitespace-nowrap overflow-hidden"
                 >
-                  {Array.isArray(c.label) ? c.label.map((l, i) => <span key={i} className="block leading-tight">{l}</span>) : c.label}
-                  {resizeHandle(c.key)}
+                  {c.label.map((l, i) => <span key={i} className="block leading-tight">{l}</span>)}
+                  {!c.extra && resizeHandle(c.key)}
                 </th>
               ))}
             </tr>
           </thead>
           <tbody>
             {loading ? (
-              <tr><td colSpan={COLS.length} className="px-4 py-8 text-center text-[#768994]">Loading…</td></tr>
-            ) : filtered.length === 0 ? (
-              <tr><td colSpan={COLS.length} className="px-4 py-8 text-center text-[#768994]">No entries for this period</td></tr>
-            ) : filtered.map((e, i) => (
+              <tr><td colSpan={cols.length} className="px-4 py-8 text-center text-[#768994]">Loading…</td></tr>
+            ) : rows.length === 0 ? (
+              <tr><td colSpan={cols.length} className="px-4 py-8 text-center text-[#768994]">
+                {billable ? "No billable time for this period" : "No entries for this period"}
+              </td></tr>
+            ) : rows.map((e, i) => (
               <tr key={e.id} className={`border-b border-[#f0f4f8] align-top ${i % 2 === 0 ? "bg-white" : "bg-[#f8fafc]"} hover:bg-[#edf5fb] transition-colors`}>
-                {COLS.map(c => {
+                {cols.map(c => {
                   const val = getCellValue(e, c.key);
                   const isCheck = c.key === "client_amends" || c.key === "is_3d";
-                  const isMono = ["time_spent", "extra_time", "over_time", "total", "hourly_rate", "costs"].includes(c.key);
-                  const noWrap = ["date", "office", "print_digital", "client_amends", "is_3d", "time_spent", "extra_time", "over_time", "total", "hourly_rate", "costs"].includes(c.key);
+                  const isMono = ["time_spent", "extra_time", "over_time", "total", "hourly_rate", "costs", "entries", "logged", "uplift"].includes(c.key);
+                  const noWrap = ["date", "office", "print_digital", "client_amends", "is_3d", "time_spent", "extra_time", "over_time", "total", "hourly_rate", "costs", "territory", "entries", "logged", "uplift"].includes(c.key);
                   return (
                     <td
                       key={c.key}
                       className={`px-2 py-1.5 border-r border-[#f0f4f8] last:border-r-0 overflow-hidden ${isCheck ? "text-center" : ""} ${isMono ? "font-mono text-[10px]" : ""} ${noWrap ? "whitespace-nowrap" : ""} text-[#122027]`}
                     >
-                      <span className={`block leading-snug ${noWrap ? "truncate" : ""} ${c.key === "job_number" ? "font-black text-[#1cc1a5]" : "font-medium"}`}>
+                      <span className={`block leading-snug ${noWrap ? "truncate" : ""} ${c.key === "job_number" ? "font-black text-[#1cc1a5]" : "font-medium"} ${c.key === "uplift" ? "text-emerald-600 font-bold" : ""}`}>
                         {val}
                       </span>
                     </td>

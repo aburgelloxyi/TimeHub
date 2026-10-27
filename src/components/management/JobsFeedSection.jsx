@@ -79,6 +79,10 @@ const feedDesc = (e) => {
 // which is what the 0.25-step dropdown writes) was billed as 0.03 hours.
 const hoursOf = parseTimeToHours;
 
+// studio's own client name for internal jobs (see lib/studios.js). These are
+// never billed to anyone.
+const INTERNAL_CLIENT_KEY = clientKey("XYi Internal");
+
 // A consolidated block rendered as a feed row. The feed's existing columns keep
 // their meaning: Date is the week it belongs to, and Time carries the billed
 // amount because that is what goes on the timesheet. Logged sits beside it, so
@@ -332,10 +336,14 @@ export function JobsFeedSection() {
   }, [entries, search, range, includeUnbilled, jobNoFilter, clientFilter, deptFilter,
       filmFilter, categoryFilter, staffFilter, officeFilter, fixedCostFilter]);
 
-  // Unbilled categories are left out whatever the "include unbilled hours"
-  // control says: they must never become a billable block.
+  // Unbilled categories and house jobs are left out whatever the "include
+  // unbilled hours" control says: neither is work a client is billed for, so
+  // neither may become a billable block. The raw view still lists them.
   const consolidated = useMemo(
-    () => consolidateRows(filtered.filter(e => !e._unbilled), { jobOf: feedJobNo }),
+    () => consolidateRows(
+      filtered.filter(e => !e._unbilled && clientKey(e.client || e._job?.client) !== INTERNAL_CLIENT_KEY),
+      { jobOf: feedJobNo }
+    ),
     [filtered]
   );
 
@@ -566,8 +574,12 @@ export function JobsFeedSection() {
         </div>
       </div>
 
-      {/* Table. Same columns in both modes; Billable appends its four. */}
-      <div className="overflow-x-auto rounded-xl border border-[#dce4ec] shadow-sm">
+      {/* Table. Same columns in both modes; Billable appends its four.
+          Bounded both ways on purpose: the feed runs to hundreds of rows, so
+          an x-only scroller put its horizontal scrollbar at the very bottom of
+          the table and the right-hand columns couldn't be reached. Capping the
+          height keeps that scrollbar in view, and the header stays with it. */}
+      <div className="overflow-auto max-h-[70vh] rounded-xl border border-[#dce4ec] shadow-sm">
         <table className="border-collapse text-[11px] w-full" style={{ tableLayout: "fixed", minWidth: `${cols.reduce((s, c) => s + (widths[c.key] || c.px), 0)}px` }}>
           <colgroup>
             {cols.map(c => <col key={c.key} style={{ width: widths[c.key] || c.px }} />)}
@@ -577,7 +589,7 @@ export function JobsFeedSection() {
               {cols.map(c => (
                 <th
                   key={c.key}
-                  className="relative px-2 py-2.5 text-center font-black uppercase tracking-widest text-[9px] text-white bg-[#0d1b22] border-r border-white/5 last:border-r-0 whitespace-nowrap overflow-hidden"
+                  className="sticky top-0 z-10 relative px-2 py-2.5 text-center font-black uppercase tracking-widest text-[9px] text-white bg-[#0d1b22] border-r border-white/5 last:border-r-0 whitespace-nowrap overflow-hidden"
                 >
                   {c.label.map((l, i) => <span key={i} className="block leading-tight">{l}</span>)}
                   {!c.extra && resizeHandle(c.key)}

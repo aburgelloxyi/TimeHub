@@ -28,24 +28,32 @@ export const tidyTaskName = (name) =>
 // isn't ready to brief.
 export const hasArtwork = (order) => !!String(order.artwork || "").trim();
 
-// The film and market codes an order's name starts and ends with.
+// The film, market and placement an order's name carries. Placement is the
+// sheet's DINTH/DFOH/DOOH column and sits in the middle of the batch name.
 export function batchCodes(orders) {
-  const parts = titleOf(orders.find(titleOf) || {}).split(/[\s_]+/).filter(Boolean);
-  return parts.length >= 2 ? { film: parts[0], market: parts[parts.length - 1] } : { film: "", market: "" };
+  const first = orders.find(titleOf) || {};
+  const parts = titleOf(first).split(/[\s_]+/).filter(Boolean);
+  return {
+    film: parts.length >= 2 ? parts[0] : "",
+    market: parts.length >= 2 ? parts[parts.length - 1] : "",
+    placement: String(first.placement || "").trim(),
+  };
 }
 
 // The next batch name for a market, given the names already in its folder.
-// The PMs' own vary ("EBZR_Batch1_HU", "FIL_DINTH_TH_B3"), so this is only an
-// opening suggestion: one past the highest batch number found, in the plainest
-// form. The PM can type over it.
-export function suggestBatchName(existingTitles, orders) {
-  const { film, market } = batchCodes(orders);
+// The PMs write these as "EBZR - COL - DOOH - Batch 1", so that is the shape
+// suggested: one past the highest batch number found, whichever way those were
+// punctuated. `marketCode` comes from the market itself and wins over the code
+// at the end of the order's name, which is the sheet's own spelling. Only a
+// suggestion: the PM can type over it.
+export function suggestBatchName(existingTitles, orders, marketCode = "") {
+  const { film, market, placement } = batchCodes(orders);
   const numbers = (existingTitles || [])
     .map((t) => /(?:^|[\s_])(?:batch\s?|b)(\d+)(?=[\s_]|$)/i.exec(t || "")?.[1])
     .filter(Boolean)
     .map(Number);
   const next = (numbers.length ? Math.max(...numbers) : 0) + 1;
-  return [film, `Batch${next}`, market].filter(Boolean).join("_");
+  return [film, marketCode || market, placement, `Batch ${next}`].filter(Boolean).join(" - ");
 }
 
 // The earliest of the dates XYi works to (the sheet's End date), or failing

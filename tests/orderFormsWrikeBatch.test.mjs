@@ -1,14 +1,19 @@
 import { batchCodes, suggestBatchName, suggestDue, planBatch, tidyTaskName } from "../src/lib/orderForms/wrikeBatch.js";
 
-const o = (row, title, endDate = "2026-10-12", deliveryDeadline = "2026-10-19", artwork = "CandleSmoke") => ({ tab: "T", row, deliveryDeadline, deliveryName: "", artwork, xyi: { title, endDate } });
+const o = (row, title, endDate = "2026-10-12", deliveryDeadline = "2026-10-19", artwork = "CandleSmoke") => ({ tab: "T", row, deliveryDeadline, deliveryName: "", artwork, placement: "DOOH", xyi: { title, endDate } });
 const hu = [o(4, "EBZR_INTL_CandleSmoke_OOH_CLP_118.5x175cm_CMYK_HU"), o(5, "EBZR_INTL_CandleSmoke_INTH_Panaflex_280x180cm_CMYK_HU", "2026-10-09")];
 
-check("film and market codes from the orders' names", batchCodes(hu), { film: "EBZR", market: "HU" });
-check("first batch in an empty folder", suggestBatchName([], hu), "EBZR_Batch1_HU");
+check("film, market and placement from the orders' names", batchCodes(hu), { film: "EBZR", market: "HU", placement: "DOOH" });
+check("first batch in an empty folder", suggestBatchName([], hu), "EBZR - HU - DOOH - Batch 1");
 check("one past the highest batch there, however it was written",
   [suggestBatchName(["EBZR_Batch1_HU", "EBZR_Batch 3_HU", "Notes"], hu), suggestBatchName(["FIL_DINTH_TH_B3", "FIL_INTH_B1_TH"], hu)],
-  ["EBZR_Batch4_HU", "EBZR_Batch4_HU"]);
-check("a size isn't taken for a batch number", suggestBatchName(["EBZR_INTL_B_1080x1920px_HU"], hu), "EBZR_Batch1_HU");
+  ["EBZR - HU - DOOH - Batch 4", "EBZR - HU - DOOH - Batch 4"]);
+check("the PMs' hyphenated names count too",
+  suggestBatchName(["EBZR - HU - DOOH - Batch 1", "EBZR - HU - DOOH - Batch 2"], hu), "EBZR - HU - DOOH - Batch 3");
+check("the market's own code wins over the sheet's",
+  suggestBatchName([], hu, "COL"), "EBZR - COL - DOOH - Batch 1");
+check("an order with no placement drops that slot", suggestBatchName([], [{ ...o(4, "EBZR_A_HU"), placement: "" }]), "EBZR - HU - Batch 1");
+check("a size isn't taken for a batch number", suggestBatchName(["EBZR_INTL_B_1080x1920px_HU"], hu), "EBZR - HU - DOOH - Batch 1");
 check("due: the earliest date XYi works to", suggestDue(hu), "2026-10-09");
 check("due: the earliest deadline when the sheet gives no end date", suggestDue([o(4, "A_B_C_D", "", "2026-10-19"), o(5, "A_B_C_E", "", "2026-10-15")]), "2026-10-15");
 

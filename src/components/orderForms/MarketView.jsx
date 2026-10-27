@@ -323,7 +323,10 @@ export default function MarketView({ market, kind, filmTitle, clientId, filmKey,
     try {
       const found = await readMarketForBriefing({ filmTitle, kind, marketName: market.name });
       const mine = [...fresh].map((i) => orders[i]);
-      setBriefing(found.ok ? { ...found, name: suggestBatchName(found.existingTitles, mine.length ? mine : orders), due: suggestDue(mine) } : found);
+      // The market's own code ("Colombia (COL)") is what the PMs' batch names
+      // carry; the code in the order sheet can be the two-letter spelling.
+      const marketCode = /\(([A-Za-z]{2,4})\)\s*$/.exec(market.name || "")?.[1] || "";
+      setBriefing(found.ok ? { ...found, name: suggestBatchName(found.existingTitles, mine.length ? mine : orders, marketCode), due: suggestDue(mine) } : found);
     } catch (err) {
       setBriefing({ ok: false, reason: /\(401\)|not_connected/.test(err.message) ? "Connect Wrike in Profile first." : "Wrike couldn't be reached." });
     }

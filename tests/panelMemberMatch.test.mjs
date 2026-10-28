@@ -17,7 +17,8 @@ const PROFILES = [
   { wrike_user_id: "ADAM_T", first_name: "Adam", last_name: "Tansley-Scales", department: "Digital", updated_at: "2026-09-01T10:00:00Z" },
 ];
 
-async function resolve(member, profiles = PROFILES) {
+// debug=1 skips the Worker's reuse of recent answers, so each ask resolves.
+async function resolve(member, profiles = PROFILES, { reuse = false } = {}) {
   let asked = null;
   globalThis.fetch = async (url) => {
     url = String(url);
@@ -30,7 +31,7 @@ async function resolve(member, profiles = PROFILES) {
     return ok({ data: [] });
   };
   const res = await worker.fetch(
-    new Request(`https://x.test/api/panel/jobs?member=${encodeURIComponent(member)}`, { headers: { "X-Panel-Key": "pk" } }),
+    new Request(`https://x.test/api/panel/jobs?member=${encodeURIComponent(member)}${reuse ? "" : "&debug=1"}`, { headers: { "X-Panel-Key": "pk" } }),
     env, ctx
   );
   await res.text();
@@ -49,3 +50,8 @@ check(
   await resolve("Luke", PROFILES.map((p) => (p.wrike_user_id === "TROTT" ? { ...p, left_at: "2026-10-01T00:00:00Z" } : p))),
   "STEER"
 );
+
+// A panel asking again within a couple of minutes gets the last answer, and
+// the task cache isn't read.
+await resolve("Adam Parton", PROFILES, { reuse: true });
+check("panel: a repeat ask is answered without reading the task cache", await resolve("Adam Parton", PROFILES, { reuse: true }), null);

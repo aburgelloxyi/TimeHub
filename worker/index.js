@@ -1409,6 +1409,15 @@ const PANEL_ACTIVE_STATUSES = ["Active", "Deferred"];
 // Whose name wins when the panel's member name matches more than one person.
 const PANEL_PREFERRED_DEPARTMENT = "Motion";
 
+// Each machine's panel polls, all day, and every answer reads the task cache:
+// over 10,000 reads a day, enough to run the database out of disk IO. So an
+// answer is reused for a while, per member, in this isolate; the refresh
+// button still reads afresh. When the database can't answer, the last answer
+// is served however old, rather than an error.
+const PANEL_CACHE_MS = 2 * 60 * 1000;
+const PANEL_BUILD = "2026-10-28-cached-1";
+const panelJobsCache = new Map(); // member, lowercased -> { at, jobs }
+
 function panelCors(extra = {}) {
   return {
     // The panel's origin is `null` (file://), which cannot be allow-listed by
@@ -1662,6 +1671,12 @@ async function handlePanelJobs(request, url, env) {
 
   // Resolve the member name the panel sent to a Wrike user id.
   const member = (url.searchParams.get("member") || "").trim();
+  const cacheKey = member.toLowerCase();
+  const kept = panelJobsCache.get(cacheKey);
+  const servedFromCache = (jobs) =>
+    json(jobs, { headers: panelCors({ "X-Panel-Live": "0", "X-Panel-Cached": "1", "X-Panel-Build": PANEL_BUILD }) });
+  const plain = url.searchParams.get("refresh") !== "1" && !url.searchParams.get("debug");
+  if (plain && kept && Date.now() - kept.at < PANEL_CACHE_MS) return servedFromCache(kept.jobs);
   let wrikeUserId = "";
   if (member) {
     // Ordered and ranked, because `profiles` can hold more than one row per person;
@@ -1721,6 +1736,7 @@ async function handlePanelJobs(request, url, env) {
   if (!res.ok) {
     const detail = await res.text().catch(() => "");
     console.error(`[panel/jobs] cache query ${res.status}:`, detail);
+    if (kept) return servedFromCache(kept.jobs);
     return json({ error: "query_failed", detail: detail.slice(0, 200) }, { status: 502, headers: panelCors() });
   }
   let rows = await res.json();
@@ -1915,6 +1931,7 @@ async function handlePanelJobs(request, url, env) {
 
   // Freshest first: most jobs have no due date, so updated is the useful order.
   jobs.sort((a, b) => String(b.updated_at).localeCompare(String(a.updated_at)));
+  panelJobsCache.set(cacheKey, { at: Date.now(), jobs });
 
   // The response stays a bare array (changing its shape would break the panel),
   // so diagnostics go in headers. X-Panel-Build is a hand-bumped marker for "is my
@@ -1922,7 +1939,7 @@ async function handlePanelJobs(request, url, env) {
   return json(jobs, {
     headers: panelCors({
       "X-Panel-Live": liveUsed ? "1" : "0",
-      "X-Panel-Build": "2026-08-13-kept-rows-6",
+      "X-Panel-Build": PANEL_BUILD,
     }),
   });
 }

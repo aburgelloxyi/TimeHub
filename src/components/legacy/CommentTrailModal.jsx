@@ -38,6 +38,7 @@ import { hmToHours, getCurrentWeekStart } from "../../hooks/useLegacyRows";
 import { secondsToHM } from "../../utils/timeHelpers";
 import { isoToday, toIsoDate } from "../../utils/dates";
 import { newRowId } from "../../utils/rowId";
+import { needsTask, markFieldsFromTask, markedForTask } from "../../utils/taskMarks";
 import { mergeIntoSheet } from "../../utils/mergeMultiCountry";
 
 // "Where did my day go?" — suggests timesheet rows from your Wrike activity:
@@ -83,6 +84,8 @@ const MARK_COLOUR = "#e2e8f0";
 const QUICK_ID = "ct-quick-time";
 const MARKS_KEY = "xyi_dayMarks";
 const MARK_JOBS_KEY = "xyi_markJobs";
+// Time of marks put there for you (XYi in Motion's) that you removed: { [iso]: [[from, to]] }.
+const DISMISSED_KEY = "xyi_dayMarksDismissed";
 const readStored = (key) => {
   try {
     return JSON.parse(localStorage.getItem(key)) || {};
@@ -360,7 +363,15 @@ export default function CommentTrailModal({
     const suggestions = taskOrder.map((taskId, i) => {
       const task = state.tasks.get(taskId);
       const { guessed, client, filmTitle } = rowFieldsFromTask(task);
-      const logged = hoursLoggedFor(dayRows, { taskId, jobNumber: guessed.jobNumber, territory: guessed.territory }, hmToHours);
+      const onSheet = hoursLoggedFor(dayRows, { taskId, jobNumber: guessed.jobNumber, territory: guessed.territory }, hmToHours);
+      // Time marked on the timeline for this task counts as covered, so it isn't offered twice.
+      const marked = markedForTask(marks[day.iso], taskId, splitMarked);
+      const logged = {
+        ...onSheet,
+        regular: onSheet.regular + marked.regular,
+        extra: onSheet.extra + marked.extra,
+        hours: onSheet.hours + marked.regular + marked.extra,
+      };
       // Time before 18:00 goes in Time Spent; after it is overtime, for the
       // Add. Time column. Each is compared with its own column on the sheet.
       let est = null;
@@ -490,8 +501,47 @@ export default function CommentTrailModal({
         added: false,
       },
     ]);
-  const patchMark = (id, patch) => setDayMarks((list) => list.map((m) => (m.id === id ? { ...m, ...patch } : m)));
-  const removeMark = (id) => setDayMarks((list) => list.filter((m) => m.id !== id));
+  // A change of yours makes the mark yours: whatever put it there no longer redraws it.
+  const patchMark = (id, patch) =>
+    setDayMarks((list) => list.map((m) => (m.id === id ? { ...m, ...patch, source: undefined } : m)));
+
+  // Marks naming a Wrike task get the task's job, country and category, as a
+  // pulled row would. Each task is asked for once while the modal is open.
+  const askedTasks = useRef(new Set());
+  useEffect(() => {
+    const ids = [...new Set((marks[dayIso] || []).filter(needsTask).map((m) => m.taskId))].filter(
+      (id) => !askedTasks.current.has(id)
+    );
+    if (!ids.length) return;
+    ids.forEach((id) => askedTasks.current.add(id));
+    const iso = dayIso;
+    live.current
+      .resolveTasks(ids)
+      .then((tasks) => {
+        const byId = new Map(tasks.map((t) => [t.id, t]));
+        setMarks((p) => {
+          const next = {
+            ...p,
+            [iso]: (p[iso] || []).map((m) => {
+              const task = needsTask(m) && byId.get(m.taskId);
+              return task ? { ...m, ...markFieldsFromTask(rowFieldsFromTask(task), m) } : m;
+            }),
+          };
+          writeStored(MARKS_KEY, next);
+          return next;
+        });
+      })
+      .catch((err) => console.warn("[where did my day go] marked tasks unavailable:", err.message));
+  }, [marks, dayIso, rowFieldsFromTask]);
+  const removeMark = (id) => {
+    const gone = (marks[dayIso] || []).find((m) => m.id === id);
+    // Whatever put a mark there is told you removed it, so it isn't put back.
+    if (gone?.source) {
+      const dismissed = readStored(DISMISSED_KEY);
+      writeStored(DISMISSED_KEY, { ...dismissed, [dayIso]: [...(dismissed[dayIso] || []), [gone.from, gone.to]] });
+    }
+    setDayMarks((list) => list.filter((m) => m.id !== id));
+  };
 
   // Whether a meeting marked as added is still on the timesheet. The flag
   // alone was kept forever, so a meeting whose row had since been deleted
@@ -513,8 +563,8 @@ export default function CommentTrailModal({
         added: stillOnSheet(m),
         ...splitMarked(m),
         key: `${dayIso}:mark:${m.id}`,
-        client: known?.client || "",
-        filmTitle: known?.film_title || "",
+        client: known?.client || m.client || "",
+        filmTitle: known?.film_title || m.filmTitle || "",
       };
     })
     .sort((a, b) => a.from - b.from);
@@ -555,6 +605,8 @@ export default function CommentTrailModal({
     pickedMarks.forEach((m) =>
       newRows.push({
         id: markIds[m.id] ?? newRowId(),
+        // A task's mark keeps its task, as a pulled row does.
+        ...(m.taskId ? { taskId: m.taskId } : {}),
         dayOfWeek: day.name,
         date,
         jobNumber: m.jobNumber,

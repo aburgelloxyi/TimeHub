@@ -5,7 +5,7 @@
 import { mapPool } from "../fetchPool";
 import { FILM_MAPPINGS } from "../../constants";
 import { listFolders, listSheetsIn, downloadSheet, GoogleError, GOOGLE_SHEET } from "./googleApi";
-import { clientFor, filmsIn, isTestFolder } from "./driveTree";
+import { clientFor, filmsIn, isTestFolder, sameFilm } from "./driveTree";
 import { sheetsFromBuffer } from "./readXlsx";
 import { marketFromSheets, READ_VERSION } from "./parseWorkbook";
 
@@ -73,7 +73,7 @@ export const folderIdOf = (market) => /\/folders\/([^/?#]+)/.exec(market?.folder
 // The film's sheet in one market folder, as filmsIn would find it in the
 // whole tree: the newest sheet there for that film. null when there is none.
 export function marketRowIn(folderId, name, sheets, filmKey) {
-  const film = filmsIn([{ id: folderId, name }], sheets, FILM_MAPPINGS).find((f) => f.key === filmKey);
+  const film = filmsIn([{ id: folderId, name }], sheets, FILM_MAPPINGS).find((f) => sameFilm(f.key, filmKey));
   return film?.markets[0] ? { ...film.markets[0], name } : null;
 }
 
@@ -89,7 +89,7 @@ export async function loadMarketOf({ clientId, filmKey }, market, now = new Date
   const folderId = folderIdOf(market);
   let row = folderId ? marketRowIn(folderId, name, await listSheetsIn([folderId]), filmKey) : null;
   if (!row) {
-    const film = (await listFilms(clientId)).find((f) => f.key === filmKey);
+    const film = (await listFilms(clientId)).find((f) => sameFilm(f.key, filmKey));
     row = film?.markets.find((m) => m.name === name) || null;
   }
   if (!row) return null;
@@ -105,7 +105,7 @@ export async function loadMarketOf({ clientId, filmKey }, market, now = new Date
 // (stillCurrent) is kept from it instead of read again. `tally`, when given,
 // is filled with how many sheets were read and how many kept.
 export async function loadFilm({ clientId, filmKey, onProgress, onMarket, previous, tally }, now = new Date()) {
-  const film = (await listFilms(clientId)).find((f) => f.key === filmKey);
+  const film = (await listFilms(clientId)).find((f) => sameFilm(f.key, filmKey));
   if (!film) return null;
 
   const before = new Map((previous?.markets || []).map((m) => [m.name, m]));
@@ -129,7 +129,7 @@ export async function loadFilm({ clientId, filmKey, onProgress, onMarket, previo
     kind: film.medium,
     film: film.title,
     loadedAt: now.toISOString(),
-    source: { clientId, filmKey },
+    source: { clientId, filmKey: film.key },
     markets,
   };
 }

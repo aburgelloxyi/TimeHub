@@ -1,4 +1,4 @@
-import { sheetFilm, marketName, filmsIn, clientFor, driveStaleness, isTestFolder } from "../src/lib/orderForms/driveTree.js";
+import { sheetFilm, marketName, filmsIn, clientFor, driveStaleness, isTestFolder, sameFilm } from "../src/lib/orderForms/driveTree.js";
 
 check("the clients' test folder isn't a market", ["AA_Test_Market", "TEST", "zz test market"].map(isTestFolder), [true, true, true]);
 check("nor are working copies, templates and reference sheets", ["Copy of _StandardSizes", "_StandardSizes", "Copy of Chile (CHI)", "Order form TEMPLATE"].map(isTestFolder), [true, true, true, true]);
@@ -113,4 +113,8 @@ check("flag: sheet spellings the app names differently",
   const studio = [{ key: "disclosure day|motion", markets: [{}] }, { key: "forgotten island|motion", markets: Array.from({ length: 44 }, () => ({})) }];
   check("already down to one market when it was loaded, beside a full film", driveStaleness(loaded(1), studio), { left: 1, typical: 44 });
   check("a studio whose films are all small isn't flagged", driveStaleness(loaded(1), [{ key: "disclosure day|motion", markets: [{}] }, { key: "x|motion", markets: [{}, {}] }]), null);
+  const hyphened = { source: { clientId: "paramount", filmKey: "focker in-law|motion" }, markets: Array.from({ length: 67 }, (_, i) => ({ name: `M${i}` })) };
+  check("a film saved under an older key is still found", driveStaleness(hyphened, [{ key: "focker in law|motion", markets: Array.from({ length: 67 }, () => ({})) }]), null);
 }
+check("same film whatever the punctuation", [sameFilm("focker in-law|motion", "focker in law|motion"), sameFilm("focker in law|motion", "focker in law|print"), sameFilm("", "")], [true, false, false]);
+

@@ -8,6 +8,7 @@
 
 import { findHeaderRow, isMarketTab, toSerial, toUkDate } from "./parseWorkbook";
 import { columnLetter, a1, cellRange } from "./cells";
+import { sameFilm } from "./driveTree";
 
 const norm = (v) => String(v ?? "").replace(/\s+/g, " ").trim().toLowerCase();
 
@@ -81,7 +82,7 @@ export function docsForMarket(films, marketName) {
 // everything the client has ("client"). Each has a label for its tick box.
 export function docsForScope(films, scope, { market, filmKey } = {}) {
   if (scope === "market") return docsForMarket(films, market);
-  const chosen = scope === "film" ? (films || []).filter((f) => f.key === filmKey) : films || [];
+  const chosen = scope === "film" ? (films || []).filter((f) => sameFilm(f.key, filmKey)) : films || [];
   return chosen
     .flatMap((film) => film.markets.map((m) => ({ film: film.label, label: scope === "film" ? m.name : `${m.name} · ${film.label}`, sheet: m.sheet })))
     .sort((a, b) => a.label.localeCompare(b.label));

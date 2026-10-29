@@ -7,6 +7,16 @@
 // it differently ("Focker In-Law", "Focker In Law") still share one film.
 const norm = (v) => String(v ?? "").toLowerCase().replace(/[^\p{L}\p{N}]+/gu, " ").trim();
 
+// Whether two film keys ("focker in law|motion") are the same film. Saved
+// films can hold a key made before punctuation was ignored ("focker in-law").
+export function sameFilm(a, b) {
+  const canon = (key) => {
+    const [title, medium] = String(key ?? "").split("|");
+    return `${norm(title)}|${medium}`;
+  };
+  return !!a && !!b && canon(a) === canon(b);
+}
+
 export const CLIENTS = [
   { id: "universal", label: "Universal", folderId: "1HXwSdQN19Fpg8kACsb57m4a2axEr5an3" },
   { id: "paramount", label: "Paramount", folderId: "1OL4IrlKTAO7gUhOYUY7MWRa8ZAU0qxk-" },
@@ -99,7 +109,7 @@ export function filmsIn(folders, sheets, names = {}) {
 //                                          studio's fullest film
 export function driveStaleness(file, driveFilms) {
   if (!file?.source?.clientId || !driveFilms) return null;
-  const now = driveFilms.find((f) => f.key === file.source.filmKey);
+  const now = driveFilms.find((f) => sameFilm(f.key, file.source.filmKey));
   if (!now) return { gone: true };
   const had = file.markets.length;
   const left = now.markets.length;

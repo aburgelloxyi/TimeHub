@@ -45,7 +45,7 @@ import {
 } from "../constants.js";
 import { resolveJobNumber, bookFilmTitle } from "../utils/wrikeHelpers";
 import { resolveCountriesWithSource } from "../utils/countryCodes";
-import { getFolderCountries, getFolderFamily, buildChildToParents, jobFolderDescription, resolveFilmName, filmFromTask } from "../lib/wrikeEnrich";
+import { getFolderCountries, getFolderFamily, buildChildToParents, hydrateMissingFolders, jobFolderDescription, resolveFilmName, filmFromTask } from "../lib/wrikeEnrich";
 import { fetchFolderDictionary } from "../hooks/useBoardTasks";
 import { countryFieldIds, warmCountryFields } from "../lib/countryField";
 import { secondsToHM } from "../utils/timeHelpers";
@@ -734,7 +734,8 @@ export default function LegacyTimesheet({ wrikeData, isAdmin = false }) {
   // being handed to you from one being closed.
   const statusGroupRef = useRef({});
 
-  // The folder tree, held for the life of the page. Localisation campaigns put
+  // The folder tree, held for the life of the page and topped up by
+  // fillFolderGaps below. Localisation campaigns put
   // the market in a folder rather than in the task name — an hour on
   // "ODY_CN_EmperorCinema", which sits in a folder called "China 🇨🇳", is the
   // case — and only Generate Today's Timesheet ever fetched the tree to read
@@ -765,6 +766,29 @@ export default function LegacyTimesheet({ wrikeData, isAdmin = false }) {
     } catch {
       /* no dictionary → countries fall back to the task name / custom field */
     }
+  }, []);
+
+  // The cached tree is only as new as the last sync, so a market folder made
+  // since ("Cyprus 🇨🇾" added to a campaign today) isn't in it and its tasks
+  // pull with no country. Any folder these tasks sit in that the tree lacks is
+  // fetched, with its parents, before their rows are built. Fetched folders
+  // carry parentIds, which the cached tree's childIds don't yet list.
+  const fillFolderGaps = useCallback(async (tasks) => {
+    const { folderDictionary } = folderTreeRef.current;
+    if (!Object.keys(folderDictionary).length) return;
+    const homes = tasks.filter(Boolean).map((t) => ({ parentIds: [...(t.parentIds || []), ...(t.superTaskParentIds || [])] }));
+    if (!homes.some((t) => t.parentIds.some((id) => !folderDictionary[id]))) return;
+    const before = Object.keys(folderDictionary).length;
+    await hydrateMissingFolders(homes, folderDictionary);
+    if (Object.keys(folderDictionary).length === before) return;
+    const childToParent = buildChildToParents(folderDictionary);
+    for (const folder of Object.values(folderDictionary)) {
+      for (const parentId of folder.parentIds || []) {
+        const parents = (childToParent[folder.id] ||= []);
+        if (!parents.includes(parentId)) parents.push(parentId);
+      }
+    }
+    folderTreeRef.current = { folderDictionary, childToParent };
   }, []);
 
   // Both warmed on mount so rows built off a webhook patch — which arrives
@@ -1843,7 +1867,9 @@ export default function LegacyTimesheet({ wrikeData, isAdmin = false }) {
     await Promise.all([ensureFolderTree(), warmCountryFields()]);
     const all = await fetchMissingTasks(activeWrikeData, taskIds.map((taskId) => ({ taskId })));
     const want = new Set(taskIds);
-    return all.filter((t) => want.has(t.id));
+    const tasks = all.filter((t) => want.has(t.id));
+    await fillFolderGaps(tasks);
+    return tasks;
   };
   const resolveCommentTasks = useCallback(
     (taskIds) => resolveCommentTasksRef.current(taskIds),
@@ -1929,6 +1955,8 @@ export default function LegacyTimesheet({ wrikeData, isAdmin = false }) {
       // Recover any tasks where the user was removed as a responsible —
       // their timelogs still exist but the task won't appear in handleSyncMyJobs
       currentTasks = await fetchMissingTasks(currentTasks, logs);
+      const loggedIds = new Set(logs.map((l) => l.taskId));
+      await fillFolderGaps(currentTasks.filter((t) => loggedIds.has(t.id)));
 
       // Fetch existing timelog IDs across ALL sources so we don't duplicate
       // entries that were already pulled in Tracker (or vice versa). Passing

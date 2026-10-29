@@ -3,6 +3,7 @@ import { countriesFromFolderNames } from "../utils/countryCodes";
 import { familyFromFolderName } from "../utils/categoryFamily";
 import { countryFieldIds } from "./countryField";
 import { fetchRetrying } from "./fetchPool";
+import { folderEntries } from "./folderMirror";
 import { studioNameOf, studioKeywordOf } from "./studios";
 
 // Resolve a film code ("ZAL", "ody") to its title via FILM_MAPPINGS, or title-case
@@ -559,6 +560,58 @@ export function buildFilmCodeMappings(enrichedTasks) {
     if (!mappings[rawPrefix]) mappings[rawPrefix] = task.projectName;
   }
   return mappings;
+}
+
+// ---------------------------------------------------------------------------
+// A task's folders as Wrike has them now
+// ---------------------------------------------------------------------------
+// The saved tree is rebuilt daily, so it can lack a market folder made this
+// morning or hold a folder where it was before a move. Rows that go on the
+// timesheet read the folders above their tasks from Wrike instead: one request
+// a level (ids in batches of 50), up to the root. `complete` is false when any
+// folder asked for didn't come back.
+const ANCESTRY_MAX_DEPTH = 12;
+const readFolders = async (ids) => {
+  const res = await fetchRetrying(`/api/wrike/folders/${ids.join(",")}`);
+  if (!res.ok) throw new Error(`folders ${res.status}`);
+  return (await res.json()).data || [];
+};
+
+export async function fetchFolderAncestry(startIds, read = readFolders) {
+  const folders = {};
+  let complete = true;
+  let level = [...new Set(startIds)].filter(Boolean);
+  for (let depth = 0; depth < ANCESTRY_MAX_DEPTH && level.length; depth++) {
+    const next = new Set();
+    for (let i = 0; i < level.length; i += 50) {
+      const chunk = level.slice(i, i + 50);
+      try {
+        for (const f of await read(chunk)) folders[f.id] = f;
+      } catch (e) {
+        console.error("Folder ancestry read failed", e);
+      }
+      for (const id of chunk) {
+        if (!folders[id]) complete = false;
+        for (const parentId of folders[id]?.parentIds || []) if (!folders[parentId]) next.add(parentId);
+      }
+    }
+    level = [...next];
+  }
+  if (level.length) complete = false;
+  return { folders, complete };
+}
+
+// `saved` with `fresh` (folders as Wrike returned them) laid over it. A fresh
+// folder climbs to the parents Wrike gave just now, not the ones the saved
+// tree's childIds imply, so a folder moved since the refresh resolves on its
+// new branch. One in the recycle bin is dropped. Pure.
+export function overlayFolders(saved, fresh) {
+  const { upsert, remove } = folderEntries(Object.values(fresh || {}));
+  const folderDictionary = { ...saved, ...upsert };
+  remove.forEach((id) => delete folderDictionary[id]);
+  const childToParent = buildChildToParents(folderDictionary);
+  for (const id of Object.keys(upsert)) childToParent[id] = [...(fresh[id].parentIds || [])];
+  return { folderDictionary, childToParent };
 }
 
 // ---------------------------------------------------------------------------

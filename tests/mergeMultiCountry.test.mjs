@@ -1,4 +1,4 @@
-import { mergeMultiCountryRows } from "../src/utils/mergeMultiCountry.js";
+import { mergeMultiCountryRows, fillMissingCountries } from "../src/utils/mergeMultiCountry.js";
 
 // A pulled row, as handlePullTimes builds it before merging.
 const row = (extra) => ({
@@ -223,4 +223,36 @@ check("pull merge: nothing on the sheet, nothing replaced", mergeIntoSheet([pull
   const { mergeRows: merge } = await import("../src/utils/mergeMultiCountry.js");
   const r = (id, territory) => ({ id, dayOfWeek: "Monday", jobNumber: "XY026065", category: "C", territory, timeSpent: "1:00", additionalTime: "none" });
   check("each part says which row it was", merge([r(11, "Brazil"), r(12, "Denmark")]).mergedFrom.map((p) => p.fromId), [11, 12]);
+}
+
+// ── A row with no country is never merged ─────────────────────────────────────
+// Keeley's Ebenezer row read "Denmark, Colombia" while two of its four markets
+// had come through blank: merged, nothing showed they were missing.
+{
+  const blank = row({ territory: "", wrikeTimelogId: "9", taskId: "cy" });
+  const pulled = mergeIntoSheet([denmark, brazil, blank], []);
+  check("the placed markets still merge, the blank one beside them", pulled.rows.map((r) => r.territory), ["", "Denmark, Brazil"]);
+  check("...as its own row, without the raw hours", "_rawHours" in pulled.rows[0], false);
+  const onSheet = { ...row({ territory: "" }), id: "s1" };
+  const intoSheet = mergeIntoSheet([denmark], [onSheet]);
+  check("a blank row on the sheet isn't pulled into a merge", [intoSheet.rows.length, intoSheet.replaces], [1, []]);
+}
+
+// ── Countries filled in on a later pull ───────────────────────────────────────
+{
+  const countries = { cy: "Cyprus", tw: "Taiwan", dk: "Denmark", unknown: "" };
+  const countryOf = (id) => countries[id] || "";
+  const entry = {
+    id: "e", territory: "Denmark, Colombia",
+    mergedFrom: [
+      { taskId: "dk", territory: "Denmark" }, { taskId: "co", territory: "Colombia" },
+      { taskId: "cy", territory: "" }, { taskId: "tw", territory: "" }, { taskId: "unknown", territory: "" },
+    ],
+  };
+  const [filled] = fillMissingCountries([entry], countryOf);
+  check("the entry gains the parts' markets", filled.territory, "Denmark, Colombia, Cyprus, Taiwan");
+  check("each blank part gets its own", filled.mergedFrom.map((p) => p.territory), ["Denmark", "Colombia", "Cyprus", "Taiwan", ""]);
+  check("a single blank row is filled", fillMissingCountries([{ id: "r", territory: "", taskId: "cy" }], countryOf), [{ id: "r", territory: "Cyprus" }]);
+  check("a country already there is never changed", fillMissingCountries([{ id: "r", territory: "Spain", taskId: "cy" }], countryOf), []);
+  check("still unknown: nothing to do", fillMissingCountries([{ id: "r", territory: "", taskId: "unknown" }, { id: "s", territory: "" }], countryOf), []);
 }

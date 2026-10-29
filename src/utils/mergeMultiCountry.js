@@ -37,18 +37,28 @@ export function mergeMultiCountryRows(rows) {
  * for the same day, job (by XY code) and category, as Merge in the selection
  * bar would. Returns { rows, replaces }: the rows to add, and the ids of sheet
  * rows they replace, to be deleted once the new rows have saved.
+ *
+ * A row with no country is never merged: folded into "Denmark, Colombia" its
+ * market would be lost from sight. It stays on its own, reading "No country",
+ * for the person to fill in.
  */
 export function mergeIntoSheet(newRows, sheetRows = []) {
   const groups = new Map();
   const keyOf = (r) => [r.dayOfWeek || "", rowJob(r), r.category || ""].join("\u0000");
+  const placed = (r) => splitTerritories(r.territory).length > 0;
+  const rows = [];
   for (const r of newRows) {
+    if (!placed(r)) {
+      const { _rawHours, ...alone } = r;
+      rows.push(alone);
+      continue;
+    }
     const k = keyOf(r);
     if (!groups.has(k)) groups.set(k, { sheet: [], pulled: [] });
     groups.get(k).pulled.push(r);
   }
-  for (const r of sheetRows) groups.get(keyOf(r))?.sheet.push(r);
+  for (const r of sheetRows) if (placed(r)) groups.get(keyOf(r))?.sheet.push(r);
 
-  const rows = [];
   const replaces = [];
   for (const { sheet, pulled } of groups.values()) {
     if (sheet.length + pulled.length === 1) {
@@ -160,6 +170,35 @@ export function mergeRows(rows) {
     mergedFrom: rows.flatMap(partsOf),
     is3D: rows.some((r) => r.is3D),
   };
+}
+
+// ── Countries that arrive late ───────────────────────────────────────────────
+// A row pulled before its task's market could be placed has no country. A later
+// pull may know it (`countryOf(taskId)`, "" while it still doesn't), and fills
+// it in: on the row, or on each merged part missing one, which then joins the
+// entry's markets. A country already on a row or part is never changed.
+// Returns { id, territory, mergedFrom? } for each row that changed.
+export function fillMissingCountries(rows, countryOf) {
+  const changes = [];
+  for (const row of rows || []) {
+    if (row.mergedFrom?.length) {
+      const found = [];
+      const mergedFrom = row.mergedFrom.map((part) => {
+        if (splitTerritories(part.territory).length || !part.taskId) return part;
+        const country = countryOf(part.taskId);
+        if (!country) return part;
+        found.push(...splitTerritories(country));
+        return { ...part, territory: country };
+      });
+      if (found.length) {
+        changes.push({ id: row.id, territory: joinTerritories([...splitTerritories(row.territory), ...found]), mergedFrom });
+      }
+    } else if (!splitTerritories(row.territory).length && row.taskId) {
+      const country = countryOf(row.taskId);
+      if (country) changes.push({ id: row.id, territory: country });
+    }
+  }
+  return changes;
 }
 
 // ── Unmerging ────────────────────────────────────────────────────────────────

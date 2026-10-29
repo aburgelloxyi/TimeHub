@@ -45,7 +45,7 @@ import {
 } from "../constants.js";
 import { resolveJobNumber, bookFilmTitle } from "../utils/wrikeHelpers";
 import { resolveCountriesWithSource } from "../utils/countryCodes";
-import { getFolderCountries, getFolderFamily, buildChildToParents, hydrateMissingFolders, jobFolderDescription, resolveFilmName, filmFromTask } from "../lib/wrikeEnrich";
+import { getFolderCountries, getFolderFamily, buildChildToParents, fetchFolderAncestry, overlayFolders, jobFolderDescription, resolveFilmName, filmFromTask } from "../lib/wrikeEnrich";
 import { fetchFolderDictionary } from "../hooks/useBoardTasks";
 import { countryFieldIds, warmCountryFields } from "../lib/countryField";
 import { secondsToHM } from "../utils/timeHelpers";
@@ -64,7 +64,7 @@ import {
   toTimesheetTerritories,
 } from "../utils/territories";
 import { useTimesheetPrefs } from "../hooks/useTimesheetPrefs";
-import { mergeIntoSheet, mergeCheck, mergeRows, canUnmerge, unmergeRow } from "../utils/mergeMultiCountry";
+import { mergeIntoSheet, mergeCheck, mergeRows, canUnmerge, unmergeRow, fillMissingCountries } from "../utils/mergeMultiCountry";
 import { confirmAction } from "../lib/confirm";
 import { categoryForTaskWithSource } from "../utils/categoryFamily";
 import { countryPullSource, categoryPullSource } from "../utils/pullSource";
@@ -735,7 +735,7 @@ export default function LegacyTimesheet({ wrikeData, isAdmin = false }) {
   const statusGroupRef = useRef({});
 
   // The folder tree, held for the life of the page and topped up by
-  // fillFolderGaps below. Localisation campaigns put
+  // freshenFolderTree below. Localisation campaigns put
   // the market in a folder rather than in the task name — an hour on
   // "ODY_CN_EmperorCinema", which sits in a folder called "China 🇨🇳", is the
   // case — and only Generate Today's Timesheet ever fetched the tree to read
@@ -768,27 +768,18 @@ export default function LegacyTimesheet({ wrikeData, isAdmin = false }) {
     }
   }, []);
 
-  // The cached tree is only as new as the last sync, so a market folder made
-  // since ("Cyprus 🇨🇾" added to a campaign today) isn't in it and its tasks
-  // pull with no country. Any folder these tasks sit in that the tree lacks is
-  // fetched, with its parents, before their rows are built. Fetched folders
-  // carry parentIds, which the cached tree's childIds don't yet list.
-  const fillFolderGaps = useCallback(async (tasks) => {
-    const { folderDictionary } = folderTreeRef.current;
-    if (!Object.keys(folderDictionary).length) return;
-    const homes = tasks.filter(Boolean).map((t) => ({ parentIds: [...(t.parentIds || []), ...(t.superTaskParentIds || [])] }));
-    if (!homes.some((t) => t.parentIds.some((id) => !folderDictionary[id]))) return;
-    const before = Object.keys(folderDictionary).length;
-    await hydrateMissingFolders(homes, folderDictionary);
-    if (Object.keys(folderDictionary).length === before) return;
-    const childToParent = buildChildToParents(folderDictionary);
-    for (const folder of Object.values(folderDictionary)) {
-      for (const parentId of folder.parentIds || []) {
-        const parents = (childToParent[folder.id] ||= []);
-        if (!parents.includes(parentId)) parents.push(parentId);
-      }
-    }
-    folderTreeRef.current = { folderDictionary, childToParent };
+  // The cached tree is only as new as its last daily refresh: a market folder
+  // made since ("Cyprus 🇨🇾" added to a campaign today) is missing and a moved
+  // one sits where it was. Before rows that go on the timesheet are built, the
+  // folders above their tasks are read from Wrike and laid over it. If Wrike
+  // can't be reached the cached tree stands, and a row it can't place shows
+  // with no country rather than merged out of sight (mergeIntoSheet).
+  const freshenFolderTree = useCallback(async (tasks) => {
+    const start = tasks.filter(Boolean).flatMap((t) => [...(t.parentIds || []), ...(t.superTaskParentIds || [])]);
+    if (!start.length) return;
+    const { folders } = await fetchFolderAncestry(start);
+    if (!Object.keys(folders).length) return;
+    folderTreeRef.current = overlayFolders(folderTreeRef.current.folderDictionary, folders);
   }, []);
 
   // Both warmed on mount so rows built off a webhook patch — which arrives
@@ -1868,7 +1859,7 @@ export default function LegacyTimesheet({ wrikeData, isAdmin = false }) {
     const all = await fetchMissingTasks(activeWrikeData, taskIds.map((taskId) => ({ taskId })));
     const want = new Set(taskIds);
     const tasks = all.filter((t) => want.has(t.id));
-    await fillFolderGaps(tasks);
+    await freshenFolderTree(tasks);
     return tasks;
   };
   const resolveCommentTasks = useCallback(
@@ -1956,7 +1947,7 @@ export default function LegacyTimesheet({ wrikeData, isAdmin = false }) {
       // their timelogs still exist but the task won't appear in handleSyncMyJobs
       currentTasks = await fetchMissingTasks(currentTasks, logs);
       const loggedIds = new Set(logs.map((l) => l.taskId));
-      await fillFolderGaps(currentTasks.filter((t) => loggedIds.has(t.id)));
+      await freshenFolderTree(currentTasks.filter((t) => loggedIds.has(t.id)));
 
       // Fetch existing timelog IDs across ALL sources so we don't duplicate
       // entries that were already pulled in Tracker (or vice versa). Passing
@@ -2045,13 +2036,34 @@ export default function LegacyTimesheet({ wrikeData, isAdmin = false }) {
         }
       );
 
+      // Rows already on the sheet for these days that came through with no
+      // country get another look, now their tasks' folders have been read.
+      const taskById = new Map(currentTasks.map((t) => [t.id, t]));
+      const countryOf = (taskId) => (taskById.has(taskId) ? guessFieldsFromTask(taskById.get(taskId)).territory : "");
+      const openRows = rows.filter((r) => !frozenDays[r.dayOfWeek]);
+      const filled = fillMissingCountries(openRows.filter((r) => targetDateSet.has(toIsoDate(r.date))), countryOf);
+      const filledById = new Map(filled.map((f) => [f.id, f]));
+      const sheetRows = openRows.map((r) => (filledById.has(r.id) ? { ...r, ...filledById.get(r.id) } : r));
+
       // With markets merged, new rows also fold into what's already on the
       // sheet for that day, job and category, so pulling twice in a day still
       // ends with one entry. The rows they replace go only once the merged
       // rows have saved.
       const { rows: pulledRows, replaces } = groupMultiCountry
-        ? mergeIntoSheet(newRows, rows.filter((r) => !frozenDays[r.dayOfWeek]))
+        ? mergeIntoSheet(newRows, sheetRows)
         : { rows: newRows.map(({ _rawHours, ...r }) => r), replaces: [] };
+
+      // A filled-in row merged into a pulled one goes with `replaces`.
+      const saveFilled = async () => {
+        const kept = filled.filter((f) => !replaces.includes(f.id));
+        for (const f of kept) {
+          await updateRow(f.id, "territory", f.territory);
+          if (f.mergedFrom) await updateRow(f.id, "mergedFrom", f.mergedFrom);
+        }
+        return filled.length
+          ? ` Filled in the country on ${filled.length} row${filled.length !== 1 ? "s" : ""} pulled without one.`
+          : "";
+      };
 
       if (pulledRows.length > 0) {
         welcome(pulledRows);
@@ -2060,6 +2072,7 @@ export default function LegacyTimesheet({ wrikeData, isAdmin = false }) {
           return;
         }
         if (replaces.length) await deleteRows(replaces);
+        const filledNote = await saveFilled();
         // The grid only shows rows from the current week (weekStart) — a
         // debug pull for an older date saves fine but won't appear here, so
         // say so instead of implying it's now visible in the table below.
@@ -2075,10 +2088,12 @@ export default function LegacyTimesheet({ wrikeData, isAdmin = false }) {
           : "";
         showToast(
           pulledBeforeThisWeek
-            ? `Pulled ${n} row${n !== 1 ? "s" : ""} from Wrike${mergeNote} — from a previous week, so it won't show in this grid. Check Jobs Feed to verify.`
-            : `Pulled ${n} row${n !== 1 ? "s" : ""} from Wrike${mergeNote}.`,
+            ? `Pulled ${n} row${n !== 1 ? "s" : ""} from Wrike${mergeNote} — from a previous week, so it won't show in this grid. Check Jobs Feed to verify.${filledNote}`
+            : `Pulled ${n} row${n !== 1 ? "s" : ""} from Wrike${mergeNote}.${filledNote}`,
           "success"
         );
+      } else if (filled.length) {
+        showToast((await saveFilled()).trim(), "success");
       } else {
         showToast(
           targetDates.length > 1

@@ -461,7 +461,7 @@ async function handleJobsFeedImport(request, env) {
   const dupKey = (r) => [
     r.job_number || "", r.date || "", r.wrike_user_id || "",
     r.category || "", r.time_spent || "", r.additional_time || "",
-  ].join(" ");
+  ].join("\u0000");
   const seen = new Set(existingTasks.map(dupKey));
 
   const toInsert = [];

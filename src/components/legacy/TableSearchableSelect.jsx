@@ -2,6 +2,7 @@
 // Self-contained: only reads its own props and internal state, no closure
 // over LegacyTimesheet's component state.
 import React, { useState, useEffect, useLayoutEffect, useRef } from "react";
+import { createPortal } from "react-dom";
 import { ChevronDown, Minus, Plus } from "lucide-react";
 import { layoutRect, layoutViewport } from "../../utils/zoom";
 import { isUnset } from "../../constants";
@@ -66,6 +67,29 @@ export default function TableSearchableSelect({
   const wrapperRef = useRef(null);
   const inputRef = useRef(null);
   const [fixedStyle, setFixedStyle] = useState({});
+  const listRef = useRef(null);
+
+  // A press anywhere but the field and its list closes the list. A listener
+  // rather than a sheet over the page: the list is in <body> and the field in
+  // the table, and no one sheet sits between the two in every modal.
+  const dismiss = useRef(null);
+  dismiss.current = () => {
+    setActiveDropdown(null);
+    // Unchanged, closing isn't a choice. "Where did my day go?" ticks a task
+    // on any choice, so this would tick it on a dismiss.
+    if (searchTerm !== value) commit(searchTerm);
+  };
+  useEffect(() => {
+    if (!isOpen) return;
+    const onDown = (e) => {
+      if (wrapperRef.current?.contains(e.target) || listRef.current?.contains(e.target)) return;
+      dismiss.current();
+    };
+    // Capture, so it runs before React's own handlers: pressing straight
+    // into another field closes this list first, then opens that one.
+    document.addEventListener("mousedown", onDown, true);
+    return () => document.removeEventListener("mousedown", onDown, true);
+  }, [isOpen]);
 
   // `disabled` too: a step still waiting to be saved when the day is locked is
   // turned away by the caller, and the cell has to go back to the saved value.
@@ -245,19 +269,6 @@ export default function TableSearchableSelect({
       ref={wrapperRef}
       className={`relative w-full ${isOpen ? "z-[999999]" : "z-50"}`}
     >
-      {isOpen && (
-        <div
-          className="fixed inset-0 z-40"
-          onMouseDown={(e) => {
-            e.stopPropagation();
-            setActiveDropdown(null);
-            // Unchanged, closing isn't a choice. "Where did my day go?" ticks
-            // a task on any choice, so this would tick it on a dismiss.
-            if (searchTerm !== value) commit(searchTerm);
-          }}
-        />
-      )}
-
       <div
         className={`relative flex items-center border rounded-xl z-50 transition-[border-color,background-color,box-shadow] ${
           disabled
@@ -356,8 +367,12 @@ export default function TableSearchableSelect({
         )}
       </div>
 
-      {isOpen && (
+      {/* The list goes in <body>, not the cell: a fixed list inside the table
+          was hidden in Safari's engine (the XYi app's web view). Its position
+          is window-based already. */}
+      {isOpen && createPortal(
         <div
+          ref={listRef}
           style={fixedStyle}
           className={`fixed border shadow-xl shadow-slate-200/40 max-h-[350px] overflow-y-auto custom-scrollbar scrollbar-inset animate-in fade-in slide-in-from-top-2 duration-200 rounded-2xl ${
             isDarkModal
@@ -505,7 +520,8 @@ export default function TableSearchableSelect({
               No matches found. Press enter to keep custom text.
             </div>
           )}
-        </div>
+        </div>,
+        document.body
       )}
     </div>
   );

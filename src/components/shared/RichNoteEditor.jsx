@@ -517,7 +517,9 @@ function NoteEditor({
       // errors). Underline/Link commands (toggleUnderline, setLink) still work.
       StarterKit.configure({
         heading: { levels: [2, 3] },
-        link: { openOnClick: false, autolink: true, HTMLAttributes: { rel: "noopener noreferrer", target: "_blank" } },
+        // xyireviewer:// and xyimotion:// are the studio's own apps (XYi Reviewer, XYi in Motion): their links are
+        // links too, so one written in the Hub (a name over the address) keeps its address here and opens the app.
+        link: { openOnClick: false, autolink: true, protocols: ["xyireviewer", "xyimotion"], HTMLAttributes: { rel: "noopener noreferrer", target: "_blank" } },
         // Yjs owns undo/redo when collaborating: StarterKit's history is
         // per-editor, so leaving it on would let one person's ctrl-Z revert a
         // colleague's edit. Collaboration ships a history that only undoes

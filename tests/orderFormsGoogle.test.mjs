@@ -45,6 +45,18 @@ check("only the markets that have the sheet", films[1].markets.map((m) => m.name
 check("the key Refresh finds the film by", films.map((f) => f.key), ["forgotten island|motion", "forgotten island|print", "zzz|motion"]);
 check("nothing to list", filmsIn([], []), []);
 
+const spelt = filmsIn(
+  [{ id: "hu", name: "Hungary (HUN)" }, { id: "cl", name: "Chile (CHI)" }, { id: "at", name: "Austria (AT)" }],
+  [
+    { id: "1", name: "Focker In Law - Motion Outdoor", parents: ["hu"] },
+    { id: "2", name: "Focker In-Law - Motion Outdoor", parents: ["cl"] },
+    { id: "3", name: "Focker In-Law - Motion Outdoor", parents: ["at"] },
+    { id: "4", name: "Focker In Law - Print and Digital Outdoor", parents: ["hu", "cl", "at"] },
+  ],
+);
+check("punctuation doesn't split a film", spelt.map((f) => [f.key, f.markets.length]), [["focker in law|motion", 3], ["focker in law|print", 1]]);
+check("titled the way most markets spell it", spelt.map((f) => f.label), ["Focker In-Law · Motion", "Focker In Law · Print"]);
+
 check("clients", [clientFor("universal")?.label, clientFor("paramount")?.label, clientFor("index")], ["Universal", "Paramount", null]);
 
 // ── A market's own workbook ───────────────────────────────────────────────────

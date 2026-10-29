@@ -3,7 +3,9 @@
 // per film and medium ("FID_Motion_Outdoor", "Street Fighter - Print and
 // Digital Outdoor"). Pure helpers; the network calls are in googleApi.js.
 
-const norm = (v) => String(v ?? "").replace(/\s+/g, " ").trim().toLowerCase();
+// A film's name as its key: letters and digits only, so markets that punctuate
+// it differently ("Focker In-Law", "Focker In Law") still share one film.
+const norm = (v) => String(v ?? "").toLowerCase().replace(/[^\p{L}\p{N}]+/gu, " ").trim();
 
 export const CLIENTS = [
   { id: "universal", label: "Universal", folderId: "1HXwSdQN19Fpg8kACsb57m4a2axEr5an3" },
@@ -53,7 +55,8 @@ const newer = (a, b) => String(b.modifiedTime || "") > String(a.modifiedTime || 
 // them (each with `parents`), `names` the film codes the app knows
 // (FILM_MAPPINGS), so "FID" is listed as "Forgotten Island". A market with two
 // sheets for one film and medium (a copy beside the original) gives the most
-// recently changed.
+// recently changed. A film spelt more than one way is titled the way most of
+// its markets spell it.
 export function filmsIn(folders, sheets, names = {}) {
   const folderById = new Map((folders || []).map((f) => [f.id, f]));
   const films = new Map();
@@ -63,21 +66,25 @@ export function filmsIn(folders, sheets, names = {}) {
     if (!folder || !found) continue;
     const title = names[found.film.toUpperCase()] || found.film;
     const key = `${norm(title)}|${found.medium}`;
-    if (!films.has(key)) {
-      films.set(key, { key, title, medium: found.medium, label: `${title} · ${MEDIUM_LABEL[found.medium]}`, byFolder: new Map() });
-    }
-    const { byFolder } = films.get(key);
+    if (!films.has(key)) films.set(key, { key, medium: found.medium, spellings: new Map(), byFolder: new Map() });
+    const { spellings, byFolder } = films.get(key);
+    spellings.set(title, (spellings.get(title) || 0) + 1);
     const seen = byFolder.get(folder.id);
     if (!seen || newer(seen, sheet)) byFolder.set(folder.id, sheet);
   }
   return [...films.values()]
-    .map(({ byFolder, ...film }) => ({
-      ...film,
-      markets: [...byFolder]
-        .map(([folderId, sheet]) => ({ name: marketName(folderById.get(folderId).name), folderId, sheet }))
-        .sort((a, b) => a.name.localeCompare(b.name)),
-    }))
-    .sort((a, b) => a.label.localeCompare(b.label));
+    .map(({ spellings, byFolder, ...film }) => {
+      const title = [...spellings].reduce((a, b) => (b[1] > a[1] ? b : a))[0];
+      return {
+        ...film,
+        title,
+        label: `${title} · ${MEDIUM_LABEL[film.medium]}`,
+        markets: [...byFolder]
+          .map(([folderId, sheet]) => ({ name: marketName(folderById.get(folderId).name), folderId, sheet }))
+          .sort((a, b) => a.name.localeCompare(b.name)),
+      };
+    })
+    .sort((a, b) => a.key.localeCompare(b.key));
 }
 
 // Whether a loaded film is still what the studio's Drive folders hold. Films

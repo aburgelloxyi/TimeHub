@@ -178,8 +178,10 @@ export default function GoogleSource({ onLoaded, onBusy, onPartial, signedInTick
   };
 
   const busy = !!working || !!progress;
-  const wanted = query.trim().toLowerCase();
-  const shownFilms = (films || []).filter((f) => !wanted || f.label.toLowerCase().includes(wanted));
+  // Punctuation is ignored, as the film list itself ignores it.
+  const bare = (s) => s.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, " ").trim();
+  const wanted = bare(query);
+  const shownFilms = (films || []).filter((f) => !wanted || bare(f.label).includes(wanted));
   const tileClass =
     "group relative overflow-hidden rounded-2xl border border-[#dce4ec] bg-white text-left transition-[border-color,box-shadow] hover:border-transparent hover:shadow-lg focus:outline-none focus-visible:ring-4 focus-visible:ring-[#12a0e1]/30 disabled:opacity-60";
   const sweepClass =

@@ -1,4 +1,5 @@
 import React, { useState, useLayoutEffect, useRef } from "react";
+import { createPortal } from "react-dom";
 import { ChevronDown, Check } from "lucide-react";
 import { TERRITORIES, isUnset } from "../../constants";
 import { layoutRect, layoutViewport } from "../../utils/zoom";
@@ -14,9 +15,8 @@ import {
 // comma-separated string (see utils/territories.js) and onChange hands back the
 // same shape, so it drops in wherever a single-country select used to sit.
 //
-// Positioning mirrors TableSearchableSelect: position:fixed off layoutRect so
-// the panel escapes the table's scroll container and stays aligned under any
-// html{zoom} (the app's own 1.1 has since been removed).
+// The panel is position:fixed off layoutRect, in a portal to <body>, so it
+// escapes the table and stays aligned under any html{zoom}.
 export default function MultiCountrySelect({
   value,
   onChange,
@@ -143,16 +143,6 @@ export default function MultiCountrySelect({
       ref={wrapperRef}
       className={`relative w-full ${isOpen ? "z-[999999]" : "z-50"}`}
     >
-      {isOpen && (
-        <div
-          className="fixed inset-0 z-40"
-          onMouseDown={(e) => {
-            e.stopPropagation();
-            close();
-          }}
-        />
-      )}
-
       <button
         type="button"
         onClick={() => (isOpen ? close() : open())}
@@ -251,7 +241,21 @@ export default function MultiCountrySelect({
         />
       </button>
 
-      {isOpen && (
+      {/* In <body>, not the cell: a fixed panel inside the table is placed
+          and clipped by whatever is above it, and Safari's engine (the XYi
+          app's web view) lost it entirely. Its position is window-based
+          already, so it lands in the same place. */}
+      {isOpen && createPortal(
+        <>
+        {/* Just under the panel, so a click anywhere else closes it, inside
+            a modal too. */}
+        <div
+          className="fixed inset-0 z-[999998]"
+          onMouseDown={(e) => {
+            e.stopPropagation();
+            close();
+          }}
+        />
         <div
           style={fixedStyle}
           className={`fixed border shadow-xl shadow-slate-200/40 rounded-2xl overflow-hidden animate-in fade-in slide-in-from-top-2 duration-200 ${
@@ -378,6 +382,8 @@ export default function MultiCountrySelect({
             </div>
           </div>
         </div>
+        </>,
+        document.body
       )}
     </div>
   );

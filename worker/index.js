@@ -1,6 +1,7 @@
 import { isBoardTask, isStale } from "../src/lib/jobFilter";
 import { folderPatchPlan, folderEntries, parentsToRead } from "../src/lib/folderMirror";
 import { makeGoogleAuth } from "./googleAuth.js";
+import { FILM_MAPPINGS } from "../src/constants";
 // Cloudflare Worker: Wrike OAuth (authorization code flow) + API proxy.
 //
 // Members never see a Wrike token. After /api/wrike/oauth/start and Wrike's
@@ -1716,34 +1717,41 @@ async function handlePanelCampaign(request, url, env) {
   const isTop = (t) => t && t.title && !(t.superTaskIds || []).length && (t.subTaskIds || []).length;
   const tops = rows.filter((r) => r && isTop(r.task_data));
 
-  // Jobs the cache is too young to hold, as the website's Amends finds them: a Wrike search by the film's code, the
-  // one most of its cached jobs lead with ("EBZR - CO - DOOH - Batch 1").
+  // Jobs the cache is too young to hold, as the website's Amends finds them: a Wrike search by each of the film's
+  // codes (the built-in list and the ones discovered since, in the shared sync meta), and the code most of its cached
+  // jobs lead with ("EBZR - CO - DOOH - Batch 1").
+  const codes = new Set();
+  let discovered = {};
+  const meta = await sbFetch(env, "/wrike_sync_meta?select=film_code_mappings&wrike_user_id=eq.shared");
+  if (meta.ok) discovered = (((await meta.json()) || [])[0] || {}).film_code_mappings || {};
+  for (const [c, film] of Object.entries({ ...FILM_MAPPINGS, ...discovered })) {
+    if (String(film).toLowerCase().replace(/_/g, " ") === key) codes.add(c.toUpperCase());
+  }
   const lead = {};
   for (const r of tops) {
     const m = /^([A-Z][A-Z0-9]{1,6})\b/.exec(r.task_data.title || "");
     if (m) lead[m[1]] = (lead[m[1]] || 0) + 1;
   }
-  const code = Object.keys(lead).sort((a, b) => lead[b] - lead[a])[0];
-  if (code && lead[code] >= 3) {
-    const token = await panelWrikeToken(env);
-    if (token) {
-      const starts = new RegExp(`^${code}(?![A-Za-z0-9])`, "i");
-      const have = new Set(tops.map((r) => String(r.id)));
-      const fields = encodeURIComponent('["subTaskIds","responsibleIds","superTaskIds"]');
-      let next = "";
-      for (let page = 0; page < 5; page++) {
-        const qs = next ? `nextPageToken=${next}` : `title=${encodeURIComponent(code + " ")}&pageSize=1000&fields=${fields}`;
-        const wr = await fetch(`https://${token.api_host}/api/v4/tasks?${qs}`, { headers: { Authorization: `Bearer ${token.access_token}` } }).catch(() => null);
-        if (!wr || !wr.ok) break;
-        const page_ = await wr.json();
-        for (const t of page_.data || []) {
-          if (have.has(String(t.id)) || !starts.test(t.title || "") || !isTop(t)) continue;
-          have.add(String(t.id));
-          tops.push({ id: t.id, task_data: t });
-        }
-        next = page_.nextPageToken || "";
-        if (!next) break;
+  const top = Object.keys(lead).sort((a, b) => lead[b] - lead[a])[0];
+  if (top && lead[top] >= 3) codes.add(top);
+  const token = codes.size ? await panelWrikeToken(env) : null;
+  for (const code of token ? [...codes].slice(0, 4) : []) {
+    const starts = new RegExp(`^${code}(?![A-Za-z0-9])`, "i");
+    const have = new Set(tops.map((r) => String(r.id)));
+    const fields = encodeURIComponent('["subTaskIds","responsibleIds","superTaskIds"]');
+    let next = "";
+    for (let page = 0; page < 5; page++) {
+      const qs = next ? `nextPageToken=${next}` : `title=${encodeURIComponent(code + " ")}&pageSize=1000&fields=${fields}`;
+      const wr = await fetch(`https://${token.api_host}/api/v4/tasks?${qs}`, { headers: { Authorization: `Bearer ${token.access_token}` } }).catch(() => null);
+      if (!wr || !wr.ok) break;
+      const page_ = await wr.json();
+      for (const t of page_.data || []) {
+        if (have.has(String(t.id)) || !starts.test(t.title || "") || !isTop(t)) continue;
+        have.add(String(t.id));
+        tops.push({ id: t.id, task_data: t });
       }
+      next = page_.nextPageToken || "";
+      if (!next) break;
     }
   }
 

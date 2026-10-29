@@ -1623,7 +1623,10 @@ async function handlePanelComment(request, url, env) {
     return json({ error: "bad_task" }, { status: 400, headers: panelCors() });
   }
   const fresh = url.searchParams.get("fresh") === "1";
-  const hit = panelCommentCache.get(task);
+  // `all=1`: every comment, as the website's Amends reads a job (XYi in Motion's campaign amends).
+  const all = url.searchParams.get("all") === "1";
+  const cacheKey = all ? task + "|all" : task;
+  const hit = panelCommentCache.get(cacheKey);
   if (!fresh && hit && Date.now() - hit.at < PANEL_COMMENT_TTL) {
     return json(hit.body, { headers: panelCors({ "Cache-Control": "no-store" }) });
   }
@@ -1651,22 +1654,27 @@ async function handlePanelComment(request, url, env) {
   const recent = comments
     .filter((c) => c && panelPlainText(c.text))
     .sort((a, b) => new Date(b.createdDate || 0) - new Date(a.createdDate || 0))
-    .slice(0, PANEL_COMMENT_RECENT);
+    .slice(0, all ? undefined : PANEL_COMMENT_RECENT);
   const names = {};
+  const motionAuthors = new Set();
   const authorIds = [...new Set(recent.map((c) => c.authorId).filter((id) => /^[A-Za-z0-9_-]{2,40}$/.test(String(id || ""))))];
   if (authorIds.length) {
     try {
-      const pr = await sbFetch(env, `/profiles?select=wrike_user_id,first_name,last_name&wrike_user_id=in.(${authorIds.map(encodeURIComponent).join(",")})`);
+      const pr = await sbFetch(env, `/profiles?select=wrike_user_id,first_name,last_name,department&wrike_user_id=in.(${authorIds.map(encodeURIComponent).join(",")})`);
       if (pr.ok) {
         for (const p of (await pr.json()) || []) {
           if (p && p.wrike_user_id) names[p.wrike_user_id] = `${p.first_name || ""} ${p.last_name || ""}`.trim();
+          if (p && p.wrike_user_id && p.department === "Motion") motionAuthors.add(p.wrike_user_id);
         }
       }
     } catch (_) { /* nameless is fine */ }
   }
-  const shaped = recent.map((c) => ({ text: panelPlainText(c.text), author: names[c.authorId] || "", date: c.createdDate || "" }));
+  const shaped = recent.map((c) => ({
+    text: panelPlainText(c.text), author: names[c.authorId] || "", date: c.createdDate || "",
+    motion: motionAuthors.has(c.authorId),
+  }));
   const body = { task, count: comments.length, comment: shaped[0] || null, recent: shaped };
-  panelCommentCache.set(task, { at: Date.now(), body });
+  panelCommentCache.set(cacheKey, { at: Date.now(), body });
   return json(body, { headers: panelCors({ "Cache-Control": "no-store" }) });
 }
 
@@ -1705,17 +1713,58 @@ async function handlePanelCampaign(request, url, env) {
     return json({ error: "query_failed" }, { status: 502, headers: panelCors() });
   }
   const rows = (await res.json()) || [];
-  const tops = rows.filter((r) => r && r.task_data && r.task_data.title && !(r.task_data.superTaskIds || []).length && (r.task_data.subTaskIds || []).length);
+  const isTop = (t) => t && t.title && !(t.superTaskIds || []).length && (t.subTaskIds || []).length;
+  const tops = rows.filter((r) => r && isTop(r.task_data));
+
+  // Jobs the cache is too young to hold, as the website's Amends finds them: a Wrike search by the film's code, the
+  // one most of its cached jobs lead with ("EBZR - CO - DOOH - Batch 1").
+  const lead = {};
+  for (const r of tops) {
+    const m = /^([A-Z][A-Z0-9]{1,6})\b/.exec(r.task_data.title || "");
+    if (m) lead[m[1]] = (lead[m[1]] || 0) + 1;
+  }
+  const code = Object.keys(lead).sort((a, b) => lead[b] - lead[a])[0];
+  if (code && lead[code] >= 3) {
+    const token = await panelWrikeToken(env);
+    if (token) {
+      const starts = new RegExp(`^${code}(?![A-Za-z0-9])`, "i");
+      const have = new Set(tops.map((r) => String(r.id)));
+      const fields = encodeURIComponent('["subTaskIds","responsibleIds","superTaskIds"]');
+      let next = "";
+      for (let page = 0; page < 5; page++) {
+        const qs = next ? `nextPageToken=${next}` : `title=${encodeURIComponent(code + " ")}&pageSize=1000&fields=${fields}`;
+        const wr = await fetch(`https://${token.api_host}/api/v4/tasks?${qs}`, { headers: { Authorization: `Bearer ${token.access_token}` } }).catch(() => null);
+        if (!wr || !wr.ok) break;
+        const page_ = await wr.json();
+        for (const t of page_.data || []) {
+          if (have.has(String(t.id)) || !starts.test(t.title || "") || !isTop(t)) continue;
+          have.add(String(t.id));
+          tops.push({ id: t.id, task_data: t });
+        }
+        next = page_.nextPageToken || "";
+        if (!next) break;
+      }
+    }
+  }
 
   const wanted = [...new Set(tops.flatMap((r) => (r.task_data.subTaskIds || []).map(String)))];
   const byId = new Map();
   for (const r of rows) if (r && r.task_data) byId.set(String(r.id), r.task_data);
-  const missing = wanted.filter((id) => !byId.has(id));
+  let missing = wanted.filter((id) => !byId.has(id));
   for (let i = 0; i < missing.length; i += 200) {
     const ids = missing.slice(i, i + 200).map((id) => `"${id}"`).join(",");
     const sub = await sbFetch(env, `/wrike_tasks_cache?select=id,task_data&id=in.(${ids})`);
     if (sub.ok) for (const r of (await sub.json()) || []) if (r && r.task_data) byId.set(String(r.id), r.task_data);
   }
+  missing = wanted.filter((id) => !byId.has(id));
+  if (missing.length) for (const r of await panelLiveSubtasks(env, missing)) if (r && r.task_data) byId.set(String(r.id), r.task_data);
+
+  // A motion job, as the website's Amends decides: someone in Motion is assigned to it or to one of its subtasks,
+  // or a subtask is named like a motion deliverable (a size and a length).
+  const motionIds = new Set();
+  const mp = await sbFetch(env, "/profiles?select=wrike_user_id,department,left_at&department=eq.Motion");
+  if (mp.ok) for (const p of (await mp.json()) || []) if (p && p.wrike_user_id && !p.left_at) motionIds.add(p.wrike_user_id);
+  const motionAssigned = (t) => (t && t.responsibleIds || []).some((id) => motionIds.has(id));
 
   const statusNames = await panelStatusNameMap(env);
   const customName = (t) => (t && t.customStatusId ? statusNames[t.customStatusId] || "" : "");
@@ -1723,7 +1772,7 @@ async function handlePanelCampaign(request, url, env) {
   for (const row of tops) {
     const t = row.task_data;
     const subs = (t.subTaskIds || []).map((id) => ({ id: String(id), t: byId.get(String(id)) }));
-    if (!subs.some((s) => s.t && looksMotionDeliverable(s.t.title))) continue;
+    if (!motionAssigned(t) && !subs.some((s) => s.t && (motionAssigned(s.t) || looksMotionDeliverable(s.t.title)))) continue;
     jobs.push({
       id: String(row.id),
       title: String(t.title),

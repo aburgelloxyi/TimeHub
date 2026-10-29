@@ -116,6 +116,12 @@ export default {
       if (request.method === "OPTIONS") return panelPreflight();
       return handlePanelComment(request, url, env);
     }
+    // Every motion job of a campaign, live and delivered, for XYi in Motion's
+    // campaign amends (the jobs feed above is only a person's current jobs).
+    if (url.pathname === "/api/panel/campaign") {
+      if (request.method === "OPTIONS") return panelPreflight();
+      return handlePanelCampaign(request, url, env);
+    }
 
     return env.ASSETS.fetch(request);
   },
@@ -1662,6 +1668,81 @@ async function handlePanelComment(request, url, env) {
   const body = { task, count: comments.length, comment: shaped[0] || null, recent: shaped };
   panelCommentCache.set(task, { at: Date.now(), body });
   return json(body, { headers: panelCors({ "Cache-Control": "no-store" }) });
+}
+
+// A campaign's motion jobs, live and delivered, as CampaignAmends finds them on
+// the website: top-level tasks filed under the film (its project name, with
+// underscores as spaces) that have a subtask named like a motion deliverable, a
+// size and a length. Same shape as the jobs feed, plus `done` for a job that is
+// Completed or Cancelled. Read-only; kept per campaign for ten minutes in this
+// isolate, so Macs opening the same campaign share one read of the cache.
+const PANEL_CAMPAIGN_MS = 10 * 60 * 1000;
+const panelCampaignCache = new Map(); // name, lowercased -> { at, body }
+const looksMotionDeliverable = (title) =>
+  /(^|_)\d{2,5}x\d{2,5}(px)?(_|$)/i.test(String(title || "")) && /(^|_)\d+s(ec)?(_|\.|$)/i.test(String(title || "").replace(/\.[A-Za-z0-9]{2,4}$/, ""));
+
+async function handlePanelCampaign(request, url, env) {
+  if (!env.PANEL_KEY || request.headers.get("X-Panel-Key") !== env.PANEL_KEY) {
+    return json({ error: "unauthorized" }, { status: 401, headers: panelCors() });
+  }
+  const name = (url.searchParams.get("name") || "").trim();
+  if (!name || name.length > 80 || !/^[\p{L}\p{N} _'&.-]+$/u.test(name)) {
+    return json({ error: "bad_name" }, { status: 400, headers: panelCors() });
+  }
+  const key = name.toLowerCase().replace(/_/g, " ");
+  const kept = panelCampaignCache.get(key);
+  if (kept && Date.now() - kept.at < PANEL_CAMPAIGN_MS) {
+    return json(kept.body, { headers: panelCors({ "X-Panel-Cached": "1" }) });
+  }
+
+  // "Street Fighter" matches "Street Fighter" and "Street_Fighter", as the website's same() does.
+  const pattern = name.split(/[\s_]+/).filter(Boolean).map(encodeURIComponent).join("*");
+  const res = await sbFetch(env, `/wrike_tasks_cache?select=id,task_data&task_data->>projectName=ilike.${pattern}&limit=800`);
+  if (!res.ok) {
+    const detail = await res.text().catch(() => "");
+    console.error(`[panel/campaign] cache query ${res.status}:`, detail);
+    if (kept) return json(kept.body, { headers: panelCors({ "X-Panel-Cached": "1" }) });
+    return json({ error: "query_failed" }, { status: 502, headers: panelCors() });
+  }
+  const rows = (await res.json()) || [];
+  const tops = rows.filter((r) => r && r.task_data && r.task_data.title && !(r.task_data.superTaskIds || []).length && (r.task_data.subTaskIds || []).length);
+
+  const wanted = [...new Set(tops.flatMap((r) => (r.task_data.subTaskIds || []).map(String)))];
+  const byId = new Map();
+  for (const r of rows) if (r && r.task_data) byId.set(String(r.id), r.task_data);
+  const missing = wanted.filter((id) => !byId.has(id));
+  for (let i = 0; i < missing.length; i += 200) {
+    const ids = missing.slice(i, i + 200).map((id) => `"${id}"`).join(",");
+    const sub = await sbFetch(env, `/wrike_tasks_cache?select=id,task_data&id=in.(${ids})`);
+    if (sub.ok) for (const r of (await sub.json()) || []) if (r && r.task_data) byId.set(String(r.id), r.task_data);
+  }
+
+  const statusNames = await panelStatusNameMap(env);
+  const customName = (t) => (t && t.customStatusId ? statusNames[t.customStatusId] || "" : "");
+  const jobs = [];
+  for (const row of tops) {
+    const t = row.task_data;
+    const subs = (t.subTaskIds || []).map((id) => ({ id: String(id), t: byId.get(String(id)) }));
+    if (!subs.some((s) => s.t && looksMotionDeliverable(s.t.title))) continue;
+    jobs.push({
+      id: String(row.id),
+      title: String(t.title),
+      status: customName(t) || t.customStatusName || t.status || "",
+      done: t.status === "Completed" || t.status === "Cancelled",
+      due_date: t.dueDate || "",
+      updated_at: t.updatedDate || "",
+      permalink: t.permalink || "",
+      subtasks: subs.map((s) => ({
+        id: s.id,
+        name: (s.t && s.t.title) || "",
+        status: (s.t && s.t.status) || "",
+        customStatusName: customName(s.t) || (s.t && s.t.customStatusName) || "",
+      })),
+    });
+  }
+  const body = { campaign: name, jobs };
+  panelCampaignCache.set(key, { at: Date.now(), body });
+  return json(body, { headers: panelCors() });
 }
 
 async function handlePanelJobs(request, url, env) {

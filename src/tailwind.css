@@ -449,3 +449,77 @@ body:not(:has([data-rail])) .sketch-board-full { left: 0; bottom: 0; } /* Home h
 body.sketch-full-page { overflow: hidden; }
 body.sketch-full-page .excalidraw-modal-container { z-index: 100006; }
 body.sketch-full-page [data-rail] { z-index: 100007; }
+
+
+/* Tabular figures everywhere: a timesheet's numbers should not shuffle sideways as
+   they change, and the counts in the chrome should hold their width. */
+body { font-variant-numeric: tabular-nums; }
+
+
+
+
+
+/* The Home rows' words: each letter has a copy beneath it in a one-line mask, and the stack slides up
+   exactly one copy when the row is hovered. .group is the Home row; .group/row is the rail's, kept for
+   when the same treatment is used there. */
+.wave-stack { will-change: transform; }
+/* The stack moves up by exactly one copy, then resets. Because the two copies are identical, the reset is
+   invisible: it reads as the word travelling upwards, each letter a step behind the last. */
+.group\/row:hover .wave-stack,
+.group:hover .wave-stack { animation: wave-stack 0.55s cubic-bezier(0.22, 1, 0.36, 1) 1 forwards; }
+/* One pass per hover: the stack travels exactly one copy and stops. Because the copy below is the same
+   glyph, stopping there looks identical to the start, so leaving the row is invisible as well. */
+@keyframes wave-stack {
+  from { transform: translateY(0); }
+  to   { transform: translateY(-50%); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .group\/row:hover .wave-stack, .group:hover .wave-stack { animation: none; }
+}
+
+
+/* The rail's own palette, so it follows the app's theme instead of reacting to the page behind it.
+   Light: white strip, slate labels, near-black active. Dark: near-black strip, slate labels, white active. */
+[data-rail] {
+  --rail-bg: #ffffff;
+  --rail-fg: #768994;
+  --rail-fg-strong: #122027;
+  --rail-pill: #eef2f6;
+  --rail-tile: #f1f5f9;
+  --rail-hover: rgb(15 21 24 / 0.04);
+  --rail-ring: rgb(15 21 24 / 0.12);
+  --rail-tile-bg: transparent;
+}
+/* The dark rail takes the app's own dark surfaces rather than a colour of its own: the dark theme's
+   cards are navy, OLED's are neutral grey, and the difference has to survive. */
+html.dark-theme [data-rail] {
+  --rail-bg: var(--dk-card);
+  --rail-fg: #cbd5e1;
+  --rail-fg-strong: #ffffff;
+  --rail-pill: var(--dk-raised);
+  --rail-tile: var(--dk-raised);
+  --rail-hover: rgb(255 255 255 / 0.07);
+  --rail-ring: var(--dk-line);
+  --rail-tile-bg: rgb(255 255 255 / 0.04);
+}
+/* The mark is currentColor plus an embedded teal dot; colouring it, rather than filtering it, is what
+   keeps the dot's gradient. Filtering forced the whole artwork to one tone. */
+/* The page's colour at the top of the rail: a hint in light mode, a firm wash in dark, where it is the
+   only colour in the strip. At 35 per cent on white it read as a glow around the mark. */
+[data-rail] .rail-wash { opacity: 0.12; }
+html.dark-theme [data-rail] .rail-wash { opacity: 0.35; }
+[data-rail] .rail-logo { color: #122027; }
+html.dark-theme [data-rail] .rail-logo { color: #ffffff; }
+
+
+/* The Home page's mark: a plate that follows the app theme, so it is not dark artwork on a dark page. */
+.home-mark {
+  color: #122027;
+  border-color: rgb(18 32 39 / 0.12);
+  background-color: rgb(255 255 255 / 0.7);
+}
+html.dark-theme .home-mark {
+  color: #ffffff;
+  border-color: rgb(255 255 255 / 0.14);
+  background-color: rgb(255 255 255 / 0.05);
+}

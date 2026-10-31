@@ -1493,6 +1493,58 @@ async function panelMemberWrikeId(env, member, preferredDepartment) {
   return best ? best.wrike_user_id : "";
 }
 
+
+// ── Film codes: the code in a task title to the film it belongs to ────────────
+// The Canvas scans discover codes (film_code_mappings) and hand edits correct them
+// (film_code_overrides: a name sets a code, null removes it). The panel route sends
+// the film name with each job so the XYi apps can go straight to that campaign's
+// Markets folder instead of indexing every campaign on the NAS.
+const PANEL_FILM_TTL = 10 * 60 * 1000;
+let panelFilmCache = { at: 0, map: null };
+
+async function panelFilmCodes(env) {
+  if (panelFilmCache.map && Date.now() - panelFilmCache.at < PANEL_FILM_TTL) return panelFilmCache.map;
+  try {
+    const res = await sbFetch(
+      env,
+      "/wrike_sync_meta?select=film_code_mappings,film_code_overrides&wrike_user_id=eq.shared"
+    );
+    if (!res.ok) return panelFilmCache.map || {};
+    const row = ((await res.json()) || [])[0] || {};
+    const out = {};
+    for (const [code, name] of Object.entries(row.film_code_mappings || {})) {
+      if (name) out[String(code).toUpperCase()] = String(name);
+    }
+    for (const [code, name] of Object.entries(row.film_code_overrides || {})) {
+      const key = String(code).toUpperCase();
+      if (name) out[key] = String(name);
+      else delete out[key];
+    }
+    panelFilmCache = { at: Date.now(), map: out };
+    return out;
+  } catch {
+    return panelFilmCache.map || {};
+  }
+}
+
+// The film code a task title starts with: "EBZR - TW - DINTH - Batch 1" is EBZR.
+// Production words that look like codes are skipped, as the Canvas skips them.
+const PANEL_NOT_FILM = new Set([
+  "DOOH", "DINTH", "DFOH", "FOH", "OOH", "DLP", "LED", "TVC", "BTS", "PRE", "POST",
+  "ART", "NEW", "OLD", "ALT", "OPS", "SOCIAL", "DIGITAL", "INTL", "DOM", "STATIC",
+  "BATCH", "MOTION", "PRINT", "VIDEO", "AE", "CP", "OV", "INT",
+]);
+
+function panelFilmCodeOf(title) {
+  for (const token of String(title || "").toUpperCase().split(/[^A-Z0-9]+/)) {
+    if (!token) continue;
+    if (!/^[A-Z][A-Z0-9]{1,7}$/.test(token)) continue;
+    if (PANEL_NOT_FILM.has(token)) continue;
+    return token;
+  }
+  return "";
+}
+
 // ── Panel jobs feed ──────────────────────────────────────────────────────────
 // Serves the XYi Toolbox panel's "Active Jobs" card from wrike_tasks_cache.
 //
@@ -1518,7 +1570,7 @@ const PANEL_PREFERRED_DEPARTMENT = "Motion";
 // button still reads afresh. When the database can't answer, the last answer
 // is served however old, rather than an error.
 const PANEL_CACHE_MS = 2 * 60 * 1000;
-const PANEL_BUILD = "2026-10-28-cached-1";
+const PANEL_BUILD = "2026-10-31-films-1";
 const panelJobsCache = new Map(); // member, lowercased -> { at, jobs }
 
 function panelCors(extra = {}) {
@@ -1877,9 +1929,14 @@ async function handlePanelCampaign(request, url, env) {
     const t = row.task_data;
     const subs = (t.subTaskIds || []).map((id) => ({ id: String(id), t: byId.get(String(id)) }));
     if (!motionAssigned(t) && !subs.some((s) => s.t && (motionAssigned(s.t) || looksMotionDeliverable(s.t.title)))) continue;
+    const filmCode = panelFilmCodeOf(t.title);
     jobs.push({
       id: String(row.id),
       title: String(t.title),
+      // The film the title's code names, when the Canvas knows it: the app can then
+      // read that campaign's Markets folder instead of every campaign's.
+      film: films[filmCode] || "",
+      film_code: filmCode,
       status: customName(t) || t.customStatusName || t.status || "",
       done: t.status === "Completed" || t.status === "Cancelled",
       due_date: t.dueDate || "",
@@ -2123,6 +2180,9 @@ async function handlePanelJobs(request, url, env) {
   // uses, not a copy of its rules (they're subtler than they look: "Today" means
   // due today or overdue).
 
+  // One lookup per request for the film names the Canvas already knows; additive
+  // fields only, so a missing code leaves the apps on their existing behaviour.
+  const films = await panelFilmCodes(env);
   const jobs = [];
   for (const row of keptRows) {
     // Already filtered by panelKeeps above. Not repeated, so the subtask lookup

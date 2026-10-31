@@ -2189,10 +2189,14 @@ async function handlePanelJobs(request, url, env) {
     // and this loop can't disagree about which jobs exist.
     const t = row.task_data;
     const status = t.status || "";
+    const filmCode = panelFilmCodeOf(t.title);
 
     jobs.push({
       id: String(row.id),
       title: String(t.title),
+      // The film the title's code names, so the apps can read that campaign's Markets folder rather than all.
+      film: films[filmCode] || "",
+      film_code: filmCode,
       // The panel filters on this, so send the name it tagged the machine
       // with rather than a Wrike id it has no way to interpret.
       assignee: member,

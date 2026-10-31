@@ -105,6 +105,13 @@ export default {
     if (url.pathname === "/api/jobs-feed/import" && request.method === "POST") {
       return handleJobsFeedImport(request, env);
     }
+    // What changed for one member since a cursor: the XYi apps watch this while
+    // someone is looking at their jobs, so an arrival reaches them without reading
+    // the whole cache. Additive: the panel's own routes are untouched.
+    if (url.pathname === "/api/panel/watch") {
+      if (request.method === "OPTIONS") return panelPreflight();
+      return handlePanelWatch(request, url, env);
+    }
     // Read-only feed for the XYi Toolbox panel. Not /api/jobs-feed, which needs a
     // browser session cookie; the panel's origin is `null`.
     if (url.pathname === "/api/panel/jobs") {
@@ -1395,6 +1402,95 @@ async function handleProxy(request, url, env, ctx) {
   const resHeaders = new Headers(wrikeRes.headers);
   resHeaders.delete("Set-Cookie");
   return new Response(wrikeRes.body, { status: wrikeRes.status, headers: resHeaders });
+}
+
+
+// ── Panel watch: what changed for one member since a cursor ───────────────────
+// The Reviewer and XYi in Motion ask this while someone is looking at their jobs.
+// It answers from the two change-tracking pieces the website's browsers already
+// use: `cached_at` (stamped only when a row's content changes) and the removals
+// table. One indexed query, a handful of rows, no Wrike call, no workflow lookup
+// unless a job actually changed.
+async function handlePanelWatch(request, url, env) {
+  if (!env.PANEL_KEY || request.headers.get("X-Panel-Key") !== env.PANEL_KEY) {
+    return json({ error: "unauthorized" }, { status: 401, headers: panelCors() });
+  }
+  const member = (url.searchParams.get("member") || "").trim();
+  const since = (url.searchParams.get("since") || "").trim();
+  if (!member) return json({ error: "member_required" }, { status: 400, headers: panelCors() });
+  if (!since || Number.isNaN(Date.parse(since))) {
+    return json({ error: "since_required" }, { status: 400, headers: panelCors() });
+  }
+
+  const wrikeUserId = await panelMemberWrikeId(env, member, PANEL_PREFERRED_DEPARTMENT);
+  if (member && !wrikeUserId) {
+    return json({ error: "unknown_member", member, jobs: [], removed: [] }, { status: 404, headers: panelCors() });
+  }
+
+  const filter = wrikeUserId
+    ? `&task_data->responsibleIds=cs.${encodeURIComponent(JSON.stringify([wrikeUserId]))}`
+    : "";
+  const changedRes = await sbFetch(
+    env,
+    `/wrike_tasks_cache?select=id,task_data,cached_at&cached_at=gt.${encodeURIComponent(since)}${filter}&order=cached_at.asc&limit=200`
+  );
+  if (!changedRes.ok) {
+    const detail = await changedRes.text().catch(() => "");
+    return json({ error: "query_failed", detail: detail.slice(0, 200) }, { status: 502, headers: panelCors() });
+  }
+  const rows = (await changedRes.json()) || [];
+
+  let removed = [];
+  const removedRes = await sbFetch(
+    env,
+    `/wrike_tasks_cache_removed?select=id,removed_at&removed_at=gt.${encodeURIComponent(since)}&order=removed_at.asc&limit=200`
+  );
+  if (removedRes.ok) removed = ((await removedRes.json()) || []).map((r) => r.id);
+
+  let statuses = null;
+  if (rows.some((r) => r.task_data && r.task_data.customStatusId)) statuses = await panelStatusNameMap(env);
+  const jobs = rows.map((r) => {
+    const t = r.task_data || {};
+    return {
+      id: r.id,
+      status: (statuses && t.customStatusId && statuses[t.customStatusId]) || t.status || "",
+      cached_at: r.cached_at,
+    };
+  });
+
+  // A couple of seconds back, so a row written while this answer was being built is
+  // asked for again rather than missed. Repeats are harmless: the apps compare ids.
+  const next = new Date(Date.now() - 2000).toISOString();
+  return json({ jobs, removed, since, now: next }, { headers: panelCors() });
+}
+
+// A member name to a Wrike user id, ranked as the panel ranks it.
+async function panelMemberWrikeId(env, member, preferredDepartment) {
+  const wanted = (member || "").trim().toLowerCase();
+  if (!wanted) return "";
+  const profRes = await sbFetch(env, "/profiles?select=*&order=updated_at.desc");
+  if (!profRes.ok) return "";
+  const profiles = (await profRes.json()) || [];
+  const score = (p) => {
+    const first = (p.first_name || "").trim().toLowerCase();
+    const last = (p.last_name || "").trim().toLowerCase();
+    const full = (first + " " + last).trim();
+    if (full === wanted) return 3;
+    if (first === wanted) return 2;
+    if (last === wanted) return 1;
+    return 0;
+  };
+  const preferred = (p) => (p.department === preferredDepartment ? 1 : 0);
+  let best = null, bestScore = 0;
+  for (const p of profiles) {
+    if (!p || !p.wrike_user_id || p.left_at) continue;
+    const sc = score(p);
+    if (sc > bestScore || (sc > 0 && sc === bestScore && preferred(p) > preferred(best))) {
+      bestScore = sc;
+      best = p;
+    }
+  }
+  return best ? best.wrike_user_id : "";
 }
 
 // ── Panel jobs feed ──────────────────────────────────────────────────────────

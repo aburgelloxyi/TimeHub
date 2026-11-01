@@ -1,6 +1,7 @@
 import React, { useRef, useMemo, useState, useEffect } from "react";
 import { ChevronRight, Key } from "lucide-react";
 import gsap from "gsap";
+import XYILogo from "./shared/XYILogo";
 import { useGSAP } from "@gsap/react";
 import { supabase } from "../lib/supabaseClient";
 import { pagesFor } from "../lib/departments";
@@ -49,6 +50,12 @@ function useFirstName() {
 
 export default function Home({ onNavigate, hasToken = true }) {
   const firstName = useFirstName();
+  const [wave, setWave] = useState(waveEnabled);
+  useEffect(() => {
+    const onChange = () => setWave(waveEnabled());
+    window.addEventListener("homeWaveChanged", onChange);
+    return () => window.removeEventListener("homeWaveChanged", onChange);
+  }, []);
   const department = useDepartment();
   const sections = useMemo(
     () => pagesFor(department, localStorage.getItem("wrike_user_id")),
@@ -120,7 +127,7 @@ export default function Home({ onNavigate, hasToken = true }) {
   };
 
   const handleHoverOut = (id) => {
-    gsap.to(fillRefs.current.get(id), { scaleX: 0, duration: 0.3, ease: "power2.in", overwrite: "auto" });
+    gsap.to(fillRefs.current.get(id), { scaleX: 0, duration: 0.42, ease: "power3.inOut", overwrite: "auto" });
   };
 
   const handlePick = (sectionId) => {
@@ -176,10 +183,17 @@ export default function Home({ onNavigate, hasToken = true }) {
     // as the fill washes over it — no opacity fades on the type itself.
     // The gradient is passed along so App can swap in an identical fixed
     // overlay the frame this component unmounts (see wash overlay in App).
+    // The page recedes while the wash rises: the rows above and below the clicked one drift up and back a
+    // fraction, slower than the fill, so the colour reads as a plane arriving over a page rather than a
+    // rectangle growing flat. The clicked row holds still, which is what sells it.
+    const otherRows = liveNodes(rowRefs).filter((row) => row !== clickedRow);
+
     gsap
       .timeline({
         onComplete: () => onNavigate(sectionId, section.gradient),
       })
+      .to(otherRows, { yPercent: -16, scale: 0.965, opacity: 0.9, duration: 0.45, ease: "power2.inOut", stagger: 0.02 }, 0)
+      .to(headerRef.current, { y: -26, duration: 0.42, ease: "power2.inOut" }, 0)
       .to(otherContents, { yPercent: 110, duration: 0.2, ease: "power2.in", stagger: 0.018 }, 0)
       .to([headerRef.current, wipHeadingRef.current].filter(Boolean), { opacity: 0, duration: 0.16, ease: "power2.inOut" }, 0)
       .to(liveNodes(metaRefs), { opacity: 0, duration: 0.1, ease: "power2.out" }, 0)
@@ -198,13 +212,22 @@ export default function Home({ onNavigate, hasToken = true }) {
         ref={headerRef}
         className="px-6 sm:px-16 pt-10 pb-6 flex items-end justify-between gap-4"
       >
-        <div>
-          <p className="text-sm font-bold text-[#12a0e1] uppercase tracking-widest mb-1">
-            {greeting()}{firstName ? `, ${firstName}` : ""}
-          </p>
-          <h1 className="text-2xl sm:text-3xl font-black text-[#122027] tracking-tight">
-            Where to?
-          </h1>
+        <div className="flex items-center gap-5">
+          {/* The studio's mark by the greeting, in a plate so it reads as a badge rather than a stamp
+              dropped beside the text. Centred against the whole block. */}
+          <span className="home-mark shrink-0 w-16 h-16 rounded-2xl border flex items-center justify-center">
+            <span className="w-12 block">
+              <XYILogo />
+            </span>
+          </span>
+          <div>
+            <p className="text-sm font-bold text-[#12a0e1] uppercase tracking-widest mb-1">
+              {greeting()}{firstName ? `, ${firstName}` : ""}
+            </p>
+            <h1 className="text-2xl sm:text-3xl font-black text-[#122027] tracking-tight">
+              Where to?
+            </h1>
+          </div>
         </div>
         {!hasToken && (
           <button
@@ -233,6 +256,7 @@ export default function Home({ onNavigate, hasToken = true }) {
             )}
             <Row
               section={section}
+              wave={wave}
               addRowRef={bindRef(rowRefs, section.id)}
               addFillRef={bindRef(fillRefs, section.id)}
               addContentRef={bindRef(contentRefs, section.id)}
@@ -250,6 +274,7 @@ export default function Home({ onNavigate, hasToken = true }) {
 
 function Row({
   section,
+  wave,
   addRowRef,
   addFillRef,
   addContentRef,
@@ -285,9 +310,11 @@ function Row({
             className="w-8 h-8 sm:w-10 sm:h-10 text-[#122027] group-hover:text-white group-focus:text-white transition-colors duration-300 shrink-0"
             strokeWidth={1.75}
           />
-          <p className="font-display text-4xl sm:text-6xl font-bold tracking-tight leading-none text-[#122027] group-hover:text-white group-focus:text-white transition-colors duration-300">
-            {label}
-          </p>
+          <WavyText
+            enabled={wave}
+            text={label}
+            className="font-display text-4xl sm:text-6xl font-bold tracking-tight leading-none text-[#122027] group-hover:text-white group-focus:text-white transition-colors duration-300"
+          />
         </div>
       </div>
 
@@ -298,5 +325,32 @@ function Row({
         <ChevronRight className="w-5 h-5 sm:w-6 sm:h-6 text-[#768994] group-hover:text-white group-focus:text-white group-hover:translate-x-1 transition-[color,transform] duration-300" />
       </div>
     </button>
+  );
+}
+
+
+/// The label as letters, each with a duplicate beneath it in a one-line mask. Hovering the row slides every
+/// stack up by exactly one copy, so the word travels upward once rather than fading, and the end state is
+/// identical to the start because the copy underneath is the same glyph.
+// Off by default: a menu that moves under the pointer can grate on someone using it all day. Set from
+// Profile > Settings, and applied live through a window event so a change does not need a reload.
+const waveEnabled = () => {
+  try { return localStorage.getItem("homeWave") === "1"; } catch (e) { return false; }
+};
+
+function WavyText({ text, className, enabled }) {
+  if (!enabled) return <span className={className}>{text}</span>;
+  return (
+    <span className={`${className} inline-flex`}>
+      {[...text].map((ch, i) => (
+        <span key={i} className="inline-block overflow-hidden align-top h-[1.15em]" aria-hidden>
+          <span className="wave-stack block" style={{ animationDelay: `${i * 32}ms` }}>
+            <span className="block leading-[1.15em]">{ch === " " ? "\u00A0" : ch}</span>
+            <span className="block leading-[1.15em]">{ch === " " ? "\u00A0" : ch}</span>
+          </span>
+        </span>
+      ))}
+      <span className="sr-only">{text}</span>
+    </span>
   );
 }

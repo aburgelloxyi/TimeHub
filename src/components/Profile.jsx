@@ -1810,6 +1810,9 @@ function SettingsSection({ onSave }) {
     document.startViewTransition(apply).finished.finally(() => root.classList.remove("theme-revealing"));
   };
   const { defaultCategory, groupMultiCountry, funMode, setPrefs } = useTimesheetPrefs();
+  const [waveOn, setWaveOn] = useState(() => {
+    try { return localStorage.getItem("homeWave") === "1"; } catch (e) { return false; }
+  });
 
   const checkStatus = useCallback(() => {
     setStatus({ checked: false, connected: false });
@@ -1991,6 +1994,35 @@ function SettingsSection({ onSave }) {
             <span
               className={`absolute top-1 left-1 w-5 h-5 rounded-full bg-white shadow-sm transition-transform duration-300 ease-[cubic-bezier(0.22,1,0.36,1)] ${
                 funMode ? "translate-x-5" : "translate-x-0"
+              }`}
+            />
+          </button>
+        </div>
+
+        <div className="p-5 flex items-center gap-4 border-b border-[#dce4ec]">
+          <div className="flex-1 min-w-0">
+            <p className="text-sm font-bold text-[#122027]">Wavy menu labels</p>
+            <p className="text-xs text-[#768994] mt-0.5 leading-relaxed">
+              The Home menu's words ripple when you point at them.
+            </p>
+          </div>
+          <button
+            onClick={() => {
+              const next = !waveOn;
+              setWaveOn(next);
+              try { localStorage.setItem("homeWave", next ? "1" : "0"); } catch (e) { /* private mode */ }
+              window.dispatchEvent(new Event("homeWaveChanged"));
+            }}
+            role="switch"
+            aria-checked={waveOn}
+            aria-label="Wavy menu labels"
+            className={`relative w-12 h-7 rounded-full shrink-0 transition-colors ${
+              waveOn ? "bg-[#12a0e1]" : "bg-slate-200"
+            }`}
+          >
+            <span
+              className={`absolute top-1 left-1 w-5 h-5 rounded-full bg-white shadow-sm transition-transform duration-300 ease-[cubic-bezier(0.22,1,0.36,1)] ${
+                waveOn ? "translate-x-5" : "translate-x-0"
               }`}
             />
           </button>

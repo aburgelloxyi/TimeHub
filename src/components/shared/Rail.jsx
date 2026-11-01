@@ -1,5 +1,7 @@
 import React, { useState, useEffect } from "react";
+import { motion } from "framer-motion";
 import { Home } from "lucide-react";
+import XYILogo from "./XYILogo";
 import { supabase } from "../../lib/supabaseClient";
 import { PAGE_GRADIENTS } from "../../lib/pageGradients";
 import { PAGES, pageIdsFor, pageFor } from "../../lib/departments";
@@ -46,17 +48,19 @@ export default function Rail({ activePage, setActivePage }) {
   // A row inside the rail: fixed 56px icon slot on the left (so icons never
   // shift between collapsed/expanded), with a label that fades in only once
   // the rail expands on hover. overflow-hidden clips the label while collapsed.
-  const railRowClass = (active, activeGrad) =>
-    `group/row relative z-10 flex items-center h-14 rounded-2xl overflow-hidden transition-colors shrink-0 focus-visible:outline-none ${
-      active
-        ? `bg-gradient-to-br ${activeGrad} text-white shadow-lg focus-visible:ring-4 focus-visible:ring-inset focus-visible:ring-white/70`
-        : "text-[#768994] hover:text-[#122027] hover:bg-slate-100 focus-visible:ring-4 focus-visible:ring-inset focus-visible:ring-[#12a0e1]/30"
+  const railRowClass = (active) =>
+    `group/row relative z-10 flex items-center h-14 rounded-2xl overflow-hidden shrink-0 transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#12a0e1]/40 ${
+      active ? "text-[color:var(--rail-fg-strong)]"
+             : "text-[color:var(--rail-fg)] hover:text-[color:var(--rail-fg-strong)] hover:bg-[var(--rail-hover)]"
     }`;
   // The label rides the rail's hover expansion, so it's gated behind the same
   // (hover: hover) query the width is — on a touch screen the rail never
   // expands, and a label fading in over a 56px slot would just overflow it.
-  const railLabelClass =
-    "text-sm font-bold whitespace-nowrap pr-4 opacity-0 [@media(hover:hover)]:group-hover/rail:opacity-100 transition-opacity duration-200";
+  // The label leaves the rail rather than widening it: a chip just outside the strip, its letters arriving
+  // one after another from the left.
+  // The label stays inside the rail, at its right, and the rail still opens on hover. Only the letters move:
+  // they arrive in sequence from the left.
+  const railLabelClass = "relative z-10 text-sm font-bold whitespace-nowrap pl-3 pr-4";
 
   // One square in the bottom bar. Icon only — at eight pages across a 390px
   // screen there's no room for a legible label, so the active page's gradient
@@ -114,24 +118,31 @@ export default function Rail({ activePage, setActivePage }) {
           clips the labels flush to the animating width. The expansion is behind
           (hover: hover) so a touch device — where :hover sticks after a tap —
           never gets stranded with the rail open across the page. */}
-      <nav data-rail className="group/rail hidden md:flex fixed left-0 top-0 bottom-0 z-40 w-20 [@media(hover:hover)]:hover:w-64 overflow-hidden flex-col gap-1.5 px-3 py-5 bg-white/80 [@media(hover:hover)]:hover:bg-white/95 backdrop-blur-md border-r border-black/5 transition-[width,background-color] duration-300 ease-out">
+      <nav data-rail className="group/rail hidden md:flex fixed left-0 top-0 bottom-0 z-40 w-20 [@media(hover:hover)]:hover:w-64 overflow-hidden flex-col gap-1.5 px-3 py-5 bg-[var(--rail-bg)] border-r border-black/5 dark:border-white/5 transition-[width,background-color] duration-300 ease-out">
         {/* Colour wash at the rail's top — the active page's gradient, faded
             out downward, so the rail head picks up the header's colour instead
             of reading as a detached white strip. Sits over the nav's white bg
             but under the buttons. */}
         <div
           aria-hidden
-          className={`pointer-events-none absolute inset-x-0 top-0 h-36 bg-gradient-to-br ${
+          className={`rail-wash pointer-events-none absolute inset-x-0 top-0 h-36 bg-gradient-to-br ${
             PAGE_GRADIENTS[activePage] || PAGE_GRADIENTS.management
-          } opacity-35 [mask-image:linear-gradient(to_bottom,black,transparent)]`}
+          } [mask-image:linear-gradient(to_bottom,black,transparent)]`}
         />
 
         <button
           onClick={() => setActivePage("home")}
-          className="group/row relative z-10 flex items-center h-14 rounded-2xl overflow-hidden border border-dashed border-[#dce4ec] text-[#768994] hover:border-[#12a0e1] hover:text-[#12a0e1] transition-colors shrink-0 mt-4 focus-visible:ring-4 focus-visible:ring-[#12a0e1]/30 focus-visible:outline-none"
+          className="group/row relative z-10 flex items-center h-14 rounded-2xl overflow-hidden text-[color:var(--rail-fg)] hover:text-[color:var(--rail-fg-strong)] hover:bg-[var(--rail-hover)] transition-colors duration-150 shrink-0 mt-2 focus-visible:ring-2 focus-visible:ring-[#12a0e1]/40 focus-visible:outline-none"
         >
-          <span className="w-14 h-14 shrink-0 flex items-center justify-center">
-            <Home className="w-6 h-6" strokeWidth={2.25} />
+          {/* The mark sits in the same kind of tile as the active icons, with the page's own colour behind it,
+              so it belongs to the strip instead of floating above it. */}
+          <span className="relative w-14 h-14 shrink-0 flex items-center justify-center">
+            <span className="relative w-10 h-10 rounded-xl bg-[var(--rail-tile-bg)] ring-1 ring-[color:var(--rail-ring)] flex items-center justify-center">
+              <span className="rail-logo w-7 block opacity-95">
+                {/* Letters only: at 40 points the "design" line is a smudge. */}
+                <XYILogo viewBox="0 0 216.5269 84" />
+              </span>
+            </span>
           </span>
           <span className={railLabelClass}>Home</span>
         </button>
@@ -151,19 +162,27 @@ export default function Rail({ activePage, setActivePage }) {
                 )}
                 <button
                   onClick={() => setActivePage(id)}
-                  className={railRowClass(isActive, PAGE_GRADIENTS[id])}
+                  className={railRowClass(isActive)}
                 >
-                  <span className="w-14 h-14 shrink-0 flex items-center justify-center">
-                    <Icon className="w-6 h-6" strokeWidth={isActive ? 2.5 : 2} />
+                  {isActive && (
+                    <motion.span
+                      layoutId="rail-active"
+                      aria-hidden
+                      className="absolute inset-0 rounded-2xl bg-[var(--rail-pill)] shadow-sm ring-1 ring-black/5"
+                      transition={{ type: "spring", stiffness: 520, damping: 42 }}
+                    />
+                  )}
+                  <span className="relative w-14 h-14 shrink-0 flex items-center justify-center">
+                    <span
+                      className={`w-9 h-9 flex items-center justify-center rounded-xl ${
+                        isActive ? `bg-gradient-to-br ${PAGE_GRADIENTS[id]} text-white shadow-sm` : ""
+                      }`}
+                    >
+                      <Icon className={`w-5 h-5 transition-transform duration-150 ${isActive ? "" : "group-hover/row:translate-x-0.5"}`} strokeWidth={isActive ? 2.25 : 2} />
+                    </span>
                   </span>
-                  <span className={railLabelClass}>
-                    {label}
-                    {wip && (
-                      <span className="ml-2 px-1.5 py-0.5 rounded-full border border-current text-[10px] font-black uppercase tracking-widest opacity-70">
-                        WIP
-                      </span>
-                    )}
-                  </span>
+                  <span className={railLabelClass}>{label}</span>
+                  {wip && <span className="sr-only">work in progress</span>}
                 </button>
               </React.Fragment>
             );
@@ -172,19 +191,26 @@ export default function Rail({ activePage, setActivePage }) {
 
         <button
           onClick={() => setActivePage("profile")}
-          className={`group/row relative z-10 flex items-center h-14 rounded-2xl overflow-hidden transition-colors shrink-0 mt-1 focus-visible:outline-none ${
-            activePage === "profile"
-              ? `bg-gradient-to-br ${PAGE_GRADIENTS.profile} text-white shadow-lg focus-visible:ring-4 focus-visible:ring-inset focus-visible:ring-white/70`
-              : "text-[#768994] hover:text-[#122027] hover:bg-slate-100 focus-visible:ring-4 focus-visible:ring-inset focus-visible:ring-[#12a0e1]/30"
+          className={`group/row relative z-10 flex items-center h-14 rounded-2xl transition-colors duration-150 shrink-0 mt-1 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#12a0e1]/40 ${
+            activePage === "profile" ? "text-[color:var(--rail-fg-strong)]"
+              : "text-[color:var(--rail-fg)] hover:text-[color:var(--rail-fg-strong)] hover:bg-[var(--rail-hover)]"
           }`}
         >
           {/* The initials tile is inset in its slot, like the icons above it are
               in theirs. Filling the slot put the tile's edge against the label
               with nothing between them. */}
-          <span className="w-14 h-14 shrink-0 flex items-center justify-center">
+          {activePage === "profile" && (
+            <motion.span
+              layoutId="rail-active"
+              aria-hidden
+              className="absolute inset-0 rounded-2xl bg-[var(--rail-pill)] shadow-sm ring-1 ring-black/5"
+              transition={{ type: "spring", stiffness: 520, damping: 42 }}
+            />
+          )}
+          <span className="relative w-14 h-14 shrink-0 flex items-center justify-center">
             <span
-              className={`w-10 h-10 flex items-center justify-center text-sm font-black rounded-xl ${
-                activePage === "profile" ? "" : "bg-slate-100"
+              className={`w-9 h-9 flex items-center justify-center text-xs font-bold rounded-xl ${
+                activePage === "profile" ? `bg-gradient-to-br ${PAGE_GRADIENTS.profile} text-white shadow-sm` : "bg-[var(--rail-tile)] text-[color:var(--rail-fg)]"
               }`}
             >
               {initials || "?"}

@@ -1217,25 +1217,31 @@ const ReviewLinkText = Extension.create({
               if (!label) continue;
               const from = at[m.index];
               const to = at[m.index + m[0].length - 1] + 1;
+              // The widget factory runs later, when `m` has been advanced to null by the loop; keep the address.
+              const address = m[0];
               if (from == null || to == null) continue;
               // Hide the address itself, and draw the label once at its start: an inline decoration is split
               // at every mark boundary, so an attribute with generated content would print the label twice.
               found.push(Decoration.inline(from, to, { class: "review-url-hidden" }));
-              found.push(Decoration.widget(from, () => {
-                const span = document.createElement("span");
-                span.className = "review-link-label";
-                span.textContent = label;
-                span.title = "Open in the Reviewer";
-                // A widget cannot be an anchor when it lands inside one, so the click opens the scheme itself.
-                span.addEventListener("mousedown", (ev) => {
+              // The widget goes after the address, not at its start: at the start it would be a link inside the
+              // note's own link, which the DOM refuses. If the link runs past the end too, it falls back to a
+              // span and navigates on click.
+              const insideLink = state.doc.resolve(to).marks().some((mk) => mk.type.name === "link");
+              found.push(Decoration.widget(to, () => {
+                // A real anchor, not a span with a handler: the browser only hands a custom scheme to the app
+                // when the navigation comes from a link the person actually clicked.
+                const el = document.createElement(insideLink ? "span" : "a");
+                el.className = "review-link-label";
+                if (!insideLink) el.href = address;
+                el.textContent = label;
+                el.title = "Open in the Reviewer";
+                el.addEventListener("click", (ev) => {
                   ev.preventDefault();
-                  const a = document.createElement("a");
-                  a.href = m[0];
-                  a.rel = "noopener noreferrer";
-                  a.click();
+                  ev.stopPropagation();
+                  window.location.href = address;
                 });
-                return span;
-              }, { side: -1 }));
+                return el;
+              }, { side: 1 }));
             }
           });
           return DecorationSet.create(state.doc, found);

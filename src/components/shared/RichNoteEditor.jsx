@@ -1199,7 +1199,9 @@ const ReviewLinkText = Extension.create({
           // market half is a link and the master half is plain text. Read the whole block, find the address
           // there, then map its offsets back to document positions so one label covers all of it.
           state.doc.descendants((node, pos) => {
-            if (!node.isBlock || !node.textContent || !node.textContent.includes("xyireviewer://")) return;
+            // Textblocks only: a bulletList, its listItem and the paragraph all report this text, and each
+            // one produced its own label.
+            if (!node.isTextblock || !node.textContent || !node.textContent.includes("xyireviewer://")) return;
             let text = "";
             const at = []; // text offset -> document position
             node.descendants((child, childPos) => {
@@ -1223,6 +1225,15 @@ const ReviewLinkText = Extension.create({
                 const span = document.createElement("span");
                 span.className = "review-link-label";
                 span.textContent = label;
+                span.title = "Open in the Reviewer";
+                // A widget cannot be an anchor when it lands inside one, so the click opens the scheme itself.
+                span.addEventListener("mousedown", (ev) => {
+                  ev.preventDefault();
+                  const a = document.createElement("a");
+                  a.href = m[0];
+                  a.rel = "noopener noreferrer";
+                  a.click();
+                });
                 return span;
               }, { side: -1 }));
             }

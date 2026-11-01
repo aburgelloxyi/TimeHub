@@ -1195,15 +1195,36 @@ const ReviewLinkText = Extension.create({
       props: {
         decorations(state) {
           const found = [];
+          // An address can be split across text nodes: the autolinker stopped at the first `&`, so the
+          // market half is a link and the master half is plain text. Read the whole block, find the address
+          // there, then map its offsets back to document positions so one label covers all of it.
           state.doc.descendants((node, pos) => {
-            if (!node.isText) return;
-            const text = node.text || "";
+            if (!node.isBlock || !node.textContent || !node.textContent.includes("xyireviewer://")) return;
+            let text = "";
+            const at = []; // text offset -> document position
+            node.descendants((child, childPos) => {
+              if (!child.isText) return;
+              const start = pos + 1 + childPos;
+              for (let i = 0; i < child.text.length; i++) at.push(start + i);
+              text += child.text;
+            });
             const re = /xyireviewer:\/\/\S+/g;
             let m;
             while ((m = re.exec(text)) !== null) {
               const label = reviewLinkLabel(m[0]);
               if (!label) continue;
-              found.push(Decoration.inline(pos + m.index, pos + m.index + m[0].length, { "data-review-label": label }));
+              const from = at[m.index];
+              const to = at[m.index + m[0].length - 1] + 1;
+              if (from == null || to == null) continue;
+              // Hide the address itself, and draw the label once at its start: an inline decoration is split
+              // at every mark boundary, so an attribute with generated content would print the label twice.
+              found.push(Decoration.inline(from, to, { class: "review-url-hidden" }));
+              found.push(Decoration.widget(from, () => {
+                const span = document.createElement("span");
+                span.className = "review-link-label";
+                span.textContent = label;
+                return span;
+              }, { side: -1 }));
             }
           });
           return DecorationSet.create(state.doc, found);

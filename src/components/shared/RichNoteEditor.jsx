@@ -1,6 +1,8 @@
 import React, { useEffect, useRef, useState, useCallback } from "react";
 import { createPortal } from "react-dom";
-import Link from "@tiptap/extension-link";
+import { Extension } from "@tiptap/core";
+import { Plugin, PluginKey } from "@tiptap/pm/state";
+import { Decoration, DecorationSet } from "@tiptap/pm/view";
 import { reviewLinkLabel } from "../../lib/reviewLinkLabel";
 import { useEditor, EditorContent, NodeViewWrapper, ReactNodeViewRenderer } from "@tiptap/react";
 import { Node, mergeAttributes } from "@tiptap/core";
@@ -521,15 +523,14 @@ function NoteEditor({
         heading: { levels: [2, 3] },
         // xyireviewer:// and xyimotion:// are the studio's own apps (XYi Reviewer, XYi in Motion): their links are
         // links too, so one written in the Hub (a name over the address) keeps its address here and opens the app.
-        link: false,
+        link: { openOnClick: false, autolink: true, protocols: ["xyireviewer", "xyimotion"], HTMLAttributes: { rel: "noopener noreferrer", target: "_blank" } },
         // Yjs owns undo/redo when collaborating: StarterKit's history is
         // per-editor, so leaving it on would let one person's ctrl-Z revert a
         // colleague's edit. Collaboration ships a history that only undoes
         // your own changes.
         ...(collab ? { undoRedo: false } : {}),
       }),
-      ReviewLink.configure({ openOnClick: false, autolink: true, protocols: ["xyireviewer", "xyimotion"],
-                             HTMLAttributes: { rel: "noopener noreferrer", target: "_blank" } }),
+      ReviewLinkText,
       Placeholder.configure({ placeholder }),
       TaskList,
       TaskItem.configure({ nested: true }),
@@ -1183,12 +1184,64 @@ function NoteEditor({
 // can't be handed one later. So this gates rendering until both are ready
 // rather than trying to attach them after mount.
 // ---------------------------------------------------------------------------
-// A review link keeps its address and its stored text; only what is drawn changes, so notes written before this
-// existed read the same way. The label comes from the paths inside the link (see lib/reviewLinkLabel).
-const ReviewLink = Link.extend({
-  renderHTML({ HTMLAttributes }) {
-    const label = reviewLinkLabel(HTMLAttributes.href || "");
-    return ["a", mergeAttributes(this.options.HTMLAttributes, HTMLAttributes, label ? { "data-review-label": label } : {}), 0];
+// A review link is usually **plain text** in a note: autolink only fires while typing, so everything pasted or
+// written before this existed is not a link mark at all. A decoration finds those addresses wherever they sit
+// and labels them for display, leaving the document — and what copying gives — exactly as it was.
+const ReviewLinkText = Extension.create({
+  name: "reviewLinkText",
+  addProseMirrorPlugins() {
+    return [new Plugin({
+      key: new PluginKey("reviewLinkText"),
+      props: {
+        decorations(state) {
+          const found = [];
+          // An address can be split across text nodes: the autolinker stopped at the first `&`, so the
+          // market half is a link and the master half is plain text. Read the whole block, find the address
+          // there, then map its offsets back to document positions so one label covers all of it.
+          state.doc.descendants((node, pos) => {
+            // Textblocks only: a bulletList, its listItem and the paragraph all report this text, and each
+            // one produced its own label.
+            if (!node.isTextblock || !node.textContent || !node.textContent.includes("xyireviewer://")) return;
+            let text = "";
+            const at = []; // text offset -> document position
+            node.descendants((child, childPos) => {
+              if (!child.isText) return;
+              const start = pos + 1 + childPos;
+              for (let i = 0; i < child.text.length; i++) at.push(start + i);
+              text += child.text;
+            });
+            const re = /xyireviewer:\/\/\S+/g;
+            let m;
+            while ((m = re.exec(text)) !== null) {
+              const label = reviewLinkLabel(m[0]);
+              if (!label) continue;
+              const from = at[m.index];
+              const to = at[m.index + m[0].length - 1] + 1;
+              if (from == null || to == null) continue;
+              // Hide the address itself, and draw the label once at its start: an inline decoration is split
+              // at every mark boundary, so an attribute with generated content would print the label twice.
+              found.push(Decoration.inline(from, to, { class: "review-url-hidden" }));
+              found.push(Decoration.widget(from, () => {
+                const span = document.createElement("span");
+                span.className = "review-link-label";
+                span.textContent = label;
+                span.title = "Open in the Reviewer";
+                // A widget cannot be an anchor when it lands inside one, so the click opens the scheme itself.
+                span.addEventListener("mousedown", (ev) => {
+                  ev.preventDefault();
+                  const a = document.createElement("a");
+                  a.href = m[0];
+                  a.rel = "noopener noreferrer";
+                  a.click();
+                });
+                return span;
+              }, { side: -1 }));
+            }
+          });
+          return DecorationSet.create(state.doc, found);
+        },
+      },
+    })];
   },
 });
 

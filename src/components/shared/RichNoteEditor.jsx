@@ -1,5 +1,7 @@
 import React, { useEffect, useRef, useState, useCallback } from "react";
 import { createPortal } from "react-dom";
+import Link from "@tiptap/extension-link";
+import { reviewLinkLabel } from "../../lib/reviewLinkLabel";
 import { useEditor, EditorContent, NodeViewWrapper, ReactNodeViewRenderer } from "@tiptap/react";
 import { Node, mergeAttributes } from "@tiptap/core";
 import StarterKit from "@tiptap/starter-kit";
@@ -519,13 +521,15 @@ function NoteEditor({
         heading: { levels: [2, 3] },
         // xyireviewer:// and xyimotion:// are the studio's own apps (XYi Reviewer, XYi in Motion): their links are
         // links too, so one written in the Hub (a name over the address) keeps its address here and opens the app.
-        link: { openOnClick: false, autolink: true, protocols: ["xyireviewer", "xyimotion"], HTMLAttributes: { rel: "noopener noreferrer", target: "_blank" } },
+        link: false,
         // Yjs owns undo/redo when collaborating: StarterKit's history is
         // per-editor, so leaving it on would let one person's ctrl-Z revert a
         // colleague's edit. Collaboration ships a history that only undoes
         // your own changes.
         ...(collab ? { undoRedo: false } : {}),
       }),
+      ReviewLink.configure({ openOnClick: false, autolink: true, protocols: ["xyireviewer", "xyimotion"],
+                             HTMLAttributes: { rel: "noopener noreferrer", target: "_blank" } }),
       Placeholder.configure({ placeholder }),
       TaskList,
       TaskItem.configure({ nested: true }),
@@ -1179,6 +1183,15 @@ function NoteEditor({
 // can't be handed one later. So this gates rendering until both are ready
 // rather than trying to attach them after mount.
 // ---------------------------------------------------------------------------
+// A review link keeps its address and its stored text; only what is drawn changes, so notes written before this
+// existed read the same way. The label comes from the paths inside the link (see lib/reviewLinkLabel).
+const ReviewLink = Link.extend({
+  renderHTML({ HTMLAttributes }) {
+    const label = reviewLinkLabel(HTMLAttributes.href || "");
+    return ["a", mergeAttributes(this.options.HTMLAttributes, HTMLAttributes, label ? { "data-review-label": label } : {}), 0];
+  },
+});
+
 export default function RichNoteEditor(props) {
   const { collabRoom } = props;
   if (!collabRoom) return <NoteEditor {...props} />;

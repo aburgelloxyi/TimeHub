@@ -522,4 +522,11 @@ html.dark-theme .home-mark {
   color: #ffffff;
   border-color: rgb(255 255 255 / 0.14);
   background-color: rgb(255 255 255 / 0.05);
+/* A review link drawn as the sentence it means, not as a path. The stored text and address are untouched;
+   only the glyphs shown are replaced, and the whole link stays clickable. */
+a[data-review-label] { font-size: 0; letter-spacing: 0; }
+a[data-review-label]::after {
+  content: attr(data-review-label);
+  font-size: 0.95rem;
+  letter-spacing: normal;
 }

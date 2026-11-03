@@ -70,9 +70,7 @@ const REVIEWER_LINK_PAGE = `<!doctype html><html lang="en"><meta charset="utf-8"
 [hidden]{display:none!important}
 body{margin:0;min-height:100vh;display:grid;place-items:center;padding:32px;background:radial-gradient(1200px 600px at 50% -10%,#1d3a47 0%,#122027 55%,#0c161b 100%);color:#e8eef1;font:15px/1.45 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
 .card{width:min(620px,100%);background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.08);border-radius:20px;padding:28px 28px 22px;box-shadow:0 30px 80px rgba(0,0,0,.35)}
-.app{display:flex;align-items:center;gap:10px;font-size:12px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:#7cb9ab}
-.dot{width:8px;height:8px;border-radius:50%;background:#7cb9ab;box-shadow:0 0 0 0 rgba(124,185,171,.6);animation:pulse 1.6s ease-out infinite}
-@keyframes pulse{to{box-shadow:0 0 0 10px rgba(124,185,171,0)}}
+.app{display:flex;align-items:center;font-size:12px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:#7cb9ab}
 h1{margin:10px 0 4px;font-size:24px;line-height:1.2;letter-spacing:-.01em}
 .sub{margin:0;color:#93a6b0;font-size:13px}
 .chips{display:flex;flex-wrap:wrap;gap:6px;margin:18px 0 6px}
@@ -94,7 +92,7 @@ code{display:block;margin-top:8px;padding:10px 12px;border-radius:10px;backgroun
 .bad h1{color:#f3b7a6}
 </style>
 <div class="card" id="card">
-  <div class="app"><span class="dot"></span>XYi Reviewer</div>
+  <div class="app">XYi Reviewer</div>
   <h1 id="title">Opening in XYi Reviewer…</h1>
   <p class="sub" id="sub"></p>
   <div class="chips" id="chips"></div>
@@ -117,7 +115,6 @@ code{display:block;margin-top:8px;padding:10px 12px;border-radius:10px;backgroun
     el("card").className = "card bad";
     el("title").textContent = "That is not an XYi Reviewer link.";
     el("sub").textContent = "Copy the link again from the Reviewer: Copy Link to This Review, or to This Batch.";
-    el("card").querySelector(".dot").style.animation = "none";
     return;
   }
 

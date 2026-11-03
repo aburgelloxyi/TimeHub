@@ -62,23 +62,103 @@ const handleGoogle = makeGoogleAuth({
 // `/r#<uri-encoded xyireviewer://…>`: the page a Wrike comment links to. The link rides in the fragment, which
 // the browser never sends, so a NAS path never reaches the Worker or its logs. The page is fixed text: the link
 // is read and checked in the browser and only ever set as text or an href, never written into the HTML.
-const REVIEWER_LINK_PAGE = `<!doctype html><meta charset="utf-8"><title>Open in XYi Reviewer</title>
+const REVIEWER_LINK_PAGE = `<!doctype html><html lang="en"><meta charset="utf-8"><title>Open in XYi Reviewer</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="referrer" content="no-referrer">
-<style>body{font:15px -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;background:#0f172a;color:#e2e8f0;display:grid;place-items:center;min-height:100vh;margin:0;padding:24px}a{display:inline-block;background:#1cc1a5;color:#062b26;font-weight:700;padding:12px 18px;border-radius:12px;text-decoration:none}code{display:block;max-width:70ch;word-break:break-all;color:#94a3b8;font-size:12px;margin-top:18px}</style>
-<div style="text-align:center"><p id="say">Opening in XYi Reviewer…</p><a id="go" hidden>Open in XYi Reviewer</a><code id="link"></code></div>
+<style>
+*{box-sizing:border-box}
+[hidden]{display:none!important}
+body{margin:0;min-height:100vh;display:grid;place-items:center;padding:32px;background:radial-gradient(1200px 600px at 50% -10%,#1d3a47 0%,#122027 55%,#0c161b 100%);color:#e8eef1;font:15px/1.45 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
+.card{width:min(620px,100%);background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.08);border-radius:20px;padding:28px 28px 22px;box-shadow:0 30px 80px rgba(0,0,0,.35)}
+.app{display:flex;align-items:center;gap:10px;font-size:12px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:#7cb9ab}
+.dot{width:8px;height:8px;border-radius:50%;background:#7cb9ab;box-shadow:0 0 0 0 rgba(124,185,171,.6);animation:pulse 1.6s ease-out infinite}
+@keyframes pulse{to{box-shadow:0 0 0 10px rgba(124,185,171,0)}}
+h1{margin:10px 0 4px;font-size:24px;line-height:1.2;letter-spacing:-.01em}
+.sub{margin:0;color:#93a6b0;font-size:13px}
+.chips{display:flex;flex-wrap:wrap;gap:6px;margin:18px 0 6px}
+.chip{font-size:12px;font-weight:600;padding:4px 10px;border-radius:999px;background:rgba(255,255,255,.07);border:1px solid rgba(255,255,255,.08);color:#d5e0e5}
+.files{margin:16px 0 0;display:grid;gap:10px}
+.file{display:grid;grid-template-columns:72px 1fr;gap:12px;align-items:baseline;padding:12px 14px;border-radius:12px;background:rgba(0,0,0,.18)}
+.file b{font-size:11px;letter-spacing:.08em;text-transform:uppercase}
+.file .market{color:#7cb9ab}.file .master{color:#68a2d9}
+.file span{font-size:13.5px;font-weight:600;overflow-wrap:anywhere}
+.actions{display:flex;flex-wrap:wrap;align-items:center;gap:12px;margin-top:22px}
+a.go{display:inline-flex;align-items:center;gap:8px;background:#7cb9ab;color:#0c1a1f;font-weight:700;padding:12px 20px;border-radius:12px;text-decoration:none;transition:transform .15s,filter .15s}
+a.go:hover{transform:translateY(-1px);filter:brightness(1.07)}
+button{font:inherit;font-size:13px;font-weight:600;color:#c4d3da;background:none;border:1px solid rgba(255,255,255,.14);border-radius:12px;padding:11px 16px;cursor:pointer}
+button:hover{background:rgba(255,255,255,.06)}
+.help{margin:18px 0 0;font-size:12.5px;color:#7f939d}
+details{margin-top:14px;font-size:12px;color:#7f939d}
+summary{cursor:pointer}
+code{display:block;margin-top:8px;padding:10px 12px;border-radius:10px;background:rgba(0,0,0,.25);color:#9fb2bb;font:11.5px/1.5 ui-monospace,Menlo,monospace;word-break:break-all}
+.bad h1{color:#f3b7a6}
+</style>
+<div class="card" id="card">
+  <div class="app"><span class="dot"></span>XYi Reviewer</div>
+  <h1 id="title">Opening in XYi Reviewer…</h1>
+  <p class="sub" id="sub"></p>
+  <div class="chips" id="chips"></div>
+  <div class="files" id="files"></div>
+  <div class="actions" id="actions" hidden><a class="go" id="go">Open in XYi Reviewer</a><button id="copy" type="button">Copy link</button></div>
+  <p class="help" id="help" hidden>Nothing happened? The Reviewer has to be on this Mac and the campaign's share connected. The first time, your browser asks whether to open it.</p>
+  <details id="raw" hidden><summary>Full link</summary><code id="link"></code></details>
+</div>
 <script>
 (function () {
+  function el(id) { return document.getElementById(id); }
+  function add(parent, tag, cls, text) { var n = document.createElement(tag); if (cls) n.className = cls; n.textContent = text; parent.appendChild(n); return n; }
+  function nice(s) { return String(s || "").replace(/_/g, " "); }
+  function file(p) { return String(p || "").split("/").pop().replace(/\\.[^.]+$/, "").replace(/_/g, "_\\u200b"); }
+
   var raw = location.hash.slice(1) || new URLSearchParams(location.search).get("u") || "";
   var link = "";
   try { link = decodeURIComponent(raw); } catch (e) { link = raw; }
   if (link.toLowerCase().indexOf("xyireviewer://") !== 0) {
-    document.getElementById("say").textContent = "That is not an XYi Reviewer link.";
+    el("card").className = "card bad";
+    el("title").textContent = "That is not an XYi Reviewer link.";
+    el("sub").textContent = "Copy the link again from the Reviewer: Copy Link to This Review, or to This Batch.";
+    el("card").querySelector(".dot").style.animation = "none";
     return;
   }
-  var go = document.getElementById("go");
-  go.href = link;
-  go.hidden = false;
-  document.getElementById("link").textContent = link;
+
+  var q = {};
+  try {
+    var u = new URL(link);
+    u.searchParams.forEach(function (v, k) { q[k] = v; });
+    var what = (u.host || u.pathname.replace(/^\\/+/, "")).toLowerCase();
+  } catch (e) { what = ""; }
+
+  // Where the market sits: the country is the folder holding Renders, the batch the folder inside it.
+  var path = q.market || q.folder || "";
+  var parts = path.split("/");
+  var at = parts.indexOf("Renders");
+  var chips = [];
+  if (at > 0) chips.push(nice(parts[at - 1]));
+  if (at > 0 && parts[at + 1] && at + 1 < parts.length - (q.market ? 1 : 0)) chips.push(nice(parts[at + 1]));
+  if (q.frame) chips.push("Frame " + q.frame);
+  if (q.view) chips.push(q.view.charAt(0).toUpperCase() + q.view.slice(1) + " view");
+  chips.forEach(function (c) { add(el("chips"), "span", "chip", c); });
+
+  if (what === "review") {
+    el("sub").textContent = "A whole batch, each render with its master" + (q.render ? ", opening on one of them." : ".");
+    if (q.render) {
+      var r = add(el("files"), "div", "file", "");
+      add(r, "b", "market", "Opens on"); add(r, "span", "", file(q.render));
+    }
+  } else {
+    el("sub").textContent = "A market render beside its approved master.";
+    if (q.market) { var m = add(el("files"), "div", "file", ""); add(m, "b", "market", "Market"); add(m, "span", "", file(q.market)); }
+    if (q.master) { var o = add(el("files"), "div", "file", ""); add(o, "b", "master", "Master"); add(o, "span", "", file(q.master)); }
+  }
+
+  el("go").href = link;
+  el("actions").hidden = false;
+  el("help").hidden = false;
+  el("raw").hidden = false;
+  el("link").textContent = link;
+  el("copy").onclick = function () {
+    navigator.clipboard && navigator.clipboard.writeText(location.href).then(function () { el("copy").textContent = "Copied"; });
+  };
   location.href = link;
 })();
 </script>`;

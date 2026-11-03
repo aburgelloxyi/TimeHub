@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { AlertTriangle, Check, ChevronLeft, Image as ImageIcon, Plus } from "lucide-react";
+import { AlertTriangle, Check, ChevronLeft, Clapperboard, Image as ImageIcon, Plus, Printer } from "lucide-react";
 import { CLIENTS } from "../../lib/orderForms/driveTree";
 import { posterKey, studioKey } from "../../lib/filmPosters";
 
@@ -20,6 +20,15 @@ const LOOK = {
   amazonmgm: { gradient: "from-[#2a1f0a] via-[#6b4a12] to-[#1d1507]", tint: "from-[#6b4a12]/90 to-[#1d1507]/90" },
   dropped: { gradient: "from-[#2b3440] via-[#3a4757] to-[#222a35]", tint: "from-[#3a4757]/90 to-[#222a35]/90" },
 };
+
+// Motion and Print in the XYi apps' own colours for the two sides: After Effects purple, InDesign pink.
+const MEDIA = {
+  Motion: { colour: "#a78bfa", Icon: Clapperboard },
+  Print: { colour: "#ee6fa5", Icon: Printer },
+};
+
+// One film however its order forms spell it: "Focker In-Law" and "Focker In Law" are the same film.
+const filmKey = (title) => String(title || "").toLowerCase().replace(/[^a-z0-9]+/g, "");
 
 const initials = (title) => {
   const words = String(title || "").split(/[^A-Za-z0-9]+/).filter(Boolean);
@@ -64,26 +73,36 @@ export default function StudioGrid({ files, posters, titleOf, staleness, deliver
 
   const current = studios.find((s) => s.id === studio) || null;
 
-  // The same film loaded twice (Motion and Print) is one card: one title, both chips, markets added up.
+  // The same film loaded twice (Motion and Print) is one card: one title, a button for each side, markets added up.
   const films = useMemo(() => {
     const by = new Map();
     for (const f of current?.films || []) {
       const title = titleOf(f);
-      const key = String(title).trim().toLowerCase().replace(/\s+/g, " ");
-      const at = by.get(key) || { key, title, files: [], markets: 0, media: [], delivered: true, stale: null };
+      const key = filmKey(title);
+      const at = by.get(key) || { key, title, titles: [], files: [], markets: 0, sides: {}, delivered: true, stale: null };
       at.files.push(f);
+      if (!at.titles.includes(title)) at.titles.push(title);
       at.markets += readableMarkets(f);
       const medium = mediumOf(f);
-      if (!at.media.includes(medium)) at.media.push(medium);
+      const side = at.sides[medium] || { file: f, markets: 0 };
+      side.markets += readableMarkets(f);
+      at.sides[medium] = side;
       if (!delivered(f)) at.delivered = false;
       const st = staleness(f);
       if (st && !at.stale) at.stale = st;
       by.set(key, at);
     }
-    // Motion leads, since that is the detail the FilmBar opens on; Print is a toggle away.
-    for (const at of by.values()) at.primary = at.files.find((f) => mediumOf(f) === "Motion") || at.files[0];
+    for (const at of by.values()) {
+      // Motion leads, since that is the detail the FilmBar opens on; Print is a toggle away.
+      at.primary = at.sides.Motion?.file || at.files[0];
+      at.media = ["Motion", "Print"].filter((m) => at.sides[m]);
+      // The poster saved under any of the film's spellings, and the title that has it.
+      const withPoster = at.titles.find((t) => posters[posterKey(current.id, t)]);
+      at.poster = withPoster ? posters[posterKey(current.id, withPoster)] : null;
+      at.title = withPoster || titleOf(at.primary);
+    }
     return [...by.values()];
-  }, [current?.films, titleOf, delivered, staleness]);
+  }, [current, posters, titleOf, delivered, staleness]);
 
   if (!current) {
     return (
@@ -98,6 +117,8 @@ export default function StudioGrid({ files, posters, titleOf, staleness, deliver
             const image = posters[studioKey(s.id)];
             const key = `studio:${s.id}`;
             const shown = revealed === key;
+            // Films, not order forms: a film loaded for Motion and for Print is one.
+            const count = new Set(s.films.map((f) => filmKey(titleOf(f)))).size;
             return (
               <div key={s.id} className="list-row-in group relative" style={{ "--i": Math.min(i, 6) }} onMouseEnter={() => rest(key)} onMouseLeave={leave}>
                 <button
@@ -118,7 +139,7 @@ export default function StudioGrid({ files, posters, titleOf, staleness, deliver
                       <div className="min-w-0">
                         <p className="font-display text-2xl font-bold tracking-tight text-white">{labelOf(s.id)}</p>
                         <p className="mt-0.5 text-xs font-medium text-white/75">
-                          {s.films.length} {s.films.length === 1 ? "film" : "films"} · {s.markets} {s.markets === 1 ? "market" : "markets"}
+                          {count} {count === 1 ? "film" : "films"} · {s.markets} {s.markets === 1 ? "market" : "markets"}
                         </p>
                       </div>
                       <span className="shrink-0 rounded-xl bg-white/10 px-3 py-1.5 text-[11px] font-bold text-white ring-1 ring-white/25 transition-colors group-hover:bg-white/25">
@@ -166,31 +187,69 @@ export default function StudioGrid({ files, posters, titleOf, staleness, deliver
         <div className="grid gap-5 grid-cols-2 sm:grid-cols-3 md:grid-cols-4 xl:grid-cols-5">
           {films.map((g, i) => {
             const look = LOOK[current.id] || LOOK.dropped;
-            const poster = posters[posterKey(current.id, g.title)];
             const key = `film:${g.key}`;
             const shown = revealed === key;
+            const open = (file) => onOpen(file.id);
             return (
               <div key={g.key} className="list-row-in group relative" style={{ "--i": Math.min(i, 10) }} onMouseEnter={() => rest(key)} onMouseLeave={leave}>
-                <button onClick={() => onOpen(g.primary.id)} className="press block w-full text-left">
-                  <div className="relative aspect-[2/3] overflow-hidden rounded-xl bg-slate-200 shadow-sm ring-1 ring-black/5 transition-[transform,box-shadow] duration-300 ease-out group-hover:-translate-y-1 group-hover:shadow-xl">
-                    <div className={`absolute inset-0 flex items-center justify-center bg-gradient-to-br ${look.tint}`}>
-                      <span className="font-display text-3xl font-bold text-white/75">{initials(g.title)}</span>
+                <div
+                  role="button"
+                  tabIndex={0}
+                  onClick={() => open(g.primary)}
+                  onKeyDown={(e) => { if (e.target === e.currentTarget && (e.key === "Enter" || e.key === " ")) { e.preventDefault(); open(g.primary); } }}
+                  className="press block w-full cursor-pointer text-left outline-none"
+                >
+                  <div className="relative aspect-[2/3] overflow-hidden rounded-xl bg-slate-900 shadow-sm ring-1 ring-black/5 transition-[transform,box-shadow] duration-300 ease-out group-hover:-translate-y-1 group-hover:shadow-2xl group-focus-within:ring-2 group-focus-within:ring-white/60">
+                    {/* No poster yet: the title itself, set large, rather than two initials. */}
+                    <div className={`absolute inset-0 flex flex-col justify-center bg-gradient-to-br p-5 ${look.tint}`}>
+                      <span className="font-display text-5xl font-bold leading-none text-white/15">{initials(g.title)}</span>
+                      <span className="mt-3 font-display text-2xl font-bold leading-tight tracking-tight text-white/90">{g.title}</span>
                     </div>
-                    {poster && (
+                    {g.poster && (
                       <img
-                        src={poster}
+                        src={g.poster}
                         alt=""
-                        className="absolute inset-0 h-full w-full object-cover transition-transform duration-700 ease-out group-hover:scale-[1.04]"
+                        className="absolute inset-0 h-full w-full object-cover transition-transform duration-700 ease-out group-hover:scale-[1.05]"
                         onError={(e) => { e.currentTarget.style.display = "none"; }}
                       />
                     )}
-                    <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/75 via-black/30 to-transparent p-3">
-                      <p className="line-clamp-2 text-sm font-bold text-white">{g.title}</p>
-                      <div className="mt-1.5 flex flex-wrap gap-1">
-                        {g.media.map((m) => (
-                          <span key={m} className="rounded bg-white/20 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide text-white">{m}</span>
-                        ))}
+                    {/* A light sweep across the poster on hover. */}
+                    <div className="pointer-events-none absolute inset-0 -translate-x-full bg-gradient-to-r from-transparent via-white/15 to-transparent transition-transform duration-1000 ease-out group-hover:translate-x-full" />
+                    {/* Dark enough under the title that a poster's own lettering never fights it. */}
+                    <div className={`absolute inset-x-0 bottom-0 bg-gradient-to-t to-transparent ${g.poster ? "h-3/5 from-black via-black/75" : "h-1/4 from-black/70"}`} />
+                    <div className="absolute inset-x-0 bottom-0 p-3 pb-4">
+                      {g.poster && <p className="line-clamp-2 font-display text-base font-bold leading-snug text-white drop-shadow">{g.title}</p>}
+                      <p className="mt-0.5 text-[11px] font-medium text-white/60">
+                        {g.markets} {g.markets === 1 ? "market" : "markets"}
+                        {g.stale ? (g.stale.gone ? " · gone from Drive" : ` · ${g.stale.left} left`) : ""}
+                      </p>
+                      <div className="mt-2 flex flex-wrap gap-1.5">
+                        {g.media.map((m) => {
+                          const { colour, Icon } = MEDIA[m];
+                          const side = g.sides[m];
+                          return (
+                            <button
+                              key={m}
+                              onClick={(e) => { e.stopPropagation(); open(side.file); }}
+                              title={`Open the ${m.toLowerCase()} orders`}
+                              className="flex items-center gap-1 rounded-md px-2 py-1 text-[10px] font-bold uppercase tracking-wide text-white ring-1 backdrop-blur transition-colors"
+                              style={{ background: `${colour}33`, "--tw-ring-color": `${colour}88` }}
+                              onMouseEnter={(e) => { e.currentTarget.style.background = `${colour}66`; }}
+                              onMouseLeave={(e) => { e.currentTarget.style.background = `${colour}33`; }}
+                            >
+                              <Icon className="h-3 w-3" style={{ color: colour }} strokeWidth={2.5} />
+                              {m}
+                              <span className="font-semibold text-white/70">{side.markets}</span>
+                            </button>
+                          );
+                        })}
                       </div>
+                    </div>
+                    {/* Motion and Print's share of the film's markets, along the bottom edge. */}
+                    <div className="absolute inset-x-0 bottom-0 flex h-1">
+                      {g.media.map((m) => (
+                        <div key={m} style={{ flexGrow: g.sides[m].markets || 1, background: MEDIA[m].colour }} />
+                      ))}
                     </div>
                     {g.delivered && (
                       <span className="absolute left-2 top-2 flex h-6 w-6 items-center justify-center rounded-full bg-[#1cc1a5] text-white shadow" title="Every market delivered">
@@ -203,10 +262,7 @@ export default function StudioGrid({ files, posters, titleOf, staleness, deliver
                       </span>
                     )}
                   </div>
-                  <p className="mt-2 text-xs font-medium text-[#768994]">
-                    {g.markets} markets{g.stale ? (g.stale.gone ? " · gone from Drive" : ` · ${g.stale.left} left`) : ""}
-                  </p>
-                </button>
+                </div>
                 {canEdit && (
                   <button
                     onClick={(e) => { e.stopPropagation(); onSetPoster(g.primary); }}

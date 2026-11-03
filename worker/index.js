@@ -121,7 +121,7 @@ export default {
     // A Wrike comment only links http(s), and the Reviewer's links use the xyireviewer scheme, so a comment
     // carries this URL and this page hands the browser the app's. Only that scheme is allowed: this must never
     // become an open redirect.
-    if (url.pathname === "/r") return reviewerLinkPage(url);
+    if (url.pathname === "/r" || url.pathname === "/api/r") return reviewerLinkPage(url);
     if (url.pathname === "/api/jobs-feed/import" && request.method === "POST") {
       return handleJobsFeedImport(request, env);
     }

@@ -650,7 +650,7 @@ export default function App() {
               <Management wrikeUserId={wrikeUserId} department={department} wrikeData={globalWrikeData} />
             )}
             {activePage === "jobbook" && (canOpen("jobbook") ? <JobBook /> : <PageLoading />)}
-            {activePage === "orderforms" && (canOpen("orderforms") ? <OrderForms wrikeData={globalWrikeData} /> : <PageLoading />)}
+            {activePage === "orderforms" && (canOpen("orderforms") ? <OrderForms wrikeData={globalWrikeData} isAdmin={isAdmin} /> : <PageLoading />)}
             </Suspense>
             </AppErrorBoundary>
           </motion.div>

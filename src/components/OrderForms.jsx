@@ -60,7 +60,7 @@ const readAt = (iso) => new Date(iso).toLocaleTimeString([], { hour: "2-digit", 
 
 // wrikeData is the app's already-loaded Wrike tasks, used only to mark orders
 // that exist there. See lib/orderForms/wrikeMatch.js for what it can't see.
-export default function OrderForms({ wrikeData }) {
+export default function OrderForms({ wrikeData, isAdmin = false }) {
   const [files, setFiles] = useState(null); // null until the store has answered
   const [view, setView] = useState(readHash);
   // The picture on each film's card, by pasted URL. Empty until the shared map answers.
@@ -527,6 +527,7 @@ export default function OrderForms({ wrikeData }) {
             onOpen={(id) => { setEditingSheets(false); go(id, null); }}
             onSetPoster={setFilmPoster}
             onSetStudioImage={setStudioImage}
+            canEdit={isAdmin}
           />
         )}
       </div>

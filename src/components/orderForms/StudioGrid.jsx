@@ -1,16 +1,18 @@
-import { useMemo, useState } from "react";
-import { AlertTriangle, Check, ChevronLeft, Image as ImageIcon, Layers, Plus } from "lucide-react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { AlertTriangle, Check, ChevronLeft, Image as ImageIcon, Plus } from "lucide-react";
 import { CLIENTS } from "../../lib/orderForms/driveTree";
 import { posterKey, studioKey } from "../../lib/filmPosters";
 
 // Client Orders' front door: the studios as cards, then one studio's films as
-// posters, instead of the two pickers. Choosing a film hands back to the page,
-// which opens it exactly as the switcher would. Nothing here writes except a
-// picture's URL, and only when someone asks for it.
+// posters, instead of the two pickers. A film loaded for both Motion and Print
+// is one card, with a chip for each, because it is one film to choose.
+//
+// Nothing here writes except a picture's URL, and only an admin can start that:
+// the button stays hidden until the pointer has rested on the card for two
+// seconds, so it never sits in the way of choosing a film.
 
-// Amazon MGM has no Drive folder in the list yet, but the studio is real and
-// the card should be there to take one when it arrives.
 const EXTRA_STUDIOS = [{ id: "amazonmgm", label: "Amazon MGM" }];
+const HOVER_DELAY = 2000;
 
 const LOOK = {
   universal: { gradient: "from-[#0b2c6b] via-[#123f95] to-[#0d2a60]", tint: "from-[#123f95]/90 to-[#0b2c6b]/90" },
@@ -27,30 +29,61 @@ const initials = (title) => {
 const studioOf = (file) => file.source?.clientId || "dropped";
 const labelOf = (id) =>
   CLIENTS.find((c) => c.id === id)?.label || EXTRA_STUDIOS.find((s) => s.id === id)?.label || "Dropped files";
+const mediumOf = (file) =>
+  file.kind === "print" || /print/i.test(String(file.name || "")) ? "Print" : "Motion";
+const readableMarkets = (file) => (file.markets || []).filter((m) => !m.unreadable).length;
 
-export default function StudioGrid({ files, posters, titleOf, staleness, delivered, onOpen, onSetPoster, onSetStudioImage }) {
+export default function StudioGrid({ files, posters, titleOf, staleness, delivered, onOpen, onSetPoster, onSetStudioImage, canEdit = false }) {
   const [studio, setStudio] = useState(null);
+  const [revealed, setRevealed] = useState(null);
+  const timer = useRef(null);
 
-  // Every studio card, in the clients' order, then Amazon MGM, then dropped workbooks. A studio with no films
-  // still gets a card: it is somewhere to put one.
+  // The picture button after two seconds of rest, and gone the moment the pointer leaves.
+  const rest = (key) => {
+    if (!canEdit) return;
+    clearTimeout(timer.current);
+    timer.current = setTimeout(() => setRevealed(key), HOVER_DELAY);
+  };
+  const leave = () => { clearTimeout(timer.current); setRevealed(null); };
+  useEffect(() => () => clearTimeout(timer.current), []);
+
   const studios = useMemo(() => {
     const by = new Map();
     for (const f of files || []) {
       const id = studioOf(f);
-      const at = by.get(id) || { id, films: [], markets: 0, delivered: 0 };
+      const at = by.get(id) || { id, films: [], markets: 0 };
       at.films.push(f);
-      at.markets += (f.markets || []).filter((m) => !m.unreadable).length;
-      if (delivered(f)) at.delivered += 1;
+      at.markets += readableMarkets(f);
       by.set(id, at);
     }
     const order = [...CLIENTS.map((c) => c.id), ...EXTRA_STUDIOS.map((s) => s.id)];
-    const empty = (id) => ({ id, films: [], markets: 0, delivered: 0 });
-    const out = order.map((id) => by.get(id) || empty(id));
+    const out = order.map((id) => by.get(id) || { id, films: [], markets: 0 });
     if (by.has("dropped")) out.push(by.get("dropped"));
     return out;
-  }, [files, delivered]);
+  }, [files]);
 
   const current = studios.find((s) => s.id === studio) || null;
+
+  // The same film loaded twice (Motion and Print) is one card: one title, both chips, markets added up.
+  const films = useMemo(() => {
+    const by = new Map();
+    for (const f of current?.films || []) {
+      const title = titleOf(f);
+      const key = String(title).trim().toLowerCase().replace(/\s+/g, " ");
+      const at = by.get(key) || { key, title, files: [], markets: 0, media: [], delivered: true, stale: null };
+      at.files.push(f);
+      at.markets += readableMarkets(f);
+      const medium = mediumOf(f);
+      if (!at.media.includes(medium)) at.media.push(medium);
+      if (!delivered(f)) at.delivered = false;
+      const st = staleness(f);
+      if (st && !at.stale) at.stale = st;
+      by.set(key, at);
+    }
+    // Motion leads, since that is the detail the FilmBar opens on; Print is a toggle away.
+    for (const at of by.values()) at.primary = at.files.find((f) => mediumOf(f) === "Motion") || at.files[0];
+    return [...by.values()];
+  }, [current?.films, titleOf, delivered, staleness]);
 
   if (!current) {
     return (
@@ -63,8 +96,10 @@ export default function StudioGrid({ files, posters, titleOf, staleness, deliver
           {studios.map((s, i) => {
             const look = LOOK[s.id] || LOOK.dropped;
             const image = posters[studioKey(s.id)];
+            const key = `studio:${s.id}`;
+            const shown = revealed === key;
             return (
-              <div key={s.id} className="list-row-in group relative" style={{ "--i": Math.min(i, 6) }}>
+              <div key={s.id} className="list-row-in group relative" style={{ "--i": Math.min(i, 6) }} onMouseEnter={() => rest(key)} onMouseLeave={leave}>
                 <button
                   onClick={() => setStudio(s.id)}
                   className="relative block w-full overflow-hidden rounded-2xl text-left shadow-sm ring-1 ring-black/5 transition-[transform,box-shadow] duration-300 ease-out hover:-translate-y-1 hover:shadow-xl"
@@ -84,23 +119,23 @@ export default function StudioGrid({ files, posters, titleOf, staleness, deliver
                         <p className="font-display text-2xl font-bold tracking-tight text-white">{labelOf(s.id)}</p>
                         <p className="mt-0.5 text-xs font-medium text-white/75">
                           {s.films.length} {s.films.length === 1 ? "film" : "films"} · {s.markets} {s.markets === 1 ? "market" : "markets"}
-                          {s.films.length > 0 ? ` · ${s.delivered} delivered` : ""}
                         </p>
                       </div>
                       <span className="shrink-0 rounded-xl bg-white/10 px-3 py-1.5 text-[11px] font-bold text-white ring-1 ring-white/25 transition-colors group-hover:bg-white/25">
                         {s.films.length > 0 ? "Open" : "Empty"}
                       </span>
                     </div>
-                    <Layers className="absolute right-4 top-4 h-5 w-5 text-white/40" strokeWidth={1.5} />
                   </div>
                 </button>
-                <button
-                  onClick={(e) => { e.stopPropagation(); onSetStudioImage(s.id); }}
-                  title="Set studio image…"
-                  className="absolute right-3 top-3 rounded-lg bg-black/45 p-2 text-white opacity-0 transition-opacity duration-200 hover:bg-black/70 focus:opacity-100 group-hover:opacity-100"
-                >
-                  <ImageIcon className="h-4 w-4" />
-                </button>
+                {canEdit && (
+                  <button
+                    onClick={(e) => { e.stopPropagation(); onSetStudioImage(s.id); }}
+                    title="Set studio image…"
+                    className={`absolute right-3 top-3 rounded-lg bg-black/45 p-2 text-white transition-opacity duration-300 hover:bg-black/70 ${shown ? "opacity-100" : "pointer-events-none opacity-0"}`}
+                  >
+                    <ImageIcon className="h-4 w-4" />
+                  </button>
+                )}
               </div>
             );
           })}
@@ -117,11 +152,11 @@ export default function StudioGrid({ files, posters, titleOf, staleness, deliver
         </button>
         <h2 className="font-display text-xl font-bold tracking-tight text-[#122027]">{labelOf(current.id)}</h2>
         <span className="text-xs font-medium text-[#768994]">
-          {current.films.length} {current.films.length === 1 ? "film" : "films"}
+          {films.length} {films.length === 1 ? "film" : "films"}
         </span>
       </div>
 
-      {current.films.length === 0 ? (
+      {films.length === 0 ? (
         <div className="rounded-2xl border border-dashed border-[#dce4ec] bg-white/60 p-10 text-center">
           <Plus className="mx-auto h-6 w-6 text-[#768994]" />
           <p className="mt-2 text-sm font-bold text-[#122027]">No films loaded for {labelOf(current.id)} yet</p>
@@ -129,18 +164,17 @@ export default function StudioGrid({ files, posters, titleOf, staleness, deliver
         </div>
       ) : (
         <div className="grid gap-5 grid-cols-2 sm:grid-cols-3 md:grid-cols-4 xl:grid-cols-5">
-          {current.films.map((f, i) => {
-            const title = titleOf(f);
+          {films.map((g, i) => {
             const look = LOOK[current.id] || LOOK.dropped;
-            const poster = posters[posterKey(current.id, title)];
-            const stale = staleness(f);
+            const poster = posters[posterKey(current.id, g.title)];
+            const key = `film:${g.key}`;
+            const shown = revealed === key;
             return (
-              <div key={f.id} className="list-row-in group relative" style={{ "--i": Math.min(i, 10) }}>
-                <button onClick={() => onOpen(f.id)} className="press block w-full text-left">
+              <div key={g.key} className="list-row-in group relative" style={{ "--i": Math.min(i, 10) }} onMouseEnter={() => rest(key)} onMouseLeave={leave}>
+                <button onClick={() => onOpen(g.primary.id)} className="press block w-full text-left">
                   <div className="relative aspect-[2/3] overflow-hidden rounded-xl bg-slate-200 shadow-sm ring-1 ring-black/5 transition-[transform,box-shadow] duration-300 ease-out group-hover:-translate-y-1 group-hover:shadow-xl">
-                    {/* The tinted card underneath is the fallback, so a link that dies leaves a card, not a hole. */}
                     <div className={`absolute inset-0 flex items-center justify-center bg-gradient-to-br ${look.tint}`}>
-                      <span className="font-display text-3xl font-bold text-white/75">{initials(title)}</span>
+                      <span className="font-display text-3xl font-bold text-white/75">{initials(g.title)}</span>
                     </div>
                     {poster && (
                       <img
@@ -151,32 +185,38 @@ export default function StudioGrid({ files, posters, titleOf, staleness, deliver
                       />
                     )}
                     <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/75 via-black/30 to-transparent p-3">
-                      <p className="line-clamp-2 text-sm font-bold text-white">{title}</p>
+                      <p className="line-clamp-2 text-sm font-bold text-white">{g.title}</p>
+                      <div className="mt-1.5 flex flex-wrap gap-1">
+                        {g.media.map((m) => (
+                          <span key={m} className="rounded bg-white/20 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide text-white">{m}</span>
+                        ))}
+                      </div>
                     </div>
-                    {delivered(f) && (
+                    {g.delivered && (
                       <span className="absolute left-2 top-2 flex h-6 w-6 items-center justify-center rounded-full bg-[#1cc1a5] text-white shadow" title="Every market delivered">
                         <Check className="h-3.5 w-3.5" strokeWidth={3} />
                       </span>
                     )}
-                    {stale && (
-                      <span className="absolute right-2 top-2 flex h-6 w-6 items-center justify-center rounded-full bg-amber-500 text-white shadow" title={stale.gone ? "Gone from Drive" : "Some markets have left Drive"}>
+                    {g.stale && (
+                      <span className="absolute right-2 top-2 flex h-6 w-6 items-center justify-center rounded-full bg-amber-500 text-white shadow" title={g.stale.gone ? "Gone from Drive" : "Some markets have left Drive"}>
                         <AlertTriangle className="h-3.5 w-3.5" strokeWidth={2.5} />
                       </span>
                     )}
                   </div>
                   <p className="mt-2 text-xs font-medium text-[#768994]">
-                    {(f.markets || []).filter((m) => !m.unreadable).length} markets
-                    {stale ? (stale.gone ? " · gone from Drive" : ` · ${stale.left} left`) : ""}
+                    {g.markets} markets{g.stale ? (g.stale.gone ? " · gone from Drive" : ` · ${g.stale.left} left`) : ""}
                   </p>
                 </button>
-                <button
-                  onClick={(e) => { e.stopPropagation(); onSetPoster(f); }}
-                  title="Set poster…"
-                  className="absolute right-2 top-2 rounded-lg bg-black/45 p-1.5 text-white opacity-0 transition-opacity duration-200 hover:bg-black/70 group-hover:opacity-100"
-                  style={delivered(f) || stale ? { top: "2.75rem" } : undefined}
-                >
-                  <ImageIcon className="h-3.5 w-3.5" />
-                </button>
+                {canEdit && (
+                  <button
+                    onClick={(e) => { e.stopPropagation(); onSetPoster(g.primary); }}
+                    title="Set poster…"
+                    className={`absolute right-2 top-2 rounded-lg bg-black/45 p-1.5 text-white transition-opacity duration-300 hover:bg-black/70 ${shown ? "opacity-100" : "pointer-events-none opacity-0"}`}
+                    style={g.delivered || g.stale ? { top: "2.75rem" } : undefined}
+                  >
+                    <ImageIcon className="h-3.5 w-3.5" />
+                  </button>
+                )}
               </div>
             );
           })}

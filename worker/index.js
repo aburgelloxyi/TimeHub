@@ -59,20 +59,38 @@ const handleGoogle = makeGoogleAuth({
   },
 });
 
-// `/r?u=<uri-encoded xyireviewer://…>`: the page a Wrike comment links to.
-function reviewerLinkPage(url) {
-  const target = String(url.searchParams.get("u") || "");
-  let parsed = null;
-  try { parsed = new URL(target); } catch (err) { parsed = null; }
-  if (!parsed || parsed.protocol !== "xyireviewer:") {
-    return new Response("That is not an XYi Reviewer link.", { status: 400, headers: { "content-type": "text/plain; charset=utf-8" } });
-  }
-  const safe = target.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/"/g, "&quot;");
-  const html = `<!doctype html><meta charset="utf-8"><title>Open in XYi Reviewer</title>
+// `/r#<uri-encoded xyireviewer://…>`: the page a Wrike comment links to. The link rides in the fragment, which
+// the browser never sends, so a NAS path never reaches the Worker or its logs. The page is fixed text: the link
+// is read and checked in the browser and only ever set as text or an href, never written into the HTML.
+const REVIEWER_LINK_PAGE = `<!doctype html><meta charset="utf-8"><title>Open in XYi Reviewer</title>
+<meta name="referrer" content="no-referrer">
 <style>body{font:15px -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;background:#0f172a;color:#e2e8f0;display:grid;place-items:center;min-height:100vh;margin:0;padding:24px}a{display:inline-block;background:#1cc1a5;color:#062b26;font-weight:700;padding:12px 18px;border-radius:12px;text-decoration:none}code{display:block;max-width:70ch;word-break:break-all;color:#94a3b8;font-size:12px;margin-top:18px}</style>
-<div style="text-align:center"><p>Opening in XYi Reviewer…</p><a id="go" href="${safe}">Open in XYi Reviewer</a><code>${safe}</code></div>
-<script>try { location.href = ${JSON.stringify(target)}; } catch (err) {}</script>`;
-  return new Response(html, { headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" } });
+<div style="text-align:center"><p id="say">Opening in XYi Reviewer…</p><a id="go" hidden>Open in XYi Reviewer</a><code id="link"></code></div>
+<script>
+(function () {
+  var raw = location.hash.slice(1) || new URLSearchParams(location.search).get("u") || "";
+  var link = "";
+  try { link = decodeURIComponent(raw); } catch (e) { link = raw; }
+  if (link.toLowerCase().indexOf("xyireviewer://") !== 0) {
+    document.getElementById("say").textContent = "That is not an XYi Reviewer link.";
+    return;
+  }
+  var go = document.getElementById("go");
+  go.href = link;
+  go.hidden = false;
+  document.getElementById("link").textContent = link;
+  location.href = link;
+})();
+</script>`;
+
+function reviewerLinkPage() {
+  return new Response(REVIEWER_LINK_PAGE, {
+    headers: {
+      "content-type": "text/html; charset=utf-8",
+      "cache-control": "no-store",
+      "content-security-policy": "default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'",
+    },
+  });
 }
 
 export default {
@@ -121,7 +139,7 @@ export default {
     // A Wrike comment only links http(s), and the Reviewer's links use the xyireviewer scheme, so a comment
     // carries this URL and this page hands the browser the app's. Only that scheme is allowed: this must never
     // become an open redirect.
-    if (url.pathname === "/r" || url.pathname === "/api/r") return reviewerLinkPage(url);
+    if (url.pathname === "/r" || url.pathname === "/api/r") return reviewerLinkPage();
     if (url.pathname === "/api/jobs-feed/import" && request.method === "POST") {
       return handleJobsFeedImport(request, env);
     }

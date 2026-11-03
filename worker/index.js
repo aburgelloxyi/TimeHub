@@ -1570,7 +1570,7 @@ const PANEL_PREFERRED_DEPARTMENT = "Motion";
 // button still reads afresh. When the database can't answer, the last answer
 // is served however old, rather than an error.
 const PANEL_CACHE_MS = 2 * 60 * 1000;
-const PANEL_BUILD = "2026-10-31-films-1";
+const PANEL_BUILD = "2026-11-03-films-2"; // 2: the campaign route carries each job's film again (it was throwing)
 const panelJobsCache = new Map(); // member, lowercased -> { at, jobs }
 
 function panelCors(extra = {}) {
@@ -1924,6 +1924,8 @@ async function handlePanelCampaign(request, url, env) {
 
   const statusNames = await panelStatusNameMap(env);
   const customName = (t) => (t && t.customStatusId ? statusNames[t.customStatusId] || "" : "");
+  // The film each job title's code names, as the campaign route's jobs carry it. Read once: panelFilmCodes caches.
+  const films = await panelFilmCodes(env);
   const jobs = [];
   for (const row of tops) {
     const t = row.task_data;

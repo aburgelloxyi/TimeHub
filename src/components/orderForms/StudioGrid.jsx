@@ -184,7 +184,7 @@ export default function StudioGrid({ files, posters, titleOf, staleness, deliver
           <p className="mt-1 text-xs text-[#768994]">Load one from the studio's Drive, or drop an order form on the page.</p>
         </div>
       ) : (
-        <div className="grid gap-5 grid-cols-2 sm:grid-cols-3 md:grid-cols-4 xl:grid-cols-5">
+        <div className="grid grid-cols-[repeat(auto-fill,minmax(190px,230px))] gap-6">
           {films.map((g, i) => {
             const look = LOOK[current.id] || LOOK.dropped;
             const key = `film:${g.key}`;
@@ -209,47 +209,46 @@ export default function StudioGrid({ files, posters, titleOf, staleness, deliver
                       <img
                         src={g.poster}
                         alt=""
-                        className="absolute inset-0 h-full w-full object-cover transition-transform duration-700 ease-out group-hover:scale-[1.05]"
+                        className="absolute inset-0 h-full w-full object-cover transition-transform duration-500 ease-out group-hover:scale-[1.03]"
                         onError={(e) => { e.currentTarget.style.display = "none"; }}
                       />
                     )}
-                    {/* A light sweep across the poster on hover. */}
-                    <div className="pointer-events-none absolute inset-0 -translate-x-full bg-gradient-to-r from-transparent via-white/15 to-transparent transition-transform duration-1000 ease-out group-hover:translate-x-full" />
                     {/* Dark enough under the title that a poster's own lettering never fights it. */}
                     <div className={`absolute inset-x-0 bottom-0 bg-gradient-to-t to-transparent ${g.poster ? "h-3/5 from-black via-black/75" : "h-1/4 from-black/70"}`} />
-                    <div className="absolute inset-x-0 bottom-0 p-3 pb-4">
+                    {/* The title, lifted out of the way when the two sides slide up beneath it. */}
+                    <div className="absolute inset-x-0 bottom-0 p-3 pb-4 transition-transform duration-300 ease-out group-hover:-translate-y-16 group-focus-within:-translate-y-16">
                       {g.poster && <p className="line-clamp-2 font-display text-base font-bold leading-snug text-white drop-shadow">{g.title}</p>}
-                      <p className="mt-0.5 text-[11px] font-medium text-white/60">
-                        {g.markets} {g.markets === 1 ? "market" : "markets"}
-                        {g.stale ? (g.stale.gone ? " · gone from Drive" : ` · ${g.stale.left} left`) : ""}
+                      <p className="mt-0.5 flex items-center gap-1.5 text-[11px] font-medium text-white/60">
+                        {g.media.map((m) => <span key={m} className="h-1.5 w-1.5 rounded-full" style={{ background: MEDIA[m].colour }} />)}
+                        <span>
+                          {g.markets} {g.markets === 1 ? "market" : "markets"}
+                          {g.stale ? (g.stale.gone ? " · gone from Drive" : ` · ${g.stale.left} left`) : ""}
+                        </span>
                       </p>
-                      <div className="mt-2 flex flex-wrap gap-1.5">
-                        {g.media.map((m) => {
-                          const { colour, Icon } = MEDIA[m];
-                          const side = g.sides[m];
-                          return (
-                            <button
-                              key={m}
-                              onClick={(e) => { e.stopPropagation(); open(side.file); }}
-                              title={`Open the ${m.toLowerCase()} orders`}
-                              className="flex items-center gap-1 rounded-md px-2 py-1 text-[10px] font-bold uppercase tracking-wide text-white ring-1 backdrop-blur transition-colors"
-                              style={{ background: `${colour}33`, "--tw-ring-color": `${colour}88` }}
-                              onMouseEnter={(e) => { e.currentTarget.style.background = `${colour}66`; }}
-                              onMouseLeave={(e) => { e.currentTarget.style.background = `${colour}33`; }}
-                            >
-                              <Icon className="h-3 w-3" style={{ color: colour }} strokeWidth={2.5} />
-                              {m}
-                              <span className="font-semibold text-white/70">{side.markets}</span>
-                            </button>
-                          );
-                        })}
-                      </div>
                     </div>
-                    {/* Motion and Print's share of the film's markets, along the bottom edge. */}
-                    <div className="absolute inset-x-0 bottom-0 flex h-1">
-                      {g.media.map((m) => (
-                        <div key={m} style={{ flexGrow: g.sides[m].markets || 1, background: MEDIA[m].colour }} />
-                      ))}
+                    {/* Motion and Print, side by side, sliding up from the bottom edge on hover: each opens its own orders. */}
+                    <div className="absolute inset-x-0 bottom-0 flex h-16 translate-y-full transition-transform duration-300 ease-out group-hover:translate-y-0 group-focus-within:translate-y-0">
+                      {g.media.map((m) => {
+                        const { colour, Icon } = MEDIA[m];
+                        const side = g.sides[m];
+                        return (
+                          <button
+                            key={m}
+                            onClick={(e) => { e.stopPropagation(); open(side.file); }}
+                            title={`Open the ${m.toLowerCase()} orders`}
+                            className="flex flex-1 flex-col justify-center gap-0.5 px-3 text-left text-white backdrop-blur-md transition-[filter] duration-150 hover:brightness-125 focus-visible:outline-none focus-visible:brightness-125"
+                            style={{ background: `linear-gradient(to top, ${colour}e6, ${colour}b3)` }}
+                          >
+                            <span className="flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-wide">
+                              <Icon className="h-3.5 w-3.5" strokeWidth={2.5} />
+                              {m}
+                            </span>
+                            <span className="text-[11px] font-medium text-white/85">
+                              {side.markets} {side.markets === 1 ? "market" : "markets"}
+                            </span>
+                          </button>
+                        );
+                      })}
                     </div>
                     {g.delivered && (
                       <span className="absolute left-2 top-2 flex h-6 w-6 items-center justify-center rounded-full bg-[#1cc1a5] text-white shadow" title="Every market delivered">

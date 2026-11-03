@@ -33,3 +33,7 @@ check("empty matches all",  tokenMatch("", ...JOB), true);
 check("whitespace only",    tokenMatch("   ", ...JOB), true);
 check("null query",         tokenMatch(null, ...JOB), true);
 check("skips empty fields", tokenMatch("eben", "Ebenezer", null, undefined, ""), true);
+
+// Accents fold both ways: the data has them and the person typing often does not, or the reverse.
+check("accent in the data, plain in the query", tokenMatch("turkiye", "Türkiye"), true);
+check("accent in the query, plain in the data", tokenMatch("Egaña", "Egana"), true);

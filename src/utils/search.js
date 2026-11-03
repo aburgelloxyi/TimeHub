@@ -17,9 +17,13 @@
  * True when every whitespace-separated token in `query` appears somewhere in
  * `fields` (joined, case-insensitive). An empty query matches everything.
  */
+// Accents folded both ways before comparing: the data spells Türkiye with one and people type it without, and
+// "Egaña" and "Egana" are the same name whichever way round they come.
+const fold = (s) => String(s ?? "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
+
 export function tokenMatch(query, ...fields) {
-  const q = String(query ?? "").trim().toLowerCase();
+  const q = fold(query).trim();
   if (!q) return true;
-  const hay = fields.filter(Boolean).join(" ").toLowerCase();
+  const hay = fold(fields.filter(Boolean).join(" "));
   return q.split(/\s+/).every((t) => hay.includes(t));
 }

@@ -132,6 +132,14 @@
 .list-row-in { animation: listRowIn 280ms var(--ease-app) both; animation-delay: calc(min(var(--i, 0), 8) * 30ms); }
 .bar-fill { transform-origin: left center; animation: barGrowX 520ms var(--ease-app) both; animation-delay: calc(min(var(--i, 0), 8) * 30ms + 80ms); }
 
+/* Project/Time, the Billable toggle: the sheet is replaced, row for row, and
+   the same shape comes back with different figures in it. Each row and the
+   figures inside it arrive as a wave, down the table and across it, so the eye
+   follows what changed rather than watching the whole sheet redraw. Past ten
+   rows the wave caps: a long stagger is a wait, not an effect. */
+.billable-row { animation: listRowIn 260ms var(--ease-app) both; animation-delay: calc(min(var(--i, 0), 10) * 26ms); }
+.billable-figure { display: inline-block; animation: rollUp 240ms var(--ease-app) both; animation-delay: calc(min(var(--i, 0), 10) * 26ms + var(--j, 0) * 14ms); }
+
 /* A button that gives a little while held. `scale`, not transform, so it
    adds to whatever transform the button already has. */
 .press { transition: scale 140ms var(--ease-app); }
@@ -150,7 +158,8 @@ html.theme-revealing::view-transition-new(root) { animation: themeReveal 480ms v
 
 @media (prefers-reduced-motion: reduce) {
   .roll-up, .roll-down, .row-enter, .row-enter > td, .day-in-right, .day-in-left,
-  .tick-draw path, .tick-pop, .pop-in, .list-row-in, .view-in, .view-fade, .bar-fill { animation: none; }
+  .tick-draw path, .tick-pop, .pop-in, .list-row-in, .view-in, .view-fade, .bar-fill,
+  .billable-row, .billable-figure { animation: none; }
   .press, .press:active:not(:disabled) { transition: none; scale: 1; }
 }
 

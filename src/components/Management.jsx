@@ -251,21 +251,14 @@ export default function Management({ wrikeUserId, department, wrikeData = [] }) 
         subtitle="Reports · Staff Accounts · Client Accounts"
       />
 
-      <div className="max-w-[1800px] mx-auto px-4 sm:px-6 pt-6 pb-6">
-        {/* Breadcrumb bar. This is page chrome, not panel content, so it sits
-            outside the sliding panel — and it has to sit outside the
-            overflow-hidden that clipping the slide requires, because
-            position:sticky does nothing inside a clipped ancestor. Being
-            sticky is the point: Films and Studio Analytics are both long
-            enough that the way back used to scroll off the top, leaving no
-            exit without scrolling all the way up again.
-            The negative margins let the blurred background bleed to the
-            content column's edges while the padding keeps the crumbs aligned
-            with the panel below. */}
-        {nav && (
-          <div className="sticky top-0 z-30 -mx-4 sm:-mx-6 mb-4 px-4 sm:px-6 py-3
-                          bg-slate-100/85 supports-[backdrop-filter]:bg-slate-100/70 backdrop-blur-md
-                          border-b border-[#dce4ec]">
+      {/* Breadcrumb bar. A full-width band, not one inside the column: inside
+          it, the bar's background stopped on a vertical edge at each side and
+          read as a floating rectangle. The crumbs stay on the same column as
+          the panel below. Sticky, so the way back is always there on a long
+          page, and outside the panel's overflow-hidden, which would clip it. */}
+      {nav && (
+        <div className="sticky top-0 z-30 mb-4 bg-slate-100/85 supports-[backdrop-filter]:bg-slate-100/70 backdrop-blur-md">
+          <div className="max-w-[1800px] mx-auto px-4 sm:px-6 py-3">
             <div className="flex items-center gap-2 sm:gap-2.5 min-w-0">
               <button
                 onClick={backToHub}
@@ -290,8 +283,10 @@ export default function Management({ wrikeUserId, department, wrikeData = [] }) 
               <h2 className="font-display text-lg sm:text-xl font-bold text-[#122027] tracking-tight truncate">{nav.item.label}</h2>
             </div>
           </div>
-        )}
+        </div>
+      )}
 
+      <div className={`max-w-[1800px] mx-auto px-4 sm:px-6 pb-6 ${nav ? "" : "pt-6"}`}>
         {/* The hub (with its accordion) and an open item's content are the
             only two panels that ever swap — the accordion itself doesn't
             trigger this, it's a height animation inside the hub panel.

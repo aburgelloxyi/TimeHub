@@ -1,9 +1,9 @@
 // The Billable view's grouping and rounding.
 //
 // The rule the studio agreed: rows for one person, job, item category and
-// territory in one week bill as a single block, rounded up to the client's
-// increment. These cases pin the grouping key, the week boundary and the
-// rounding, including the totals either side of an exact increment.
+// territory in one week bill as a single block, rounded to the client's
+// increment with the half going up. These cases pin the grouping key, the week
+// boundary and the rounding, including the totals either side of a half step.
 import {
   consolidateRows,
   weekStartIso,
@@ -42,11 +42,13 @@ check("...billed as 30", brief[0].billedSeconds, 30 * 60);
 check("...with 6 minutes uplift", brief[0].upliftSeconds, 6 * 60);
 check("...holding its three rows", brief[0].rows.length, 3);
 
-// The rounding boundary. Exactly one increment is unchanged; a second over
-// starts the next block.
+// The rounding boundary: under the half bills the step below it, from the half
+// up bills the step above.
 check("exactly 30 bills 30", one({ time_spent: "0:30" }).billedSeconds, 30 * 60);
-check("31 minutes bills 60", one({ time_spent: "0:31" }).billedSeconds, 60 * 60);
-check("61 minutes bills 90", one({ time_spent: "1:01" }).billedSeconds, 90 * 60);
+check("44 minutes bills 30", one({ time_spent: "0:44" }).billedSeconds, 30 * 60);
+check("45 minutes bills 60", one({ time_spent: "0:45" }).billedSeconds, 60 * 60);
+check("74 minutes bills 60", one({ time_spent: "1:14" }).billedSeconds, 60 * 60);
+check("75 minutes bills 90", one({ time_spent: "1:15" }).billedSeconds, 90 * 60);
 check("a single 2-minute entry still bills one block", one({ time_spent: "0:02" }).billedSeconds, 30 * 60);
 check("no time bills nothing", billSeconds(0, 30), 0);
 
@@ -105,3 +107,16 @@ check("weeks sort newest first", consolidateRows([
   row({ _iso: "2026-10-19", time_spent: "0:10", category: "Design" }),
   row({ _iso: "2026-10-27", time_spent: "0:10", category: "Proofreading" }),
 ]).map((g) => g.week), ["2026-10-26", "2026-10-19"]);
+
+// Under fifteen minutes a block is banked: kept on the timesheet, left out of
+// the Billable view, and billed once the week adds up to something.
+check("under 15 minutes is banked", one({ time_spent: "0:14" }).banked, true);
+check("15 minutes is not banked", one({ time_spent: "0:15" }).banked, false);
+check("a banked block still carries what it would bill", one({ time_spent: "0:02" }).billedSeconds, 30 * 60);
+check("banking counts the addition too", one({ time_spent: "0:10", additional_time: "0:05" }).banked, false);
+
+// What a block keeps when rounding leaves time under the bill. In the week, not carried into the next.
+check("a 37-minute block banks the 7 minutes it cannot bill", one({ time_spent: "0:37" }).bankedSeconds, 7 * 60);
+check("a 74-minute block bills the hour and banks 14", [one({ time_spent: "1:14" }).billedSeconds, one({ time_spent: "1:14" }).bankedSeconds], [60 * 60, 14 * 60]);
+check("a block that rounds up banks nothing", one({ time_spent: "0:53" }).bankedSeconds, 0);
+check("a block under the line banks all of it", one({ time_spent: "0:10" }).bankedSeconds, 10 * 60);

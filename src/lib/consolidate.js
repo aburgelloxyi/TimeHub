@@ -2,14 +2,19 @@
 //
 // The Billable view in Project/Time shows the lines a timesheet would bill as
 // one: same person, job, item category and territory in the same week. That
-// group's total is rounded up to the client's increment, so a week of
-// two-minute entries doesn't bill nothing.
+// group's total is rounded to the client's increment, the half going up: 44
+// minutes bills 30, 45 bills the hour.
 //
 // Nothing here writes. The raw rows stay the record of what happened; this is
 // a second, derived view of them.
 import { parseTimeToSeconds } from "../utils/timeHelpers";
 
 export const DEFAULT_INCREMENT_MINUTES = 30;
+
+// A block shorter than this is banked: it stays on the timesheet so the time is
+// not lost, but it is not billed. Fifteen minutes is the line between "worth an
+// invoice line" and "held", and the bank belongs to its own week.
+export const BANK_MINUTES = 15;
 
 // A missing or broken increment must not become 0 (a zero step would take the
 // whole total) or a fraction.
@@ -33,12 +38,23 @@ export function rowSeconds(row) {
   return parseTimeToSeconds(row.time_spent) + parseTimeToSeconds(row.additional_time);
 }
 
-// Round a group total up to whole increments. Any positive total bills at
+// Round a group total to the nearest increment, the half going up: 44 minutes
+// bills 30, 45 bills 60, 74 bills 60, 75 bills 90. Any positive total bills at
 // least one increment; zero stays zero.
 export function billSeconds(totalSeconds, incrementMinutes) {
   if (!(totalSeconds > 0)) return 0;
   const step = incrementFor(incrementMinutes) * 60;
-  return Math.ceil(totalSeconds / step) * step;
+  return Math.max(1, Math.round(totalSeconds / step)) * step;
+}
+
+// What makes two rows one block. Exported so a single raw row can ask which
+// block it belongs to, and whether that block was banked.
+export function blockKey(row, { jobOf = (row) => row.job_number } = {}) {
+  const week = weekStartIso(row._iso || row.work_date);
+  const person = row.wrike_user_id || row._name || "";
+  const job = jobOf(row) || "";
+  // \u0000 cannot occur in these fields, so it can't make two keys collide.
+  return [person, job, row.category || "", row.territory || "", week].join("\u0000");
 }
 
 // Rows are the feed's enriched entries: `_iso` for the work date and
@@ -54,11 +70,10 @@ export function consolidateRows(rows, { jobOf = (row) => row.job_number } = {}) 
     // empty block in the view.
     if (!(seconds > 0)) continue;
 
+    const key = blockKey(row, { jobOf });
     const week = weekStartIso(row._iso || row.work_date);
     const person = row.wrike_user_id || row._name || "";
     const job = jobOf(row) || "";
-    // \u0000 cannot occur in these fields, so it can't make two keys collide.
-    const key = [person, job, row.category || "", row.territory || "", week].join("\u0000");
 
     let group = groups.get(key);
     if (!group) {
@@ -82,11 +97,20 @@ export function consolidateRows(rows, { jobOf = (row) => row.job_number } = {}) 
   }
 
   return [...groups.values()]
-    .map((group) => ({
-      ...group,
-      billedSeconds: billSeconds(group.seconds, group.incrementMinutes),
-      upliftSeconds: billSeconds(group.seconds, group.incrementMinutes) - group.seconds,
-    }))
+    .map((group) => {
+      const billed = billSeconds(group.seconds, group.incrementMinutes);
+      const banked = group.seconds < BANK_MINUTES * 60;
+      return {
+        ...group,
+        billedSeconds: billed,
+        // Rounding's gain: a block that bills more than it logged.
+        upliftSeconds: billed - group.seconds,
+        banked,
+        // What the block keeps: a block under the line is held whole; a billed block that rounded down holds the
+        // remainder. Nothing is carried to another week: this is the week's own bank.
+        bankedSeconds: banked ? group.seconds : Math.max(0, group.seconds - billed),
+      };
+    })
     // Newest week first, then the order the raw table reads in.
     .sort((a, b) =>
       b.week.localeCompare(a.week) ||

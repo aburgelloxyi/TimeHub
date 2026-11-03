@@ -1,8 +1,8 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ClipboardList, FileSpreadsheet, Loader2, PencilLine, RefreshCw } from "lucide-react";
+import { Check, FileSpreadsheet, Loader2, PencilLine, Plus, RefreshCw, Trash2 } from "lucide-react";
 import PageHeader from "./shared/PageHeader";
 import DropZone from "./orderForms/DropZone";
-import FilmBar from "./orderForms/FilmBar";
+import MediumSwitch from "./orderForms/MediumSwitch";
 import GoogleSource, { googleMessage } from "./orderForms/GoogleSource";
 import HeaderSearch from "./orderForms/HeaderSearch";
 import ReportButton from "./orderForms/ReportButton";
@@ -18,6 +18,13 @@ import { HoverLabel } from "./shared/FloatingCard";
 import { loadFilm, loadMarketOf, listFilms } from "../lib/orderForms/loadFilm";
 import { clientFor, driveStaleness } from "../lib/orderForms/driveTree";
 import StudioGrid from "./orderForms/StudioGrid";
+import DomesticView from "./orderForms/DomesticView";
+import LaunchView from "./orderForms/LaunchView";
+import { parseDomestic } from "../lib/orderForms/domestic";
+import { parseLaunch } from "../lib/orderForms/launch";
+import { isOrderFile, placeExtras, sameFilmName } from "../lib/orderForms/extras";
+import { SECTIONS } from "../lib/orderForms/sections";
+import { filmKey, mediumOf, storeStudio, storedStudio, studioLabel, studioOf } from "../lib/orderForms/studios";
 import { loadPosters, posterKey, setPoster, studioKey } from "../lib/filmPosters";
 import { makeMatcher, indexParents, orderKey } from "../lib/orderForms/wrikeMatch";
 import { applySetAside, fileChanges, filmDelivered, marketChanges, mergeChanges, teamNews } from "../lib/orderForms/status";
@@ -58,10 +65,17 @@ const hasFiles = (e) => Array.from(e.dataTransfer?.types || []).includes("Files"
 
 const readAt = (iso) => new Date(iso).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 
+// How old an open film's last read is before it's read again by itself.
+const AUTO_READ_AFTER = 2 * 60 * 60 * 1000;
+
 // wrikeData is the app's already-loaded Wrike tasks, used only to mark orders
 // that exist there. See lib/orderForms/wrikeMatch.js for what it can't see.
-export default function OrderForms({ wrikeData, isAdmin = false }) {
-  const [files, setFiles] = useState(null); // null until the store has answered
+export default function OrderForms({ wrikeData, isAdmin = false, filmCodes = {} }) {
+  // Everything in the shared store: the International order forms, and Domestic and Launch reads (extras.js).
+  // The International screens are only ever handed order forms.
+  const [stored, setFiles] = useState(null); // null until the store has answered
+  const files = useMemo(() => (stored ? stored.filter(isOrderFile) : null), [stored]);
+  const extras = useMemo(() => (stored || []).filter((f) => !isOrderFile(f)), [stored]);
   const [view, setView] = useState(readHash);
   // The picture on each film's card, by pasted URL. Empty until the shared map answers.
   const [posters, setPosters] = useState({});
@@ -80,14 +94,32 @@ export default function OrderForms({ wrikeData, isAdmin = false }) {
   // switcher), or when nothing is loaded yet. `editingSheets` opens the correction on the overview.
   const [adding, setAdding] = useState(false);
   const [editingSheets, setEditingSheets] = useState(false);
+  // The studio whose films are open on the front page, or none for the studio cards. Kept here rather than in
+  // the grid so it survives opening a film, and so the header can say it.
+  const [studio, setStudio] = useState(storedStudio);
+  const openStudio = useCallback((id) => {
+    setStudio(id || null);
+    storeStudio(id || null);
+  }, []);
   const fileInputRef = useRef(null);
   const dragDepth = useRef(0);
   const today = isoToday();
-  const matcher = useMemo(() => makeMatcher(wrikeData), [wrikeData]);
-  // Films whose every market is delivered in Wrike, for the film picker's ticks.
-  const deliveredFilms = useMemo(() => new Set((files || []).filter((f) => filmDelivered(f, (file, m) =>
-    matcher.match(m.orders, file.links?.[m.name], file.briefed?.[m.name], m.kind || file.kind))).map((f) => f.id)), [files, matcher]);
-  const wrikeParents = useMemo(() => indexParents(wrikeData), [wrikeData]);
+  // The posters first. Matching orders to Wrike's tasks means indexing every cached task (tens of thousands)
+  // and checking every order of every film, so on the front page it waits until the page is up; opening
+  // straight onto a film needs it at once.
+  const [settled, setSettled] = useState(false);
+  useEffect(() => {
+    const later = window.requestIdleCallback || ((fn) => setTimeout(fn, 250));
+    const cancel = window.cancelIdleCallback || clearTimeout;
+    const handle = later(() => setSettled(true), { timeout: 1200 });
+    return () => cancel(handle);
+  }, []);
+  const ready = settled || !!view.fileId;
+  const matcher = useMemo(() => makeMatcher(ready ? wrikeData : []), [wrikeData, ready]);
+  // Films whose every market is delivered in Wrike, for the "Delivered" mark.
+  const deliveredFilms = useMemo(() => new Set((ready ? files || [] : []).filter((f) => filmDelivered(f, (file, m) =>
+    matcher.match(m.orders, file.links?.[m.name], file.briefed?.[m.name], m.kind || file.kind))).map((f) => f.id)), [files, matcher, ready]);
+  const wrikeParents = useMemo(() => indexParents(ready ? wrikeData : []), [wrikeData, ready]);
 
   // `local` is true when the shared store couldn't be reached and the page is
   // showing this browser's last copies.
@@ -101,7 +133,7 @@ export default function OrderForms({ wrikeData, isAdmin = false }) {
     loadedAt.current = Date.now();
     const found = await listFiles();
     const news = shownFiles.current && storeReach() === "shared"
-      ? teamNews(shownFiles.current, found, localStorage.getItem("wrike_user_id"))
+      ? teamNews(shownFiles.current, found.filter(isOrderFile), localStorage.getItem("wrike_user_id"))
       : [];
     setFiles(found);
     setLocal(storeReach() === "local");
@@ -121,7 +153,7 @@ export default function OrderForms({ wrikeData, isAdmin = false }) {
   const [drive, setDrive] = useState({});
   const studios = useMemo(() => [...new Set((files || []).map((f) => f.source?.clientId).filter(Boolean))].sort().join(","), [files]);
   useEffect(() => {
-    if (!studios || !googleConfigured() || !googleConnected()) return;
+    if (!ready || !studios || !googleConfigured() || !googleConnected()) return;
     let live = true;
     for (const clientId of studios.split(",")) {
       listFilms(clientId)
@@ -129,7 +161,7 @@ export default function OrderForms({ wrikeData, isAdmin = false }) {
         .catch(() => {});
     }
     return () => { live = false; };
-  }, [studios, signedInTick]);
+  }, [studios, signedInTick, ready]);
   const stalenessOf = useCallback((f) => driveStaleness(f, drive[f?.source?.clientId]), [drive]);
 
   // Someone else may have refreshed a film or set a row aside. Coming back to
@@ -158,12 +190,11 @@ export default function OrderForms({ wrikeData, isAdmin = false }) {
     setError("");
   }, []);
 
-  // Choosing a film's picture: a pasted URL, read, merged and written in one go, so two PMs setting posters
-  // at once don't lose each other's. A blank URL puts the tinted fallback back.
-  const setFilmPoster = useCallback(async (file) => {
-    const title = filmTitleOf(file);
-    // The same studio id the grid groups by, so a dropped workbook's poster finds its card.
-    const key = posterKey(file.source?.clientId || "dropped", title);
+  // Choosing a film's picture by pasted URL; setPoster merges it into the shared map. A blank URL puts the
+  // tinted fallback back.
+  const setFilmPoster = useCallback(async (studioId, title) => {
+    // The studio id the grid groups by, so a dropped workbook's poster finds its card.
+    const key = posterKey(studioId, title);
     const url = window.prompt(`Paste the image URL for ${title || "this film"}'s poster (or leave it blank to reset):`, posters[key] || "");
     if (url === null) return;
     const { posters: next, error: why } = await setPoster(key, url);
@@ -188,6 +219,76 @@ export default function OrderForms({ wrikeData, isAdmin = false }) {
   const file = files?.find((f) => f.id === view.fileId) || files?.[0] || null;
   const shown = useMemo(() => applySetAside(file), [file]);
   const market = shown && view.market ? shown.markets.find((m) => m.name === view.market && !m.unreadable) : null;
+
+  // The header says where you are: the studio cards, a studio's films, a film, or one of its markets, with the
+  // levels above as a trail back up. "Client Orders" closes the studio; a studio crumb opens that one's films.
+  // A Domestic or Launch read open in its own view, with the film and studio it belongs to.
+  const placed = useMemo(() => placeExtras(files, extras, filmCodes, filmTitleOf), [files, extras, filmCodes]);
+  const openExtra = view.fileId ? placed.find((p) => p.extra.id === view.fileId) || null : null;
+  const opened = view.fileId && !openExtra ? file : null;
+  const toFront = (studioId) => {
+    openStudio(studioId);
+    setEditingSheets(false);
+    go(null, null);
+  };
+  const studioFilms = files && studio
+    ? new Set([
+        ...files.filter((f) => studioOf(f) === studio).map((f) => filmKey(filmTitleOf(f))),
+        ...placed.filter((p) => p.alone && p.studio === studio).map((p) => filmKey(p.name)),
+      ]).size
+    : 0;
+  // The open film's other side (Motion or Print), and its poster, which the header shows small and washes across
+  // the band. A poster can be saved under any spelling of the film's title, so each is tried.
+  const twin = opened
+    ? files.find((f) => f.id !== opened.id && f.source?.clientId === opened.source?.clientId && f.kind !== opened.kind
+      && filmKey(filmTitleOf(f)) === filmKey(filmTitleOf(opened))) || null
+    : null;
+  const posterOf = (studioId, titles) => titles.map((t) => posters[posterKey(studioId, t)]).find(Boolean) || null;
+  const filmPoster = opened
+    ? posterOf(studioOf(opened), [filmTitleOf(opened), ...(twin ? [filmTitleOf(twin)] : [])])
+    : openExtra
+      ? posterOf(openExtra.studio, [openExtra.name, ...(files || []).filter((f) => sameFilmName(filmTitleOf(f), openExtra.name)).map(filmTitleOf)])
+      : null;
+  const headerChip = "flex items-center gap-1 rounded-full bg-white/15 px-3 py-1 text-[11px] font-bold text-white ring-1 ring-white/25";
+  const readableCount = opened ? (opened.markets || []).filter((m) => !m.unreadable).length : 0;
+
+  const header = openExtra
+    ? {
+        crumbs: [
+          { label: "Client Orders", onClick: () => toFront(null) },
+          { label: studioLabel(openExtra.studio), onClick: () => toFront(openExtra.studio) },
+        ],
+        title: `${openExtra.name} · ${SECTIONS.find((s) => s.id === openExtra.extra.section)?.label || ""}`,
+        subtitle: openExtra.extra.section === "launches" ? openExtra.extra.launch?.artwork || "Launch" : "US cinema pieces",
+        cover: filmPoster,
+        backdrop: filmPoster,
+      }
+    : !opened
+    ? studio
+      ? {
+          crumbs: [{ label: "Client Orders", onClick: () => openStudio(null) }],
+          title: studioLabel(studio),
+          subtitle: studioFilms ? `${studioFilms} ${studioFilms === 1 ? "film" : "films"}` : "No films loaded yet",
+        }
+      : { title: "Client Orders", subtitle: "Market orders at a glance" }
+    : {
+        crumbs: [
+          { label: "Client Orders", onClick: () => toFront(null) },
+          { label: studioLabel(studioOf(opened)), onClick: () => toFront(studioOf(opened)) },
+          ...(market ? [{ label: filmTitleOf(opened), onClick: () => go(opened.id, null) }] : []),
+        ],
+        title: market ? market.name : filmTitleOf(opened),
+        cover: filmPoster,
+        backdrop: filmPoster,
+        // The film's side, with the other one a switch away; how many markets; whether it's all delivered.
+        meta: (
+          <>
+            <MediumSwitch current={opened} twin={twin} onSelect={(id) => { setEditingSheets(false); go(id, market ? market.name : null); }} />
+            {!market && <span className={headerChip}>{readableCount} {readableCount === 1 ? "market" : "markets"}</span>}
+            {deliveredFilms.has(opened.id) && <span className={headerChip}><Check className="h-3 w-3" strokeWidth={3} /> Delivered</span>}
+          </>
+        ),
+      };
 
   // What a PM has decided about a market's orders, kept on the file: rows set
   // aside (ignored) and tasks matched by hand (links), both by market name.
@@ -260,6 +361,21 @@ export default function OrderForms({ wrikeData, isAdmin = false }) {
     setLocal(storeReach() === "local");
   }, [go]);
 
+  // A Domestic or Launch read, shared like an order form; a second read of the same file replaces the first.
+  const adoptExtra = useCallback(async (read) => {
+    const id = fileKey(read);
+    const existing = (stored || []).find((f) => f.id === id);
+    if (existing && !(await confirmReplace(read.name))) return;
+    const saved = { ...read, id };
+    const kept = await saveFile(saved);
+    setFiles((prev) => [saved, ...(prev || []).filter((f) => f.id !== id)]);
+    go(id, null, { replace: !!existing });
+    const label = SECTIONS.find((x) => x.id === read.section)?.label || "Sheet";
+    if (kept) notify(`${label} sheet read`, "success");
+    else notify("Loaded in this browser, but it couldn't be shared with the team. Load it again later to share it.", "error");
+    setLocal(storeReach() === "local");
+  }, [stored, go]);
+
   const confirmReplace = (name) => confirmAction({
     title: "Replace what's loaded?",
     message: `${name} is already loaded. Replace it with this newer read?`,
@@ -270,7 +386,14 @@ export default function OrderForms({ wrikeData, isAdmin = false }) {
     setError("");
     setBusy(true);
     try {
-      const parsed = parseWorkbook(await readXlsx(picked), picked.name);
+      const sheets = await readXlsx(picked);
+      // A Domestic or Launch sheet is asked about first: its tabs could pass for an order form's market tabs.
+      const extra = parseDomestic(sheets, picked.name) || parseLaunch(sheets, picked.name);
+      if (extra) {
+        await adoptExtra(extra);
+        return;
+      }
+      const parsed = parseWorkbook(sheets, picked.name);
       if (!parsed) {
         setError("This doesn't look like an order form. No market tabs were found in it.");
         return;
@@ -286,7 +409,7 @@ export default function OrderForms({ wrikeData, isAdmin = false }) {
     } finally {
       setBusy(false);
     }
-  }, [files, adopt]);
+  }, [files, adopt, adoptExtra]);
 
   const addFilm = useCallback(async (loaded) => {
     const existing = (files || []).find((f) => f.id === fileKey(loaded));
@@ -348,6 +471,50 @@ export default function OrderForms({ wrikeData, isAdmin = false }) {
     }
   };
 
+  // An open film is read again in the background once its last read is a couple of hours old, so PMs see what
+  // changed without pressing Refresh. Only for someone already signed in to Google (it never asks), once per film
+  // per visit, and saved only when a sheet had to be read: a film whose sheets are all as last read costs Google a
+  // folder listing and the database nothing. A sheet is read again at least daily whatever it says (stillCurrent),
+  // so saving then keeps the next visit from reading them all again. It's merged onto the film as it is when the
+  // read finishes, so a decision made meanwhile isn't lost.
+  const autoRead = useRef(new Map());
+  const openedRef = useRef(null);
+  openedRef.current = opened;
+  useEffect(() => {
+    const target = openedRef.current;
+    if (!target?.source?.clientId || !googleConfigured() || !googleConnected() || workingRef.current) return;
+    const now = Date.now();
+    if (now - Date.parse(target.loadedAt) < AUTO_READ_AFTER) return;
+    if (now - (autoRead.current.get(target.id) || 0) < AUTO_READ_AFTER) return;
+    autoRead.current.set(target.id, now);
+    (async () => {
+      const tally = {};
+      setRefreshing({ done: 0, total: 0 });
+      try {
+        const loaded = await loadFilm({ ...target.source, previous: target, tally, onProgress: (done, total) => setRefreshing({ done, total }) });
+        if (!loaded || !tally.read) return;
+        const latest = shownFiles.current?.find((f) => f.id === target.id) || target;
+        const next = {
+          ...loaded,
+          id: target.id,
+          ignored: latest.ignored,
+          links: latest.links,
+          briefed: latest.briefed,
+          wrapped: latest.wrapped,
+          changes: fileChanges(latest, loaded),
+        };
+        await saveFile(next);
+        setFiles((prev) => (prev || []).map((f) => (f.id === next.id ? next : f)));
+        const moved = Object.keys(next.changes).filter((name) => JSON.stringify(next.changes[name]) !== JSON.stringify(latest.changes?.[name])).length;
+        if (moved) notify(`${filmTitleOf(target)} (${mediumOf(target)}): ${moved} ${moved === 1 ? "market has" : "markets have"} changed since ${readAt(target.loadedAt)}`, "info");
+      } catch {
+        // Quiet: nothing was asked for, and Refresh is still there.
+      } finally {
+        setRefreshing(null);
+      }
+    })();
+  }, [opened?.id]);
+
   const dropFile = async (target) => {
     const ok = await confirmAction({
       title: "Remove this from the page?",
@@ -358,7 +525,7 @@ export default function OrderForms({ wrikeData, isAdmin = false }) {
     if (!ok) return;
     await removeFile(target.id);
     setFiles((prev) => prev.filter((f) => f.id !== target.id));
-    if (file?.id === target.id) go(null, null, { replace: true });
+    if (view.fileId === target.id) go(null, null, { replace: true });
   };
 
   // The whole page is the drop target, so a second file can be added from the
@@ -393,7 +560,7 @@ export default function OrderForms({ wrikeData, isAdmin = false }) {
   useEffect(() => { if (!partial) justLoaded.current = false; });
   // A market refreshed on its own was read later than the rest of its film.
   const lastRead = market?.loadedAt || file?.loadedAt;
-  const empty = files && files.length === 0;
+  const empty = files && files.length === 0 && extras.length === 0;
 
   return (
     <div
@@ -405,9 +572,37 @@ export default function OrderForms({ wrikeData, isAdmin = false }) {
     >
       <PageHeader
         pageId="orderforms"
-        icon={ClipboardList}
-        title="Client Orders"
-        subtitle="Market orders at a glance"
+        title={header.title}
+        subtitle={header.subtitle}
+        crumbs={header.crumbs}
+        cover={header.cover}
+        backdrop={header.backdrop}
+        meta={opened ? (
+          <>
+            {header.meta}
+            {/* The film's own actions, with the film rather than among the page's tools. A film loaded before the
+                page read Drive folders has no client to read again from; it is loaded afresh instead. */}
+            <span aria-hidden="true" className="mx-0.5 h-4 w-px bg-white/25" />
+            {opened.source?.clientId && (
+              <HoverLabel label={market ? `Read from Google at ${readAt(lastRead)}` : `Read from Google at ${readAt(lastRead)}. Sheets unchanged since are kept; hold ⌥ (Alt) to read every one.`}>
+                <button onClick={refresh} disabled={working} className={`${headerChip} press transition-colors hover:bg-white/25 disabled:opacity-60`}>
+                  {refreshing ? <Loader2 className="h-3 w-3 animate-spin" /> : <RefreshCw className="h-3 w-3" strokeWidth={2.75} />}
+                  {refreshing
+                    ? (market && refreshing.total === 1 ? `Reading ${market.name}…` : `Reading ${refreshing.done} of ${refreshing.total || "…"}`)
+                    : `Read ${readAt(lastRead)}`}
+                </button>
+              </HoverLabel>
+            )}
+            <button
+              onClick={() => dropFile(opened)}
+              aria-label={`Remove ${filmTitleOf(opened)} (${mediumOf(opened)}) from the page`}
+              title={`Remove ${filmTitleOf(opened)} (${mediumOf(opened)}) from the page`}
+              className="press flex items-center rounded-full bg-white/10 p-1.5 text-white/70 ring-1 ring-white/20 transition-colors hover:bg-rose-500/80 hover:text-white hover:ring-rose-300/60"
+            >
+              <Trash2 className="h-3 w-3" strokeWidth={2.5} />
+            </button>
+          </>
+        ) : header.meta}
       >
         {/* Apart enough that the connected G's glow fades before the search's
             glass, which would otherwise cut it off in a hard line. */}
@@ -415,6 +610,12 @@ export default function OrderForms({ wrikeData, isAdmin = false }) {
           {files?.length > 0 && <HeaderSearch files={files} matcher={matcher} today={today} />}
           {googleConfigured() && <GoogleButton />}
           <ReportButton />
+          {/* The front page's one main action, so it stands apart at the end of the page's tools. */}
+          {!view.fileId && files && !empty && !adding && (
+            <button onClick={() => setAdding(true)} className="group/load press ml-2 flex items-center gap-2 rounded-xl bg-white px-4 py-2 text-sm font-bold text-[#4338ca] shadow-sm transition-colors hover:bg-white/90">
+              <Plus className="h-4 w-4 transition-transform duration-300 group-hover/load:rotate-90" strokeWidth={2.75} /> Load a film
+            </button>
+          )}
         </div>
       </PageHeader>
 
@@ -453,26 +654,12 @@ export default function OrderForms({ wrikeData, isAdmin = false }) {
 
         {empty && !partial && <DropZone onFile={addFile} busy={busy} dragging={dragging} error={error} />}
 
-        {files && files.length > 0 && !partial && view.fileId && (
+        {openExtra && (openExtra.extra.section === "domestic"
+          ? <DomesticView file={openExtra.extra} film={openExtra.name} onRemove={() => dropFile(openExtra.extra)} />
+          : <LaunchView file={openExtra.extra} film={openExtra.name} onRemove={() => dropFile(openExtra.extra)} />)}
+
+        {files && files.length > 0 && !partial && view.fileId && !openExtra && (
           <>
-            <FilmBar files={files} selectedId={file?.id} onSelect={(id) => { setEditingSheets(false); go(id, null); }} onRemove={dropFile} staleness={stalenessOf} delivered={(f) => deliveredFilms.has(f.id)} onAdd={() => setAdding((v) => !v)} adding={adding}>
-              {/* A film loaded before the page read Drive folders has no client to
-                  read again from; it is loaded afresh with the plus beside the switcher. */}
-              {file?.source?.clientId && (
-                <HoverLabel label={market ? `Read from Google at ${readAt(lastRead)}` : `Read from Google at ${readAt(lastRead)}. Sheets unchanged since are kept; hold ⌥ (Alt) to read every one.`}>
-                  <button
-                    onClick={refresh}
-                    disabled={working}
-                    className="key press flex items-center gap-2 px-4 py-2.5 rounded-xl bg-white border border-[#dce4ec] hover:border-[#12a0e1] shadow-sm text-sm font-bold text-[#122027] transition-colors disabled:opacity-60"
-                  >
-                    {refreshing ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />}
-                    {refreshing
-                      ? (market ? `Reading ${market.name}…` : `Reading ${refreshing.done} of ${refreshing.total || "…"}`)
-                      : `Refresh${market ? ` ${market.name}` : ""} · read at ${readAt(lastRead)}`}
-                  </button>
-                </HoverLabel>
-              )}
-            </FilmBar>
             {error && <p role="alert" className="text-sm font-medium text-rose-600">{error}</p>}
             {stalenessOf(file) && (
               <div role="status" className="flex flex-wrap items-center gap-3 px-4 py-2.5 rounded-xl bg-amber-50 border border-amber-200 text-sm text-amber-700">
@@ -517,14 +704,19 @@ export default function OrderForms({ wrikeData, isAdmin = false }) {
           </>
         )}
 
-        {files && files.length > 0 && !partial && !view.fileId && (
+        {files && (files.length > 0 || extras.length > 0) && !partial && !view.fileId && (
           <StudioGrid
             files={files}
+            extras={extras}
+            codes={filmCodes}
+            studio={studio}
+            onStudio={openStudio}
             posters={posters}
             titleOf={filmTitleOf}
             staleness={stalenessOf}
             delivered={(f) => deliveredFilms.has(f.id)}
             onOpen={(id) => { setEditingSheets(false); go(id, null); }}
+            onOpenExtra={(id) => go(id, null)}
             onSetPoster={setFilmPoster}
             onSetStudioImage={setStudioImage}
             canEdit={isAdmin}

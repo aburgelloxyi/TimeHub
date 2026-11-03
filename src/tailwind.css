@@ -132,6 +132,81 @@
 .list-row-in { animation: listRowIn 280ms var(--ease-app) both; animation-delay: calc(min(var(--i, 0), 8) * 30ms); }
 .bar-fill { transform-origin: left center; animation: barGrowX 520ms var(--ease-app) both; animation-delay: calc(min(var(--i, 0), 8) * 30ms + 80ms); }
 
+/* Client Orders, the studio row. With no studio open the cards are large and
+   lift when pointed at. Opening one shrinks the row to a strip: height, type
+   and padding ease down together, which is a layout change, but three cards and
+   no more, and the films rise in underneath as it settles. With a studio open,
+   its card sits a little forward in full colour and the others recede until
+   pointed at. `translate`, not transform, so .press still adds its scale. The
+   pill under the row glides to the open card; it only transitions once it has
+   a place to glide from (.is-moving), so it appears in place. */
+.studio-tab { transition: translate 220ms var(--ease-app), box-shadow 220ms var(--ease-app), scale 140ms var(--ease-app); }
+.studio-row:not(.has-open) .studio-tab:hover { translate: 0 -4px; }
+.studio-tab.is-active { translate: 0 -2px; }
+.studio-tab-art { transition: height 460ms var(--ease-app), filter 220ms var(--ease-app); }
+.studio-tab-label { transition: padding 460ms var(--ease-app); }
+.studio-tab-title { transition: font-size 460ms var(--ease-app); }
+.studio-row.has-open .studio-tab:not(.is-active):not(:hover):not(:focus-visible) .studio-tab-art { filter: saturate(0.5) brightness(0.78); }
+.studio-tab-image { transition: scale 600ms var(--ease-app); }
+.studio-tab:hover .studio-tab-image { scale: 1.04; }
+.studio-glide.is-moving { transition: transform 380ms var(--ease-app); }
+/* The shelf slides in 18px from the side; clip, not hidden, so that flashes no
+   scrollbar while a poster's lift and shadow still show above and below. */
+.studio-shelf { overflow-x: clip; }
+
+/* Client Orders, opening a film. The other posters gather behind it like a deck
+   (StudioGrid sets where each goes and its delay), while it moves to make room;
+   then its drawer (FilmDrawer) slides out from behind its edge and the rows
+   follow one by one. Closing fans the deck back out. The movement is on
+   .deck-card, inside the grid cell, because the cell's arrival animation holds
+   its own transform and opacity. A card in the deck takes no clicks. */
+.deck-card { transition: transform 620ms var(--ease-app), opacity 420ms var(--ease-app); }
+.deck-card.is-away { pointer-events: none; }
+@keyframes drawerOut { from { transform: translateX(-100%); } to { transform: none; } }
+.film-drawer { animation: drawerOut 480ms var(--ease-app) 200ms both; }
+.drawer-row { animation: listRowIn 320ms var(--ease-app) both; animation-delay: calc(var(--i, 0) * 55ms + 340ms); }
+
+/* Each kind of work in its own colours (--from, --to), every row the same
+   shape: its count in gradient type, then its name. Pointing at a row sweeps
+   the gradient across it, turns the count white, nudges the words and draws
+   the arrow's shaft as its head slides along to meet it. */
+.drawer-count {
+  background-image: linear-gradient(135deg, var(--from), var(--to));
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  transition: color 300ms var(--ease-app);
+}
+.drawer-section::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(90deg, var(--from), var(--to));
+  transform: scaleX(0);
+  transform-origin: left center;
+  transition: transform 420ms var(--ease-app);
+}
+.drawer-text { transition: translate 360ms var(--ease-app); }
+.drawer-arrow { opacity: 0.55; transition: opacity 300ms var(--ease-app); }
+.drawer-arrow-shaft { stroke-dasharray: 14; stroke-dashoffset: 14; transition: stroke-dashoffset 380ms var(--ease-app); }
+.drawer-arrow-head { transition: transform 380ms var(--ease-app); }
+.drawer-section:hover::before,
+.drawer-section:focus-within::before { transform: scaleX(1); }
+.drawer-section:hover .drawer-count,
+.drawer-section:focus-within .drawer-count { color: #fff; }
+.drawer-section:hover .drawer-text,
+.drawer-section:focus-within .drawer-text { translate: 6px 0; }
+.drawer-section:hover .drawer-arrow,
+.drawer-section:focus-within .drawer-arrow { opacity: 1; }
+.drawer-section:hover .drawer-arrow-shaft,
+.drawer-section:focus-within .drawer-arrow-shaft { stroke-dashoffset: 0; }
+.drawer-section:hover .drawer-arrow-head,
+.drawer-section:focus-within .drawer-arrow-head { transform: translateX(4px); }
+.drawer-chip { transition: translate 220ms var(--ease-app), box-shadow 220ms var(--ease-app), filter 220ms var(--ease-app), scale 140ms var(--ease-app); }
+.drawer-chip:hover { translate: 0 -2px; filter: brightness(1.08); box-shadow: 0 8px 18px rgb(0 0 0 / 0.35); }
+.drawer-close svg { transition: rotate 300ms var(--ease-app); }
+.drawer-close:hover svg { rotate: 90deg; }
+
 /* Project/Time, the Billable toggle: the sheet is replaced, row for row, and
    the same shape comes back with different figures in it. Each row and the
    figures inside it arrive as a wave, down the table and across it, so the eye
@@ -161,6 +236,14 @@ html.theme-revealing::view-transition-new(root) { animation: themeReveal 480ms v
   .tick-draw path, .tick-pop, .pop-in, .list-row-in, .view-in, .view-fade, .bar-fill,
   .billable-row, .billable-figure { animation: none; }
   .press, .press:active:not(:disabled) { transition: none; scale: 1; }
+  .studio-tab, .studio-tab-art, .studio-tab-label, .studio-tab-title, .studio-tab-image, .studio-glide.is-moving,
+  .drawer-section::before, .drawer-arrow-shaft, .drawer-arrow-head, .drawer-text, .drawer-chip, .drawer-close svg { transition: none; }
+  /* The deck still forms, so the drawer has room, but by fading rather than moving. */
+  .deck-card { transition: opacity 200ms linear; }
+  .film-drawer, .drawer-row { animation: none; }
+  .drawer-section:hover .drawer-text, .drawer-section:focus-within .drawer-text, .drawer-chip:hover { translate: none; }
+  .drawer-close:hover svg { rotate: none; }
+  .studio-tab.is-active, .studio-row:not(.has-open) .studio-tab:hover, .studio-tab:hover .studio-tab-image { translate: none; scale: 1; }
 }
 
 /* The hand beside "Welcome Back". Two waves from the wrist as the page

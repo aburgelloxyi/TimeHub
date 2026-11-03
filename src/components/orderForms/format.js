@@ -31,12 +31,6 @@ export function formatDay(iso, todayIso) {
   return todayIso && iso.slice(0, 4) !== todayIso.slice(0, 4) ? `${day} ${y}` : day;
 }
 
-export function loadedAgo(loadedAt, now = new Date()) {
-  const days = Math.floor((now - new Date(loadedAt)) / 86400000);
-  if (days <= 0) return "loaded today";
-  return days === 1 ? "loaded yesterday" : `loaded ${days} days ago`;
-}
-
 export const STATUS_LABEL = {
   confirmed: "Confirmed",
   pending: "Pending",
@@ -69,4 +63,3 @@ export const pillClass = "pill-label inline-flex items-center px-2 py-0.5 rounde
 // Motion and Print wear their departments' colours (see DEPT_GROUPS in lib/people.js).
 export const MEDIUM_LABEL = { motion: "Motion", print: "Print" };
 export const MEDIUM_CLASS = { motion: "bg-violet-100 text-violet-700", print: "bg-orange-100 text-orange-700" };
-export const MEDIUM_SOLID = { motion: "bg-violet-600 text-white", print: "bg-orange-500 text-white" };

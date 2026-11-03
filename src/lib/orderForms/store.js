@@ -149,7 +149,9 @@ export async function listFiles() {
   }));
   const kept = files.map((file) => ({ ...file, rev: revs.get(file.id) }));
   await Promise.all(forget.map(localDelete));
-  await Promise.all(kept.map(localPut));
+  // Only what this browser didn't already hold at that revision: a film it holds comes back from reconcile as it
+  // was, and writing every film back on every visit was megabytes of work for nothing.
+  await Promise.all(kept.filter((file) => held.get(file.id)?.rev !== file.rev).map(localPut));
   return kept;
 }
 

@@ -17,7 +17,7 @@ import { filterToTeams, keepForCache, marketFolderIds } from "../src/lib/wrikeEn
 const NOBODY = "NOT_A_MANAGER";
 
 check("pages: Motion", pageIdsFor("Motion", NOBODY), ["todayslist", "canvas", "legacy", "profile"]);
-check("pages: PM, with work-in-progress Client Orders last", pageIdsFor("PM", NOBODY), ["jobbook", "legacy", "profile", "orderforms"]);
+check("pages: PM, Client Orders beside the Job Book", pageIdsFor("PM", NOBODY), ["jobbook", "orderforms", "legacy", "profile"]);
 check("pages: a department added in Administration gets the standard set", pageIdsFor("Sound", NOBODY), ["todayslist", "canvas", "legacy", "profile"]);
 check("pages: untagged gets a neutral set, no Canvas", pageIdsFor(null, NOBODY), ["todayslist", "legacy", "profile"]);
 

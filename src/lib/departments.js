@@ -74,7 +74,6 @@ export const PAGES = {
     desc: "Market orders at a glance",
     icon: ClipboardList,
     gradient: PAGE_GRADIENTS.orderforms,
-    wip: true,
   },
 };
 

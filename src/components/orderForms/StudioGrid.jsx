@@ -184,7 +184,13 @@ export default function StudioGrid({ files, posters, titleOf, staleness, deliver
           <p className="mt-1 text-xs text-[#768994]">Load one from the studio's Drive, or drop an order form on the page.</p>
         </div>
       ) : (
-        <div className="grid grid-cols-[repeat(auto-fill,minmax(190px,230px))] gap-6">
+        <div
+          className="grid gap-6"
+          // A handful of films share the width, up to a poster's sensible size; more than that wrap as a shelf.
+          style={films.length <= 4
+            ? { gridTemplateColumns: `repeat(${films.length}, minmax(0, 1fr))`, maxWidth: `${films.length * 380}px` }
+            : { gridTemplateColumns: "repeat(auto-fill, minmax(220px, 1fr))" }}
+        >
           {films.map((g, i) => {
             const look = LOOK[current.id] || LOOK.dropped;
             const key = `film:${g.key}`;
@@ -216,8 +222,8 @@ export default function StudioGrid({ files, posters, titleOf, staleness, deliver
                     {/* Dark enough under the title that a poster's own lettering never fights it. */}
                     <div className={`absolute inset-x-0 bottom-0 bg-gradient-to-t to-transparent ${g.poster ? "h-3/5 from-black via-black/75" : "h-1/4 from-black/70"}`} />
                     {/* The title, lifted out of the way when the two sides slide up beneath it. */}
-                    <div className="absolute inset-x-0 bottom-0 p-3 pb-4 transition-transform duration-300 ease-out group-hover:-translate-y-16 group-focus-within:-translate-y-16">
-                      {g.poster && <p className="line-clamp-2 font-display text-base font-bold leading-snug text-white drop-shadow">{g.title}</p>}
+                    <div className="absolute inset-x-0 bottom-0 p-4 pb-5 transition-transform duration-200 ease-out group-hover:-translate-y-16 group-focus-within:-translate-y-16">
+                      {g.poster && <p className="line-clamp-2 font-display text-lg font-bold leading-snug text-white drop-shadow">{g.title}</p>}
                       <p className="mt-0.5 flex items-center gap-1.5 text-[11px] font-medium text-white/60">
                         {g.media.map((m) => <span key={m} className="h-1.5 w-1.5 rounded-full" style={{ background: MEDIA[m].colour }} />)}
                         <span>
@@ -227,7 +233,7 @@ export default function StudioGrid({ files, posters, titleOf, staleness, deliver
                       </p>
                     </div>
                     {/* Motion and Print, side by side, sliding up from the bottom edge on hover: each opens its own orders. */}
-                    <div className="absolute inset-x-0 bottom-0 flex h-16 translate-y-full transition-transform duration-300 ease-out group-hover:translate-y-0 group-focus-within:translate-y-0">
+                    <div className="absolute inset-x-0 bottom-0 flex h-16 translate-y-full transition-transform duration-200 ease-out will-change-transform group-hover:translate-y-0 group-focus-within:translate-y-0">
                       {g.media.map((m) => {
                         const { colour, Icon } = MEDIA[m];
                         const side = g.sides[m];
@@ -236,14 +242,14 @@ export default function StudioGrid({ files, posters, titleOf, staleness, deliver
                             key={m}
                             onClick={(e) => { e.stopPropagation(); open(side.file); }}
                             title={`Open the ${m.toLowerCase()} orders`}
-                            className="flex flex-1 flex-col justify-center gap-0.5 px-3 text-left text-white backdrop-blur-md transition-[filter] duration-150 hover:brightness-125 focus-visible:outline-none focus-visible:brightness-125"
-                            style={{ background: `linear-gradient(to top, ${colour}e6, ${colour}b3)` }}
+                            className="flex flex-1 flex-col justify-center gap-0.5 px-4 text-left text-[#122027] transition-[filter] duration-150 hover:brightness-110 focus-visible:outline-none focus-visible:brightness-110"
+                            style={{ background: colour }}
                           >
                             <span className="flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-wide">
                               <Icon className="h-3.5 w-3.5" strokeWidth={2.5} />
                               {m}
                             </span>
-                            <span className="text-[11px] font-medium text-white/85">
+                            <span className="text-[11px] font-semibold text-[#122027]/75">
                               {side.markets} {side.markets === 1 ? "market" : "markets"}
                             </span>
                           </button>

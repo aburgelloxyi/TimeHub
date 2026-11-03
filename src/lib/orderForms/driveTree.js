@@ -106,14 +106,20 @@ export function filmsIn(folders, sheets, names = {}) {
 //   { left, had }                          fewer than half its markets remain
 //   { left, typical }                      it was already down to a handful
 //                                          when it was loaded, against the
-//                                          studio's fullest film
-export function driveStaleness(file, driveFilms) {
+//                                          studio's fullest film, and none of
+//                                          its sheets has been touched lately:
+//                                          a new campaign starts with a handful
+//                                          too, but its sheets are being edited
+const LATELY = 30 * 24 * 60 * 60 * 1000;
+
+export function driveStaleness(file, driveFilms, now = Date.now()) {
   if (!file?.source?.clientId || !driveFilms) return null;
-  const now = driveFilms.find((f) => sameFilm(f.key, file.source.filmKey));
-  if (!now) return { gone: true };
+  const listed = driveFilms.find((f) => sameFilm(f.key, file.source.filmKey));
+  if (!listed) return { gone: true };
   const had = file.markets.length;
-  const left = now.markets.length;
+  const left = listed.markets.length;
   if (had >= 4 && left < had / 2) return { left, had };
   const typical = Math.max(...driveFilms.map((f) => f.markets.length));
-  return left <= 3 && typical >= 12 ? { left, typical } : null;
+  const touched = Math.max(0, ...listed.markets.map((m) => Date.parse(m.sheet?.modifiedTime || "") || 0));
+  return left <= 3 && typical >= 12 && now - touched > LATELY ? { left, typical } : null;
 }

@@ -108,6 +108,14 @@ check("flag: sheet spellings the app names differently",
   check("most of its markets are gone", driveStaleness(loaded(40), drive(3)), { left: 3, had: 40 });
   check("still there", driveStaleness(loaded(40), drive(38)), null);
   check("a small film losing a market isn't flagged", driveStaleness(loaded(2), drive(1)), null);
+  // A handful of markets beside a full film: a new campaign if its sheets are being edited, cleared out if not.
+  const NOW = Date.parse("2026-11-03T12:00:00Z");
+  const handful = (modifiedTime) => [
+    { key: "disclosure day|motion", markets: [{ sheet: { modifiedTime } }, { sheet: { modifiedTime: "2026-01-02T00:00:00Z" } }] },
+    { key: "forgotten island|motion", markets: Array.from({ length: 44 }, () => ({})) },
+  ];
+  check("a new campaign's handful, edited this week, isn't flagged", driveStaleness(loaded(2), handful("2026-11-01T09:00:00Z"), NOW), null);
+  check("a handful untouched for months is", driveStaleness(loaded(2), handful("2026-07-01T09:00:00Z"), NOW), { left: 2, typical: 44 });
   check("a dropped workbook has nothing to compare with", driveStaleness({ markets: [] }, drive(1)), null);
   check("Drive not listed yet: nothing claimed", driveStaleness(loaded(40), undefined), null);
   const studio = [{ key: "disclosure day|motion", markets: [{}] }, { key: "forgotten island|motion", markets: Array.from({ length: 44 }, () => ({})) }];

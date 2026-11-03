@@ -17,6 +17,8 @@ import GoogleButton from "./orderForms/GoogleButton";
 import { HoverLabel } from "./shared/FloatingCard";
 import { loadFilm, loadMarketOf, listFilms } from "../lib/orderForms/loadFilm";
 import { clientFor, driveStaleness } from "../lib/orderForms/driveTree";
+import StudioGrid from "./orderForms/StudioGrid";
+import { loadPosters, posterKey, setPoster } from "../lib/filmPosters";
 import { makeMatcher, indexParents, orderKey } from "../lib/orderForms/wrikeMatch";
 import { applySetAside, fileChanges, filmDelivered, marketChanges, mergeChanges, teamNews } from "../lib/orderForms/status";
 import { confirmAction } from "../lib/confirm";
@@ -61,6 +63,8 @@ const readAt = (iso) => new Date(iso).toLocaleTimeString([], { hour: "2-digit", 
 export default function OrderForms({ wrikeData }) {
   const [files, setFiles] = useState(null); // null until the store has answered
   const [view, setView] = useState(readHash);
+  // The picture on each film's card, by pasted URL. Empty until the shared map answers.
+  const [posters, setPosters] = useState({});
   const [busy, setBusy] = useState(false);
   const [googleBusy, setGoogleBusy] = useState(false);
   // The markets read so far while a film loads from Google, shown as they
@@ -107,6 +111,8 @@ export default function OrderForms({ wrikeData }) {
   }, []);
   const goRef = useRef(null);
 
+  useEffect(() => { let live = true; loadPosters().then((p) => { if (live) setPosters(p); }); return () => { live = false; }; }, []);
+
   useEffect(() => { reload(); }, [reload]);
 
   // What each studio's Drive folders hold now, to notice a loaded film whose
@@ -151,6 +157,19 @@ export default function OrderForms({ wrikeData }) {
     // A message about one film or market has nothing to say about the next.
     setError("");
   }, []);
+
+  // Choosing a film's picture: a pasted URL, read, merged and written in one go, so two PMs setting posters
+  // at once don't lose each other's. A blank URL puts the tinted fallback back.
+  const setFilmPoster = useCallback(async (file) => {
+    const title = filmTitleOf(file);
+    // The same studio id the grid groups by, so a dropped workbook's poster finds its card.
+    const key = posterKey(file.source?.clientId || "dropped", title);
+    const url = window.prompt(`Paste the image URL for ${title || "this film"}'s poster (or leave it blank to reset):`, posters[key] || "");
+    if (url === null) return;
+    const { posters: next, error: why } = await setPoster(key, url);
+    if (why) notify(why, "error");
+    else setPosters(next);
+  }, [posters]);
 
   // `file` is as read; `shown` is the same without the rows set aside.
   shownFiles.current = files;
@@ -423,7 +442,7 @@ export default function OrderForms({ wrikeData }) {
 
         {empty && !partial && <DropZone onFile={addFile} busy={busy} dragging={dragging} error={error} />}
 
-        {files && files.length > 0 && !partial && (
+        {files && files.length > 0 && !partial && view.fileId && (
           <>
             <FilmBar files={files} selectedId={file?.id} onSelect={(id) => { setEditingSheets(false); go(id, null); }} onRemove={dropFile} staleness={stalenessOf} delivered={(f) => deliveredFilms.has(f.id)} onAdd={() => setAdding((v) => !v)} adding={adding}>
               {/* A film loaded before the page read Drive folders has no client to
@@ -485,6 +504,18 @@ export default function OrderForms({ wrikeData }) {
                 />
               )}
           </>
+        )}
+
+        {files && files.length > 0 && !partial && !view.fileId && (
+          <StudioGrid
+            files={files}
+            posters={posters}
+            titleOf={filmTitleOf}
+            staleness={stalenessOf}
+            delivered={(f) => deliveredFilms.has(f.id)}
+            onOpen={(id) => { setEditingSheets(false); go(id, null); }}
+            onSetPoster={setFilmPoster}
+          />
         )}
       </div>
 

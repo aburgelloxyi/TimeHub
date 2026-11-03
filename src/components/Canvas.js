@@ -3660,7 +3660,7 @@ function CampaignCanvasForDepartment({ department, wrikeData = [], folderCampaig
         <FilmCodesPanel discovered={filmCodeMappings} onEdit={editFilmCode} onClose={() => setShowMappingsPanel(false)} />
       )}
 
-      <PageHeader pageId="canvas" icon={Layout} title="Campaign Canvas" subtitle="Visual Command Centre for active campaigns">
+      <PageHeader pageId="canvas" title="Campaign Canvas" subtitle="Visual Command Centre for active campaigns">
         {isAdmin && (
           <>
             <button

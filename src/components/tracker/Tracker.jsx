@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useCallback } from "react";
 import {
-  Activity, Download, RefreshCw,
+  Download, RefreshCw,
   List,
   Layers, Globe, Tag, Film,
 } from "lucide-react";
@@ -173,7 +173,7 @@ export default function Tracker({ wrikeData, onNavigateToHub }) {
         handlePasteImport={actions.handlePasteImport}
       />
 
-      <PageHeader pageId="timesheet" icon={Activity} title="XYi Timesheeter" subtitle={trackerSubtitleFor(department)}>
+      <PageHeader pageId="timesheet" title="XYi Timesheeter" subtitle={trackerSubtitleFor(department)}>
         <button
           onClick={() => actions.handlePullWrikeTime(wrikeData)}
           disabled={isPullingTime}

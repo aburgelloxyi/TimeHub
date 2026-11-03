@@ -81,7 +81,6 @@ export default function JobBook() {
     <div className="min-h-screen bg-slate-100 text-[#122027] font-sans pb-16">
       <PageHeader
         pageId="jobbook"
-        icon={Briefcase}
         title="Job Book"
         subtitle="Live job numbers, setup & feed"
       />

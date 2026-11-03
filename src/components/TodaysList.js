@@ -628,7 +628,7 @@ export default function TodaysList({ wrikeData, triggerToast: _triggerToast, isA
 
   return (
     <div ref={boardRef} className="min-h-screen bg-slate-100 text-[#122027] font-sans selection:bg-[#12a0e1]/30 selection:text-[#122027]">
-      <PageHeader pageId="todayslist" icon={LayoutList} title={boardLabelFor(department)} subtitle={`${timeframe}'s allocation`}>
+      <PageHeader pageId="todayslist" title={boardLabelFor(department)} subtitle={`${timeframe}'s allocation`}>
         {/* The day's summary lives in the header, like a call sheet's totals —
             white figures on the page gradient instead of a floating card row */}
         <div className="flex items-center gap-6 mr-2">

@@ -246,7 +246,6 @@ export default function Management({ wrikeUserId, department, wrikeData = [] }) 
           other page, so the Home wash resolves into it (see pageGradients). */}
       <PageHeader
         pageId="management"
-        icon={Shield}
         title="Administration"
         subtitle="Reports · Staff Accounts · Client Accounts"
       />

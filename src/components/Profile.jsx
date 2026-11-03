@@ -2,7 +2,6 @@ import React, { useState, useEffect, useMemo, useCallback, useRef } from "react"
 import gsap from "gsap";
 import { useGSAP } from "@gsap/react";
 import {
-  User,
   Clock,
   BarChart2,
   Briefcase,
@@ -2166,7 +2165,6 @@ export default function Profile({ wrikeData, onTokenChange, activeSection: activ
       )}
       <PageHeader
         pageId="profile"
-        icon={User}
         title={displayName}
         subtitle={[profile?.department, profile?.email].filter(Boolean).join(" · ") || undefined}
         maxWidthClass="max-w-[1400px]"

@@ -70,7 +70,6 @@ import { categoryForTaskWithSource } from "../utils/categoryFamily";
 import { countryPullSource, categoryPullSource } from "../utils/pullSource";
 import CommentTrailModal from "./legacy/CommentTrailModal";
 import ReportProblemModal from "./legacy/ReportProblemModal";
-import { PAGES } from "../lib/departments";
 import { BOOKMARKLET_VERSION } from "../lib/bookmarkletVersion";
 
 import { HoverLabel } from "./shared/FloatingCard";
@@ -3009,7 +3008,7 @@ export default function LegacyTimesheet({ wrikeData, isAdmin = false }) {
       )}
 
       {/* --- HEADER --- */}
-      <PageHeader pageId="legacy" icon={PAGES.legacy.icon} title="Weekly Timesheet" subtitle={weekDateRange}>
+      <PageHeader pageId="legacy" title="Weekly Timesheet" subtitle={weekDateRange}>
         <div className="flex items-center gap-1 text-[13px] text-white/85 font-medium">
           {/* Waves on arrival and again when pointed at. Still with fun mode off. */}
           <span className={`text-base leading-none shrink-0 ${funMode ? "hand-wave" : ""}`} aria-hidden="true">👋</span>

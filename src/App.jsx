@@ -138,6 +138,16 @@ export default function App() {
   );
   const [showReminder, setShowReminder] = useState(false);
   const [showAdmin, setShowAdmin] = useState(false);
+  // Choosing the page you're already on starts it afresh: back to its own front
+  // (a page's place lives after the first hash segment, so that is dropped) and
+  // remounted, so it reads its data again. Leaving and coming back did the same.
+  const [pageVisit, setPageVisit] = useState(0);
+  const openPage = useCallback((id) => {
+    if (id !== activePage) { setActivePage(id); return; }
+    if (window.location.hash !== `#${id}`) window.history.pushState({}, "", `#${id}`);
+    setPageVisit((n) => n + 1);
+    window.scrollTo(0, 0);
+  }, [activePage]);
   const ADMIN_WRIKE_ID = "KUAWDLVN";
 
   // Keep the URL hash in sync with the active page so a refresh (or a
@@ -384,7 +394,7 @@ export default function App() {
     {/* The "Wrike not connected" notice is drawn by each page's header. */}
     <WrikeConnectionContext.Provider value={wrikeConnection}>
     <div className="min-h-screen bg-slate-100 transition-colors duration-300">
-      <Rail activePage={activePage} setActivePage={setActivePage} />
+      <Rail activePage={activePage} setActivePage={openPage} />
 
       {/* ── Onboarding modal ─────────────────────────────────────────────── */}
       {showOnboarding && (
@@ -584,7 +594,7 @@ export default function App() {
                 a white screen with the reason only in the console is the
                 alternative, and that's what used to happen. Keyed on
                 activePage so navigating away clears a caught error. */}
-            <AppErrorBoundary resetKey={activePage} onGoHome={() => setActivePage("home")}>
+            <AppErrorBoundary key={pageVisit} resetKey={activePage} onGoHome={() => setActivePage("home")}>
             {/* Suspense sits INSIDE the motion.div: a still-loading chunk
                 suspends to the quiet PageLoading fallback within the entrance
                 animation, instead of unmounting the AnimatePresence tree. */}
@@ -650,7 +660,7 @@ export default function App() {
               <Management wrikeUserId={wrikeUserId} department={department} wrikeData={globalWrikeData} />
             )}
             {activePage === "jobbook" && (canOpen("jobbook") ? <JobBook /> : <PageLoading />)}
-            {activePage === "orderforms" && (canOpen("orderforms") ? <OrderForms wrikeData={globalWrikeData} isAdmin={isAdmin} /> : <PageLoading />)}
+            {activePage === "orderforms" && (canOpen("orderforms") ? <OrderForms wrikeData={globalWrikeData} isAdmin={isAdmin} filmCodes={filmCodeMappings} /> : <PageLoading />)}
             </Suspense>
             </AppErrorBoundary>
           </motion.div>

@@ -49,7 +49,7 @@ check("44 minutes bills 30", one({ time_spent: "0:44" }).billedSeconds, 30 * 60)
 check("45 minutes bills 60", one({ time_spent: "0:45" }).billedSeconds, 60 * 60);
 check("74 minutes bills 60", one({ time_spent: "1:14" }).billedSeconds, 60 * 60);
 check("75 minutes bills 90", one({ time_spent: "1:15" }).billedSeconds, 90 * 60);
-check("a single 2-minute entry still bills one block", one({ time_spent: "0:02" }).billedSeconds, 30 * 60);
+check("a 2-minute entry bills nothing", one({ time_spent: "0:02" }).billedSeconds, 0);
 check("no time bills nothing", billSeconds(0, 30), 0);
 
 // Grouping key: each of these must split the rows into two blocks.
@@ -90,7 +90,7 @@ check("label rename still groups by job code", consolidateRows([
 
 // Increments come from the client, and a missing one falls back to 30.
 check("client increment is used", one({ time_spent: "0:10", _increment: 15 }).billedSeconds, 15 * 60);
-check("missing increment falls back to 30", one({ time_spent: "0:10", _increment: undefined }).billedSeconds, 30 * 60);
+check("missing increment falls back to 30", one({ time_spent: "0:20", _increment: undefined }).billedSeconds, 30 * 60);
 check("zero increment falls back too", incrementFor(0), DEFAULT_INCREMENT_MINUTES);
 check("negative increment falls back too", incrementFor(-15), DEFAULT_INCREMENT_MINUTES);
 
@@ -112,7 +112,7 @@ check("weeks sort newest first", consolidateRows([
 // the Billable view, and billed once the week adds up to something.
 check("under 15 minutes is banked", one({ time_spent: "0:14" }).banked, true);
 check("15 minutes is not banked", one({ time_spent: "0:15" }).banked, false);
-check("a banked block still carries what it would bill", one({ time_spent: "0:02" }).billedSeconds, 30 * 60);
+check("a banked block holds only what it logged", [one({ time_spent: "0:02" }).bankedSeconds, one({ time_spent: "0:02" }).billedSeconds], [2 * 60, 0]);
 check("banking counts the addition too", one({ time_spent: "0:10", additional_time: "0:05" }).banked, false);
 
 // What a block keeps when rounding leaves time under the bill. In the week, not carried into the next.
@@ -120,3 +120,25 @@ check("a 37-minute block banks the 7 minutes it cannot bill", one({ time_spent: 
 check("a 74-minute block bills the hour and banks 14", [one({ time_spent: "1:14" }).billedSeconds, one({ time_spent: "1:14" }).bankedSeconds], [60 * 60, 14 * 60]);
 check("a block that rounds up banks nothing", one({ time_spent: "0:53" }).bankedSeconds, 0);
 check("a block under the line banks all of it", one({ time_spent: "0:10" }).bankedSeconds, 10 * 60);
+
+// The week's cycle, across days. Minutes banked on one day are spent by the next entry, and the entry that crosses
+// the half bills; when it bills, what is left over stays in the pot.
+const monday = row({ _iso: "2026-10-26", time_spent: "0:07" });
+const tuesday = row({ _iso: "2026-10-27", time_spent: "0:08" });
+const cross = consolidateRows([monday, tuesday]);
+const steps = cross[0].cycle.byId;
+check("first day under the half bills nothing and banks its 7", [steps.get(monday.id).billed, steps.get(monday.id).bankedAfter], [0, 7 * 60]);
+check("the next day's 8 spends the bank and bills 30", [steps.get(tuesday.id).billed, steps.get(tuesday.id).absorbed], [30 * 60, 7 * 60]);
+check("the block bills once across the two days", cross[0].billedSeconds, 30 * 60);
+check("nothing is left in the pot after it bills", cross[0].bankedSeconds, 0);
+
+// Overbilled entries leave nothing to keep; over-rounded ones keep the remainder.
+check("a 22-minute entry bills 30 and keeps nothing", [one({ time_spent: "0:22" }).billedSeconds, one({ time_spent: "0:22" }).bankedSeconds], [30 * 60, 0]);
+check("a 37-minute entry bills 30 and keeps 7", [one({ time_spent: "0:37" }).billedSeconds, one({ time_spent: "0:37" }).bankedSeconds], [30 * 60, 7 * 60]);
+
+// Each crossing bills, so two full entries in one week bill twice. Pinned because it is the consequence of a
+// running cycle rather than one round of the week's total.
+const late = row({ _iso: "2026-10-28", time_spent: "0:22" });
+const later = row({ _iso: "2026-10-29", time_spent: "0:15" });
+const twice = consolidateRows([late, later]);
+check("two entries that each cross bill 30 each", twice[0].billedSeconds, 60 * 60);

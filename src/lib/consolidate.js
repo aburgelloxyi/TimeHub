@@ -61,6 +61,33 @@ export function blockKey(row, { jobOf = (row) => row.job_number } = {}) {
 // `_increment` for the client's increment, both added in JobsFeedSection.
 // jobOf lets the caller group by the job code inside the label, so a rename
 // mid-week doesn't split one job into two groups.
+// The week's cycle, per block: walk the entries in the order they were worked, adding each to a pot. The pot is
+// rounded to the increment with the half going up, so 14 minutes bills nothing and 15 bills 30. What is billed
+// leaves the pot; what is left (37 minutes billed 30 keeps 7, 74 keeps 14) stays and meets the next entry. A pot
+// that rounds up to more than it holds (a 22-minute entry billed 30) has nothing left to keep.
+//
+// This bills each time the pot crosses the half, so a block can bill more than once in a week: 0:22 on Tuesday
+// and 0:15 on Wednesday bill 30 each, where one round of the week's 0:37 would bill 30 once.
+export function billCycle(rows, incrementMinutes) {
+  const step = incrementFor(incrementMinutes) * 60;
+  const sorted = [...(rows || [])].sort((a, b) =>
+    String(a._iso || a.work_date || a.date || "").localeCompare(String(b._iso || b.work_date || b.date || "")) ||
+    (a.id ?? 0) - (b.id ?? 0));
+  const byId = new Map();
+  let carry = 0;
+  let billed = 0;
+  for (const row of sorted) {
+    const logged = rowSeconds(row);
+    const absorbed = carry;
+    const total = carry + logged;
+    const bill = total > 0 ? Math.round(total / step) * step : 0;
+    carry = Math.max(0, total - bill);
+    billed += bill;
+    byId.set(row.id, { logged, billed: bill, bankedAfter: carry, absorbed, absorbedSeconds: absorbed });
+  }
+  return { byId, billed, banked: carry };
+}
+
 export function consolidateRows(rows, { jobOf = (row) => row.job_number } = {}) {
   const groups = new Map();
 
@@ -98,17 +125,15 @@ export function consolidateRows(rows, { jobOf = (row) => row.job_number } = {}) 
 
   return [...groups.values()]
     .map((group) => {
-      const billed = billSeconds(group.seconds, group.incrementMinutes);
-      const banked = group.seconds < BANK_MINUTES * 60;
+      // The week's own cycle decides both: what it bills, and what it is still holding. Never carried past Sunday.
+      const cycle = billCycle(group.rows, group.incrementMinutes);
       return {
         ...group,
-        billedSeconds: billed,
-        // Rounding's gain: a block that bills more than it logged.
-        upliftSeconds: billed - group.seconds,
-        banked,
-        // What the block keeps: a block under the line is held whole; a billed block that rounded down holds the
-        // remainder. Nothing is carried to another week: this is the week's own bank.
-        bankedSeconds: banked ? group.seconds : Math.max(0, group.seconds - billed),
+        billedSeconds: cycle.billed,
+        upliftSeconds: cycle.billed - group.seconds,
+        banked: cycle.billed === 0,
+        bankedSeconds: cycle.banked,
+        cycle,
       };
     })
     // Newest week first, then the order the raw table reads in.

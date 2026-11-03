@@ -118,6 +118,8 @@ const blockToRow = (g) => {
     _bankedSeconds: g.bankedSeconds,
     _banked: g.banked,
     _blockNote: blockNote(g),
+    // Where the block's entries came from: each one's day and time, for the hover on its count.
+    _entryList: g.rows.map(r => [r.date || r._iso || "", rowSeconds(r)]),
   };
 };
 export function JobsFeedSection() {
@@ -369,19 +371,27 @@ export function JobsFeedSection() {
   // Every block, banked ones too, so a raw row can show the block it belongs to: how many entries, how much it
   // logged, and what the week is holding for it. Billable leaves a banked block out; the raw view still says it.
   const blocksByKey = useMemo(() => new Map(consolidated.map(g => [g.key, g])), [consolidated]);
+  // Each entry's own step in its week's cycle: what it bills, what the pot holds after it, and whether it is
+  // spending minutes banked on an earlier day.
+  const cycleByRow = useMemo(() => {
+    const m = new Map();
+    for (const g of consolidated) for (const [id, step] of g.cycle.byId) m.set(id, step);
+    return m;
+  }, [consolidated]);
   const rawDetail = useCallback((e) => {
     const b = blocksByKey.get(blockKey(e, { jobOf: feedJobNo }));
-    // A raw row is one entry: its own time, one entry, and the block's rounding said once, on the block's first
-    // row, so two entries of one block don't each claim the whole block.
-    const first = b && b.rows[0] && b.rows[0].id === e.id;
+    const step = cycleByRow.get(e.id);
     return {
       _entries: 1,
-      _loggedSeconds: rowSeconds(e),
-      _bankedSeconds: first ? b.bankedSeconds : 0,
+      _loggedSeconds: step ? step.logged : rowSeconds(e),
+      _billedOnRow: step ? step.billed : 0,
+      _bankedSeconds: step ? step.bankedAfter : 0,
+      _absorbed: !!(step && step.absorbed > 0),
       _banked: b ? b.banked : false,
       _blockNote: b ? blockNote(b) : "",
+      _entryList: [[e.date || e._iso || "", step ? step.logged : rowSeconds(e)]],
     };
-  }, [blocksByKey]);
+  }, [blocksByKey, cycleByRow]);
 
   const fmtDate = (d) => {
     if (!d) return "—";
@@ -414,7 +424,6 @@ export function JobsFeedSection() {
     { key: "category",            label: ["Item", "Category"],         px: 140 },
     { key: "client_amends",       label: ["CA"],                       px: 30  },
     { key: "is_3d",               label: ["3D"],                       px: 28  },
-    { key: "costs",               label: ["Costs"],                    px: 68  },
     { key: "ordered_by",          label: ["Ordered", "By"],            px: 100 },
     { key: "billed_to",           label: ["Billed", "To"],             px: 100 },
     { key: "worked_on",           label: ["Worked", "On By"],          px: 100 },
@@ -422,6 +431,7 @@ export function JobsFeedSection() {
     { key: "logged",             label: ["Logged"],                    px: 62  },
     { key: "uplift",             label: ["Banked"],                    px: 92  },
     { key: "hourly_rate",         label: ["Rate"],                     px: 56  },
+    { key: "costs",               label: ["Costs"],                    px: 68  },
     { key: "time_spent",          label: ["Time"],                     px: 44  },
     { key: "extra_time",          label: ["Extra"],                    px: 44  },
     { key: "over_time",           label: ["OT"],                       px: 38  },
@@ -450,7 +460,13 @@ export function JobsFeedSection() {
       // Billable is a client-facing view: the same column shows the position the row bills as, not who logged it.
       case "worked_on":           return billable ? (e._roleName || "—") : e._name;
       case "hourly_rate":         return formatMoney(e._rate, e._currency);
-      case "time_spent":          return fmtNum(e.time_spent);
+      // Raw view: what this entry billed, or a dash while its minutes are banked. Billable rows carry the block's
+      // billed time as their time_spent, so they read as before.
+      case "time_spent": {
+        if (billable) return fmtNum(e.time_spent);
+        const billed = e._billedOnRow ?? 0;
+        return billed > 0 ? secondsToHM(billed, "0:00") : "—";
+      }
       case "extra_time":          return fmtNum(e.additional_time);
       // No over-time column on tasks: nothing to read, so a dash. "0.00" repeated down the column looked
       // like a measured value that was always zero.
@@ -458,11 +474,14 @@ export function JobsFeedSection() {
       // Rate × every hour on the row (logged + additional). The rows this
       // replaces only ever carried logged time, so the two agree there.
       case "total": {
-        const hrs = hoursOf(e.time_spent) + hoursOf(e.additional_time);
+        // Rate × the time this row bills. A banked row bills nothing, so it shows nothing.
+        const billedSeconds = billable ? null : (e._billedOnRow ?? 0);
+        if (!billable && !(billedSeconds > 0)) return "—";
+        const hrs = billable ? hoursOf(e.time_spent) + hoursOf(e.additional_time) : billedSeconds / 3600;
         return hrs > 0 && e._rate != null ? formatMoney(e._rate * hrs, e._currency) : "—";
       }
       case "territory":           return e.territory || "—";
-      case "entries":             return e._entries ?? "—";
+      case "entries":             return e._absorbed ? "+1" : (e._entries ?? "—");
       case "logged":              return secondsToHM(e._loggedSeconds ?? 0, "0:00");
       // What rounding adds when a block bills more than it logged. Never a negative: a block that bills less
       // simply bills less (37 minutes on a 30-minute step bills 30), and nothing is owed or carried against a
@@ -655,18 +674,17 @@ export function JobsFeedSection() {
                   return (
                     <td
                       key={c.key}
-                      title={c.key === "uplift" && e._blockNote ? e._blockNote : (typeof val === "string" && val !== "—" ? val : undefined)}
+                      title={c.key === "uplift" && e._blockNote ? e._blockNote
+                        : c.key === "entries" && e._entryList
+                          ? e._entryList.map(([d, secs]) => `${fmtDate(d)} ${secondsToHM(secs)}`).join(" · ")
+                          : (typeof val === "string" && val !== "—" ? val : undefined)}
                       className={`px-2 py-1.5 border-r border-[#f0f4f8] last:border-r-0 overflow-hidden ${isCheck ? "text-center" : ""} ${isMono ? "font-mono text-[10px]" : ""} ${noWrap ? "whitespace-nowrap" : ""} text-[#122027]`}
                     >
-                      <span className={`block leading-snug ${noWrap ? "truncate" : ""} ${c.key === "job_number" ? "font-black text-[#1cc1a5]" : "font-medium"} ${c.key === "uplift" && val !== "—" ? "text-emerald-600 font-bold" : ""}`}>
+                      <span className={`block leading-snug ${noWrap ? "truncate" : ""} ${c.key === "job_number" ? "font-black text-[#1cc1a5]" : "font-medium"} ${(c.key === "uplift" && val !== "—") || (c.key === "entries" && e._absorbed) ? "text-emerald-600 font-bold" : ""}`}>
                         {["worked_on", "hourly_rate", "time_spent", "extra_time", "over_time", "total"].includes(c.key)
                           ? <span className={cascade ? "billable-figure" : ""} style={cascade ? { "--i": Math.min(i, 10), "--j": j } : undefined}>{val}</span>
                           : val}
-                        {!billable && c.key === "time_spent" && e._banked && (
-                          <span className="block text-[9px] font-bold text-emerald-600 leading-tight" title="Under 15 minutes: kept on the timesheet and billed when it adds up">
-                            Banked
-                          </span>
-                        )}
+
                       </span>
                     </td>
                   );

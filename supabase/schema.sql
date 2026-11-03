@@ -198,6 +198,12 @@ create table public.dooh_folders (
   source_path text
 );
 
+create table public.film_posters (
+  id integer not null default 1,
+  -- Client Orders card pictures by pasted URL, keyed "<clientId>::<title>" and "studio::<id>".
+  posters jsonb not null default '{}'::jsonb
+);
+
 create table public.films (
   id bigint generated always as identity not null,
   title text not null,
@@ -262,6 +268,16 @@ create table public.jobs (
   -- missing them until 9 Aug 2026.
   wrike_folder_id text,
   wrike_folder_title text
+);
+
+-- Client Orders: clients' order details for unreleased films. RLS on and no policies,
+-- so only the Worker (service key, /api/orders) reads or writes it.
+create table public.order_films (
+  key text not null,
+  data jsonb not null,
+  loaded_at timestamp with time zone not null,
+  loaded_by text,
+  updated_at timestamp with time zone not null default now()
 );
 
 create table public.positions (
@@ -446,6 +462,7 @@ alter table public.clients add constraint clients_name_key unique (name);
 alter table public.dooh_assets add constraint dooh_assets_pkey primary key (id);
 alter table public.dooh_countries add constraint dooh_countries_pkey primary key (id);
 alter table public.dooh_folders add constraint dooh_folders_pkey primary key (id);
+alter table public.film_posters add constraint film_posters_pkey primary key (id);
 alter table public.films add constraint films_pkey primary key (id);
 alter table public.films add constraint films_title_key unique (title);
 alter table public.job_categories add constraint job_categories_pkey primary key (id);
@@ -462,6 +479,7 @@ alter table public.job_work_categories add constraint job_work_categories_name_k
 alter table public.jobs add constraint jobs_pkey primary key (id);
 alter table public.jobs add constraint jobs_job_number_key unique (job_number);
 alter table public.jobs add constraint jobs_status_check check ((status = ANY (ARRAY['Inactive'::text, 'Active'::text, 'Closed'::text])));
+alter table public.order_films add constraint order_films_pkey primary key (key);
 alter table public.positions add constraint positions_pkey primary key (id);
 alter table public.positions add constraint positions_title_key unique (title);
 alter table public.profiles add constraint profiles_pkey primary key (wrike_user_id);
@@ -536,11 +554,13 @@ alter table public.clients enable row level security;
 alter table public.dooh_assets enable row level security;
 alter table public.dooh_countries enable row level security;
 alter table public.dooh_folders enable row level security;
+alter table public.film_posters enable row level security;
 alter table public.films enable row level security;
 alter table public.job_categories enable row level security;
 alter table public.job_departments enable row level security;
 alter table public.job_work_categories enable row level security;
 alter table public.jobs enable row level security;
+alter table public.order_films enable row level security;
 alter table public.positions enable row level security;
 alter table public.profiles enable row level security;
 alter table public.project_descriptions enable row level security;
@@ -571,6 +591,7 @@ create policy "auth_all" on public.clients as permissive for all to authenticate
 create policy "anon all" on public.dooh_assets as permissive for all to authenticated using (true) with check (true);
 create policy "anon all" on public.dooh_countries as permissive for all to authenticated using (true) with check (true);
 create policy "anon all" on public.dooh_folders as permissive for all to authenticated using (true) with check (true);
+create policy "anon all" on public.film_posters as permissive for all to authenticated using (true) with check (true);
 create policy "auth_all" on public.films as permissive for all to authenticated using (true) with check (true);
 create policy "auth_all" on public.job_categories as permissive for all to authenticated using (true) with check (true);
 create policy "auth_all" on public.job_departments as permissive for all to public using (true) with check (true);

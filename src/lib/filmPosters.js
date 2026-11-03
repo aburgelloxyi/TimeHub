@@ -24,8 +24,9 @@ export async function loadPosters() {
   return (data && data.posters) || {};
 }
 
-// Read, merge and write in one go: the map is small and two people setting two
-// posters must not overwrite each other's.
+// Merges into the latest map rather than this screen's copy, so a poster set
+// elsewhere since this page loaded survives. Not atomic: two saves in the same
+// moment can still lose one.
 export async function setPoster(key, url) {
   const current = await loadPosters();
   const next = { ...current };

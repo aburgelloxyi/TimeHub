@@ -1,20 +1,15 @@
 // Consolidating a week of logged rows into billable blocks.
 //
 // The Billable view in Project/Time shows the lines a timesheet would bill as
-// one: same person, job, item category and territory in the same week. That
-// group's total is rounded to the client's increment, the half going up: 44
-// minutes bills 30, 45 bills the hour.
+// one: same person, job, item category and territory in the same week. Each
+// block bills through a running pot over the week (billCycle): minutes too few
+// to bill are banked and counted with the next entry, until Sunday.
 //
 // Nothing here writes. The raw rows stay the record of what happened; this is
 // a second, derived view of them.
 import { parseTimeToSeconds } from "../utils/timeHelpers";
 
 export const DEFAULT_INCREMENT_MINUTES = 30;
-
-// A block shorter than this is banked: it stays on the timesheet so the time is
-// not lost, but it is not billed. Fifteen minutes is the line between "worth an
-// invoice line" and "held", and the bank belongs to its own week.
-export const BANK_MINUTES = 15;
 
 // A missing or broken increment must not become 0 (a zero step would take the
 // whole total) or a fraction.
@@ -38,15 +33,6 @@ export function rowSeconds(row) {
   return parseTimeToSeconds(row.time_spent) + parseTimeToSeconds(row.additional_time);
 }
 
-// Round a group total to the nearest increment, the half going up: 44 minutes
-// bills 30, 45 bills 60, 74 bills 60, 75 bills 90. Any positive total bills at
-// least one increment; zero stays zero.
-export function billSeconds(totalSeconds, incrementMinutes) {
-  if (!(totalSeconds > 0)) return 0;
-  const step = incrementFor(incrementMinutes) * 60;
-  return Math.max(1, Math.round(totalSeconds / step)) * step;
-}
-
 // What makes two rows one block. Exported so a single raw row can ask which
 // block it belongs to, and whether that block was banked.
 export function blockKey(row, { jobOf = (row) => row.job_number } = {}) {
@@ -57,12 +43,9 @@ export function blockKey(row, { jobOf = (row) => row.job_number } = {}) {
   return [person, job, row.category || "", row.territory || "", week].join("\u0000");
 }
 
-// Rows are the feed's enriched entries: `_iso` for the work date and
-// `_increment` for the client's increment, both added in JobsFeedSection.
-// jobOf lets the caller group by the job code inside the label, so a rename
-// mid-week doesn't split one job into two groups.
 // The week's cycle, per block: walk the entries in the order they were worked, adding each to a pot. The pot is
-// rounded to the increment with the half going up, so 14 minutes bills nothing and 15 bills 30. What is billed
+// rounded to the increment with the half going up, so the banking line is half the client's increment: on 30,
+// 14 minutes bills nothing and 15 bills 30; on 15, under 7.5 minutes is banked. What is billed
 // leaves the pot; what is left (37 minutes billed 30 keeps 7, 74 keeps 14) stays and meets the next entry. A pot
 // that rounds up to more than it holds (a 22-minute entry billed 30) has nothing left to keep.
 //
@@ -83,11 +66,15 @@ export function billCycle(rows, incrementMinutes) {
     const bill = total > 0 ? Math.round(total / step) * step : 0;
     carry = Math.max(0, total - bill);
     billed += bill;
-    byId.set(row.id, { logged, billed: bill, bankedAfter: carry, absorbed, absorbedSeconds: absorbed });
+    byId.set(row.id, { logged, billed: bill, bankedAfter: carry, absorbed });
   }
   return { byId, billed, banked: carry };
 }
 
+// Rows are the feed's enriched entries: `_iso` for the work date and
+// `_increment` for the client's increment, both added in JobsFeedSection.
+// jobOf lets the caller group by the job code inside the label, so a rename
+// mid-week doesn't split one job into two groups.
 export function consolidateRows(rows, { jobOf = (row) => row.job_number } = {}) {
   const groups = new Map();
 

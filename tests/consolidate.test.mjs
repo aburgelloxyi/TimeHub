@@ -1,13 +1,14 @@
 // The Billable view's grouping and rounding.
 //
-// The rule the studio agreed: rows for one person, job, item category and
-// territory in one week bill as a single block, rounded to the client's
-// increment with the half going up. These cases pin the grouping key, the week
-// boundary and the rounding, including the totals either side of a half step.
+// Rows for one person, job, item category and territory in one week are one
+// block, billed through the week's running pot: each entry is added and the pot
+// rounded to the client's increment, the half going up, and what is too few
+// minutes to bill is banked for the next entry. These cases pin the grouping
+// key, the week boundary, the rounding either side of a half step, and the bank.
 import {
   consolidateRows,
   weekStartIso,
-  billSeconds,
+  billCycle,
   incrementFor,
   DEFAULT_INCREMENT_MINUTES,
 } from "../src/lib/consolidate.js";
@@ -50,7 +51,7 @@ check("45 minutes bills 60", one({ time_spent: "0:45" }).billedSeconds, 60 * 60)
 check("74 minutes bills 60", one({ time_spent: "1:14" }).billedSeconds, 60 * 60);
 check("75 minutes bills 90", one({ time_spent: "1:15" }).billedSeconds, 90 * 60);
 check("a 2-minute entry bills nothing", one({ time_spent: "0:02" }).billedSeconds, 0);
-check("no time bills nothing", billSeconds(0, 30), 0);
+check("no time bills nothing", billCycle([row({ time_spent: "0:00" })], 30).billed, 0);
 
 // Grouping key: each of these must split the rows into two blocks.
 check("different people stay apart", consolidateRows([
@@ -108,8 +109,8 @@ check("weeks sort newest first", consolidateRows([
   row({ _iso: "2026-10-27", time_spent: "0:10", category: "Proofreading" }),
 ]).map((g) => g.week), ["2026-10-26", "2026-10-19"]);
 
-// Under fifteen minutes a block is banked: kept on the timesheet, left out of
-// the Billable view, and billed once the week adds up to something.
+// On a 30-minute increment, under fifteen minutes a block is banked: kept on the
+// timesheet, left out of the Billable view, and billed once the week adds up to something.
 check("under 15 minutes is banked", one({ time_spent: "0:14" }).banked, true);
 check("15 minutes is not banked", one({ time_spent: "0:15" }).banked, false);
 check("a banked block holds only what it logged", [one({ time_spent: "0:02" }).bankedSeconds, one({ time_spent: "0:02" }).billedSeconds], [2 * 60, 0]);

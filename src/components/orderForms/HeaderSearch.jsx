@@ -7,13 +7,18 @@ import { SearchResults } from "./ControlSearch";
 // Client Orders' search, in the page header beside the Google button and
 // dressed like it: a round glass button that widens into a search box when
 // pointed at or focused, and stays open while it holds a query. It searches
-// the same way as the Control Centre's (search.js), over every film loaded,
-// and a result opens its market at that order. ⌘K puts the cursor in it.
+// the same way as the Control Centre's (search.js), and a result opens its
+// market at that order. ⌘K puts the cursor in it.
+//
+// It searches where you are: every film from the front page, the open film
+// (both its sides) inside one, the open market inside that. `scope` says which
+// ({ label, fileIds, market? }), shown as a chip in the box; the chip's × widens
+// the search to everything until the page moves on.
 
 const linkTo = (fileId, market, action) =>
   `#orderforms/${encodeURIComponent(fileId)}${market ? `/${encodeURIComponent(market)}` : ""}${action ? `/${action}` : ""}`;
 
-export default function HeaderSearch({ files, matcher, today }) {
+export default function HeaderSearch({ files, matcher, today, scope = null }) {
   const [query, setQuery] = useState("");
   const [open, setOpen] = useState(false); // the results, shown while searching
   const wrap = useRef(null);
@@ -23,7 +28,17 @@ export default function HeaderSearch({ files, matcher, today }) {
     () => (files?.length ? searchIndex(files, today, (file, market) => matcher.match(market.orders, file.links?.[market.name], file.briefed?.[market.name], market.kind || file.kind)) : []),
     [files, today, matcher]
   );
-  const result = useMemo(() => searchOrders(index, query), [index, query]);
+  const [wide, setWide] = useState(false);
+  const scopeKey = scope ? `${scope.fileIds.join(",")}|${scope.market || ""}` : "";
+  useEffect(() => setWide(false), [scopeKey]);
+  const narrow = scope && !wide;
+  const searched = useMemo(
+    () => (narrow ? index.filter((h) => scope.fileIds.includes(h.fileId) && (!scope.market || h.market === scope.market)) : index),
+    // scopeKey stands for scope's contents, which is a new object every render.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [index, narrow, scopeKey]
+  );
+  const result = useMemo(() => searchOrders(searched, query), [searched, query]);
   const searching = query.trim().length > 0;
 
   useEffect(() => {
@@ -57,7 +72,7 @@ export default function HeaderSearch({ files, matcher, today }) {
     <div ref={wrap} className="relative z-10">
       <label
         className="group flex items-center h-10 rounded-full border overflow-hidden cursor-text bg-white/15 hover:bg-white/25 focus-within:bg-white/25 border-white/25 text-white backdrop-blur-sm transition-colors duration-300"
-        aria-label="Search every order"
+        aria-label={narrow ? `Search ${scope.label}` : "Search every order"}
       >
         <span className="w-10 h-10 shrink-0 flex items-center justify-center">
           <Search className="w-[17px] h-[17px] transition-transform duration-300 group-hover:scale-110" />
@@ -65,13 +80,24 @@ export default function HeaderSearch({ files, matcher, today }) {
         <span className={reveal}>
           <span className="overflow-hidden">
             <span className="flex items-center gap-1 pr-2">
+              {narrow && (
+                <button
+                  type="button"
+                  onClick={(e) => { e.preventDefault(); setWide(true); input.current?.focus(); }}
+                  title="Search every film instead"
+                  className="group/scope mr-1 flex max-w-[11rem] shrink-0 items-center gap-1 rounded-full bg-white/20 py-0.5 pl-2.5 pr-1.5 text-[11px] font-bold text-white transition-colors hover:bg-white/30"
+                >
+                  <span className="truncate">In {scope.label}</span>
+                  <X className="h-3 w-3 shrink-0 transition-transform duration-200 group-hover/scope:rotate-90" />
+                </button>
+              )}
               <input
                 ref={input}
                 value={query}
                 onChange={(e) => { setQuery(e.target.value); setOpen(true); }}
                 onFocus={() => setOpen(true)}
                 onKeyDown={(e) => { if (e.key === "Escape") { setQuery(""); e.currentTarget.blur(); } }}
-                placeholder="Search every order…"
+                placeholder={narrow ? `Search ${scope.label}…` : "Search every order…"}
                 className="w-56 sm:w-72 bg-transparent text-sm font-bold text-white placeholder:text-white/60 placeholder:font-normal focus:outline-none"
               />
               {searching ? (

@@ -41,7 +41,7 @@ const buttonClass =
 // a few seconds: the film grid in outline, filling in from the left, under a
 // line that changes as it goes. The lines are what is actually happening,
 // said lightly.
-const LISTING_LINES = [
+export const LISTING_LINES = [
   "Opening every country's folder",
   "Counting order sheets",
   "Seeing who has filled theirs in",

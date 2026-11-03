@@ -1,5 +1,5 @@
 import { motion } from "framer-motion";
-import { MEDIA } from "./media";
+import { MEDIA, ON_COLOUR } from "./media";
 import { mediumOf } from "../../lib/orderForms/studios";
 
 // Motion or Print for the film in the header, in each side's own colour. When
@@ -13,7 +13,7 @@ export default function MediumSwitch({ current, twin, onSelect }) {
   if (!twin) {
     const { colour, Icon } = MEDIA[mediumOf(current)];
     return (
-      <span className="flex items-center gap-1.5 rounded-full px-3 py-1 text-[11px] font-black uppercase tracking-wide text-[#122027] shadow-sm" style={{ background: colour }}>
+      <span className={`flex items-center gap-1.5 rounded-full px-3 py-1 text-[11px] font-black uppercase tracking-wide shadow-sm ${ON_COLOUR}`} style={{ background: colour }}>
         <Icon className="h-3.5 w-3.5" strokeWidth={2.5} /> {mediumOf(current)}
       </span>
     );
@@ -31,7 +31,7 @@ export default function MediumSwitch({ current, twin, onSelect }) {
             type="button"
             onClick={() => !on && onSelect(file.id)}
             aria-pressed={on}
-            className={`press relative flex items-center gap-1.5 rounded-full px-3.5 py-1 text-[11px] font-black uppercase tracking-wide transition-colors ${on ? "text-[#122027]" : "text-white/75 hover:text-white"}`}
+            className={`press relative flex items-center gap-1.5 rounded-full px-3.5 py-1 text-[11px] font-black uppercase tracking-wide transition-colors ${on ? ON_COLOUR : "text-white/75 hover:text-white"}`}
           >
             {on && (
               <motion.span

@@ -1,9 +1,10 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { AlertTriangle, Check, Image as ImageIcon, Plus } from "lucide-react";
+import { Check, FolderX, Image as ImageIcon, Plus } from "lucide-react";
 import { MEDIA } from "./media";
 import { CLIENTS } from "../../lib/orderForms/driveTree";
 import { posterKey, studioKey } from "../../lib/filmPosters";
 import FilmDrawer from "./FilmDrawer";
+import { AddTile, GhostTile, LoaderBar, useShelfLoader } from "./ShelfLoader";
 import { SECTIONS } from "../../lib/orderForms/sections";
 import { placeExtras, sameFilmName } from "../../lib/orderForms/extras";
 import { EXTRA_STUDIOS, filmKey, mediumOf, studioLabel as labelOf, studioOf } from "../../lib/orderForms/studios";
@@ -44,7 +45,7 @@ const POSTER_WIDTH = 380;
 const DRAWER_WIDTH = 340;
 const DRAWER_TUCK = 14;
 
-export default function StudioGrid({ files, extras = [], codes = {}, studio, onStudio, posters, titleOf, staleness, delivered, onOpen, onOpenExtra, onSetPoster, onSetStudioImage, canEdit = false }) {
+export default function StudioGrid({ files, extras = [], codes = {}, studio, onStudio, posters, titleOf, staleness, delivered, onOpen, onOpenExtra, onLoaded, onBusy, onChooseFile, onSetPoster, onSetStudioImage, canEdit = false }) {
   const [revealed, setRevealed] = useState(null);
   const timer = useRef(null);
   // The film whose drawer is open, where its poster moves to, and where every other poster goes meanwhile.
@@ -213,14 +214,19 @@ export default function StudioGrid({ files, extras = [], codes = {}, studio, onS
     };
   }, [drawer]);
 
-  // A handful of films share a poster's width each, centred under their studio's card as far as the row allows;
-  // more than that wrap as a shelf across the full width.
+  // Loading another film happens at the end of the shelf (ShelfLoader): a tile, then the Drive's films as ghosts.
+  const loader = useShelfLoader({ studioId: current?.id, files, onLoaded, onBusy });
+  const tiles = !loader.drive ? 0 : loader.phase === "open" ? loader.ghosts.length : 1;
+
+  // A handful of posters share a poster's width each, centred under their studio's card as far as the row allows;
+  // more than that are a fixed width, centred as a block, wrapping as a shelf when the row is full.
   const shelf = (() => {
-    if (films.length > 4) return { gridTemplateColumns: "repeat(auto-fill, minmax(220px, 1fr))" };
-    const want = films.length * POSTER_WIDTH;
+    const count = films.length + tiles;
+    if (count > 4) return { gridTemplateColumns: "repeat(auto-fit, minmax(220px, 270px))", justifyContent: "center" };
+    const want = count * POSTER_WIDTH;
     const w = glide ? Math.min(glide.room, want) : want;
     const left = glide ? Math.max(0, Math.min(glide.x - w / 2, glide.room - w)) : 0;
-    return { gridTemplateColumns: `repeat(${films.length}, minmax(0, 1fr))`, width: `min(100%, ${want}px)`, marginLeft: left };
+    return { gridTemplateColumns: `repeat(${Math.max(count, 1)}, minmax(0, 1fr))`, width: `min(100%, ${want}px)`, marginLeft: left };
   })();
 
   return (
@@ -303,13 +309,14 @@ export default function StudioGrid({ files, extras = [], codes = {}, studio, onS
         id="studio-shelf"
         role="tabpanel"
         aria-labelledby={`studio-tab-${current.id}`}
-        className={`studio-shelf -mx-4 px-4 pb-2 ${entry}`}
+        className={`studio-shelf -mx-4 space-y-5 px-4 pb-2 ${entry}`}
       >
-      {films.length === 0 ? (
+      {loader.phase === "open" && <LoaderBar loader={loader} onChooseFile={onChooseFile} />}
+      {films.length === 0 && !loader.drive ? (
         <div className="rounded-2xl border border-dashed border-[#dce4ec] bg-white/60 p-10 text-center">
           <Plus className="mx-auto h-6 w-6 text-[#768994]" />
           <p className="mt-2 text-sm font-bold text-[#122027]">No films loaded for {labelOf(current.id)} yet</p>
-          <p className="mt-1 text-xs text-[#768994]">Load one from the studio's Drive, or drop an order form on the page.</p>
+          <p className="mt-1 text-xs text-[#768994]">{labelOf(current.id)} has no Drive folder here yet. Drop an order form on the page to add one.</p>
         </div>
       ) : (
         <div className="grid gap-6" style={shelf}>
@@ -377,8 +384,8 @@ export default function StudioGrid({ files, extras = [], codes = {}, studio, onS
                       </span>
                     )}
                     {g.stale && (
-                      <span className="absolute right-2 top-2 flex h-6 w-6 items-center justify-center rounded-full bg-amber-500 text-white shadow" title={g.stale.gone ? "Gone from Drive" : "Some markets have left Drive"}>
-                        <AlertTriangle className="h-3.5 w-3.5" strokeWidth={2.5} />
+                      <span className="absolute right-2 top-2 flex h-6 w-6 items-center justify-center rounded-full bg-black/55 text-[#fbbf24] shadow ring-1 ring-white/20 backdrop-blur-sm" title={g.stale.gone ? "Gone from Drive" : "Leaving Drive"}>
+                        <FolderX className="h-3.5 w-3.5" strokeWidth={2.5} />
                       </span>
                     )}
                   </div>
@@ -408,6 +415,25 @@ export default function StudioGrid({ files, extras = [], codes = {}, studio, onS
               </div>
             );
           })}
+          {/* After the films: the tile that loads another, or the Drive's films waiting to be loaded. They step out of
+              the way, like the other posters, while a film's drawer is open. */}
+          {loader.drive && (loader.phase === "open"
+            ? loader.ghosts.map((g, i) => (
+                <GhostTile
+                  key={`ghost-${g.key}`}
+                  ghost={g}
+                  loader={loader}
+                  tint={(LOOK[current.id] || LOOK.dropped).tint}
+                  poster={posters[posterKey(current.id, g.title)]}
+                  index={films.length + i}
+                  hidden={!!drawer}
+                />
+              ))
+            : (
+              <div style={drawer ? { opacity: 0, pointerEvents: "none" } : undefined} className="transition-opacity duration-300">
+                <AddTile loader={loader} />
+              </div>
+            ))}
         </div>
       )}
       </div>

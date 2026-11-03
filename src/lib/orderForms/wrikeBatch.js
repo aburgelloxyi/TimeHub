@@ -11,6 +11,7 @@ import {
 import { resolveFields, fieldUse } from "./wrikeFields";
 import { planMarketFolderLive } from "./wrikeMarketFolder";
 import { orderKey } from "./wrikeMatch";
+import { artworkChosen } from "./artwork";
 
 const titleOf = (order) => String(order.xyi?.title || order.deliveryName || "").trim();
 
@@ -24,9 +25,9 @@ export const tidyTaskName = (name) =>
   String(name || "").trim().replace(/\s+/g, "_").replace(/_+/g, "_").replace(/^_+|_+$/g, "");
 
 // An order goes to Wrike with its artwork chosen: the artwork is part of the
-// task's name and of what the studio works from, and an order without one
-// isn't ready to brief.
-export const hasArtwork = (order) => !!String(order.artwork || "").trim();
+// task's name and of what the studio works from, and an order without one (or
+// with a placeholder like "TBC", artwork.js) isn't ready to brief.
+export const hasArtwork = (order) => artworkChosen(order.artwork);
 
 // The film, market and placement an order's name carries. Placement is the
 // sheet's DINTH/DFOH/DOOH column and sits in the middle of the batch name.

@@ -154,6 +154,35 @@
    scrollbar while a poster's lift and shadow still show above and below. */
 .studio-shelf { overflow-x: clip; }
 
+/* Client Orders, loading a film from its studio's shelf (ShelfLoader). The
+   "Load a film" tile is a poster in outline that warms when pointed at. The
+   Drive's films not loaded yet are ghost posters, faded and dashed, that firm
+   up when pointed at; the one being read fills from its foot as its markets
+   arrive, and the others step back until it's done. */
+.add-poster { transition: border-color 220ms var(--ease-app), translate 220ms var(--ease-app), scale 140ms var(--ease-app); }
+.add-poster:hover:not(:disabled) { border-color: #12a0e1; translate: 0 -4px; }
+.add-poster-glow {
+  background: radial-gradient(60% 45% at 50% 40%, rgb(18 160 225 / 0.16), transparent 70%);
+  opacity: 0;
+  transition: opacity 300ms var(--ease-app);
+}
+.add-poster:hover .add-poster-glow, .add-poster:disabled .add-poster-glow { opacity: 1; }
+.ghost-poster {
+  opacity: 0.7;
+  filter: saturate(0.55);
+  transition: opacity 260ms var(--ease-app), filter 260ms var(--ease-app), translate 260ms var(--ease-app), box-shadow 260ms var(--ease-app), scale 140ms var(--ease-app);
+}
+.ghost-edge { border-color: rgb(255 255 255 / 0.28); transition: border-color 260ms var(--ease-app); }
+.ghost-poster:hover:not(.is-waiting), .ghost-poster:focus-visible, .ghost-poster.is-loading {
+  opacity: 1;
+  filter: none;
+  translate: 0 -4px;
+  box-shadow: 0 24px 50px -20px rgb(0 0 0 / 0.55);
+}
+.ghost-poster:hover .ghost-edge, .ghost-poster.is-loading .ghost-edge { border-color: rgb(255 255 255 / 0.6); }
+.ghost-poster.is-waiting { opacity: 0.35; }
+.ghost-fill { opacity: 0.85; transition: transform 420ms var(--ease-app); }
+
 /* Client Orders, opening a film. The other posters gather behind it like a deck
    (StudioGrid sets where each goes and its delay), while it moves to make room;
    then its drawer (FilmDrawer) slides out from behind its edge and the rows
@@ -181,7 +210,7 @@
   content: "";
   position: absolute;
   inset: 0;
-  background: linear-gradient(90deg, var(--from), var(--to));
+  background: linear-gradient(90deg, var(--fill-from), var(--fill-to));
   transform: scaleX(0);
   transform-origin: left center;
   transition: transform 420ms var(--ease-app);
@@ -196,6 +225,8 @@
 .drawer-section:focus-within .drawer-count { color: #fff; }
 .drawer-section:hover .drawer-text,
 .drawer-section:focus-within .drawer-text { translate: 6px 0; }
+.drawer-section:hover .drawer-detail,
+.drawer-section:focus-within .drawer-detail { color: #fff; }
 .drawer-section:hover .drawer-arrow,
 .drawer-section:focus-within .drawer-arrow { opacity: 1; }
 .drawer-section:hover .drawer-arrow-shaft,
@@ -237,11 +268,13 @@ html.theme-revealing::view-transition-new(root) { animation: themeReveal 480ms v
   .billable-row, .billable-figure { animation: none; }
   .press, .press:active:not(:disabled) { transition: none; scale: 1; }
   .studio-tab, .studio-tab-art, .studio-tab-label, .studio-tab-title, .studio-tab-image, .studio-glide.is-moving,
+  .add-poster, .add-poster-glow, .ghost-poster, .ghost-edge, .ghost-fill,
   .drawer-section::before, .drawer-arrow-shaft, .drawer-arrow-head, .drawer-text, .drawer-chip, .drawer-close svg { transition: none; }
   /* The deck still forms, so the drawer has room, but by fading rather than moving. */
   .deck-card { transition: opacity 200ms linear; }
   .film-drawer, .drawer-row { animation: none; }
-  .drawer-section:hover .drawer-text, .drawer-section:focus-within .drawer-text, .drawer-chip:hover { translate: none; }
+  .drawer-section:hover .drawer-text, .drawer-section:focus-within .drawer-text, .drawer-chip:hover,
+  .add-poster:hover:not(:disabled), .ghost-poster:hover:not(.is-waiting), .ghost-poster:focus-visible, .ghost-poster.is-loading { translate: none; }
   .drawer-close:hover svg { rotate: none; }
   .studio-tab.is-active, .studio-row:not(.has-open) .studio-tab:hover, .studio-tab:hover .studio-tab-image { translate: none; scale: 1; }
 }

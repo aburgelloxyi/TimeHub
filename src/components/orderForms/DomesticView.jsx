@@ -43,7 +43,7 @@ function Piece({ item }) {
     <li className="rounded-xl bg-slate-50 p-4 ring-1 ring-black/[0.03]">
       <div className="flex flex-wrap items-start justify-between gap-2">
         <p className="min-w-0 flex-1 font-bold leading-snug text-[#122027]">{item.item}</p>
-        {item.type && <span className="shrink-0 rounded-full bg-[#f59e0b]/15 px-2.5 py-0.5 text-[10px] font-black uppercase tracking-widest text-[#b45309]">{item.type}</span>}
+        {item.type && <span className="shrink-0 rounded-full bg-amber-100 px-2.5 py-0.5 text-[10px] font-black uppercase tracking-widest text-amber-800">{item.type}</span>}
       </div>
       {(item.material || item.finishing) && (
         <div className="mt-2 flex flex-wrap gap-1.5">
@@ -123,7 +123,7 @@ export default function DomesticView({ file, film, onRemove }) {
                   </p>
                 )}
               </div>
-              <span className="shrink-0 rounded-full bg-gradient-to-r from-[#f59e0b] to-[#f97316] px-2.5 py-1 text-[11px] font-black text-white shadow-sm">
+              <span className="shrink-0 rounded-full px-2.5 py-1 text-[11px] font-black text-white shadow-sm" style={{ backgroundImage: `linear-gradient(90deg, ${LOOK.fillFrom}, ${LOOK.fillTo})` }}>
                 {v.items.length} {v.items.length === 1 ? "piece" : "pieces"}
               </span>
             </header>

@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { Check, ChevronRight, Copy, ExternalLink, EyeOff, FileSpreadsheet, Link2, Loader2, PencilLine, Send } from "lucide-react";
+import { ArrowLeft, Check, ChevronRight, Copy, ExternalLink, EyeOff, FileSpreadsheet, Link2, Loader2, Package, PackagePlus, PencilLine, Send } from "lucide-react";
 import { useContextMenu } from "../shared/ContextMenu";
 import { AnimatePresence, motion } from "framer-motion";
 import { checkMarketFolder } from "../../lib/orderForms/wrikeMarketFolder";
@@ -23,6 +23,9 @@ import { cellRange, editChanges, reversed } from "../../lib/orderForms/correctio
 import { readMarketForBriefing, suggestBatchName, suggestDue, planBatch, createBatch, hasArtwork } from "../../lib/orderForms/wrikeBatch";
 import { planFields } from "../../lib/orderForms/wrikeFields";
 import BriefPreview from "./BriefPreview";
+import BatchCard from "./BatchCard";
+import { addTo, disband, findDuplicates, groupInto, placeBatches, renameBatch, takeOut } from "../../lib/orderForms/batches";
+import { artworkChosen } from "../../lib/orderForms/artwork";
 import { confirmAction } from "../../lib/confirm";
 import { notify } from "../../lib/toast";
 import { formatDay, pillClass, undatedNote, STATUS_CLASS, STATUS_LABEL, URGENCY_TEXT } from "./format";
@@ -61,6 +64,20 @@ const columnsFor = (kind, editing) => (editing ? [
 ]);
 const DETAIL_FIELDS = ["translations", "notes", "specs"];
 
+// The columns that can be said once for every order, and the fact each compares. A deadline is the same only
+// with the same live date, since its cell shows both.
+const SHARED_FACTS = {
+  status: (o) => o.status || "",
+  deliveryDeadline: (o) => `${o.deliveryDeadline || ""}|${o.liveDate || ""}`,
+  placement: (o) => o.placement || "",
+  duration: (o) => o.duration || "",
+  type: (o) => o.type || "",
+  artwork: (o) => o.artwork || "",
+};
+
+// A length of nothing is a still.
+const lengthOf = (duration) => (!duration ? "" : Number(duration) === 0 ? "Static" : `${duration}s`);
+
 // What "set for the ticked orders" can set, and how each is typed.
 const BULK_FIELDS = [
   { id: "confirmed", label: "Confirmed?" },
@@ -82,6 +99,9 @@ const groupClass =
   "flex items-stretch rounded-lg border border-[#dce4ec] divide-x divide-[#dce4ec] overflow-hidden [&_a]:border-0 [&_button]:border-0 [&_a]:rounded-none [&_button]:rounded-none";
 const linkButtonClass =
   "flex items-center gap-1.5 px-3 py-1.5 text-sm font-bold text-[#122027]";
+// A button standing on its own, drawn like the Wrike folder button beside it.
+const outlineClass =
+  "flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-[#dce4ec] hover:border-[#12a0e1] text-sm font-bold text-[#122027] transition-colors";
 
 // One market, laid out like its sheet: a row an order, a column a field, wide
 // enough to scroll sideways. A row opens to show what has no column (see
@@ -118,7 +138,19 @@ export default function MarketView({ market, kind, filmTitle, clientId, filmKey,
     setExpanded(expanded === i ? null : i);
   };
   const [editing, setEditing] = useState(false);
-  const columns = useMemo(() => columnsFor(kind, editing), [kind, editing]);
+  const allColumns = useMemo(() => columnsFor(kind, editing), [kind, editing]);
+  // What every order has in common is said once, above the table, rather than on every row, so the rows show
+  // what differs. Not while editing, where each cell is something to change.
+  const shared = useMemo(() => {
+    if (editing || orders.length < 2) return [];
+    return allColumns.filter((col) => {
+      const of = SHARED_FACTS[col.id];
+      if (!of) return false;
+      const first = of(orders[0]);
+      return first.replace("|", "").trim() !== "" && orders.every((o) => of(o) === first);
+    });
+  }, [allColumns, orders, editing]);
+  const columns = useMemo(() => allColumns.filter((col) => !shared.includes(col)), [allColumns, shared]);
   const [edits, setEdits] = useState({}); // "orderIndex:field" → text
   const [applying, setApplying] = useState(false);
   // What the last apply wrote, turned round, so it can be put back.
@@ -137,6 +169,13 @@ export default function MarketView({ market, kind, filmTitle, clientId, filmKey,
   // batch name and due date being typed. It shares the tick boxes with edit mode.
   const [briefing, setBriefing] = useState(null);
   const [creating, setCreating] = useState(null); // { done, total }
+  // Preparing batches before briefing: ticked rows are grouped into named batches, kept with the film for every
+  // PM (decide.batches, batches.js), each briefed into Wrike as one batch task when it's ready.
+  const [planning, setPlanning] = useState(false);
+  const { batches, byRow } = useMemo(() => placeBatches(decide?.batches || [], orders), [decide?.batches, orders]);
+  const saveBatches = (list) => decide?.onBatches?.(list);
+  // Rows that look like one order twice: same artwork, country and size.
+  const duplicates = useMemo(() => findDuplicates(orders, market.name), [orders, market.name]);
   // Whether this market has its Wrike folder yet, asked when the market opens
   // so the header can lead with the next step: add the folder, then brief.
   const [wrikeFolder, setWrikeFolder] = useState(null);
@@ -209,7 +248,6 @@ export default function MarketView({ market, kind, filmTitle, clientId, filmKey,
     return all.filter(({ task }) => !seen.has(task.id) && seen.add(task.id)).sort((a, b) => b.score - a.score);
   };
   const tasks = matches.map((m) => m?.task || null);
-  const inWrike = tasks.filter(Boolean).length;
 
   // The delivery link on each matched task, read from Wrike as the market
   // opens and again after a Refresh. A failed read shows no links; it is not
@@ -239,23 +277,25 @@ export default function MarketView({ market, kind, filmTitle, clientId, filmKey,
   const delivered = orders.filter((_, i) => linkFor(i)).length;
   const fill = useMemo(() => planDeliveryFill(orders, tasks, delivery), [orders, taskIds, delivery]);
   const setAside = market.setAside || [];
-  // Rows that can be ticked: all of them when editing; when briefing, only
-  // the ones not in Wrike yet.
   // An order can be briefed when it isn't in Wrike yet and has its artwork.
   const briefable = (i) => !matches[i] && hasArtwork(orders[i]);
-  const tickable = orders.map((_, i) => i).filter((i) => !briefing || briefable(i));
-  const canTick = editing || !!briefing?.ok;
+  // Planning batches, any row not in Wrike yet: one still waiting for its artwork can be batched, not briefed.
+  const tickable = orders.map((_, i) => i).filter((i) => (briefing ? briefable(i) : planning ? !matches[i] : true));
+  const canTick = editing || !!briefing?.ok || planning;
   // Ticks a row, or with Shift the run from the last one ticked or unticked to
   // it, all set the way this row goes, as in a mail list. Rows that can't be
-  // ticked in the run are skipped.
+  // ticked in the run are skipped. The run is the rows as they're shown, which
+  // grouped by batch isn't the sheet's order.
   const tickAnchor = useRef(null);
   const tickRow = (i, run) => {
+    const shown = shownSections.flatMap((section) => section.rows);
     const from = run && tickAnchor.current != null ? tickAnchor.current : i;
-    const [lo, hi] = from < i ? [from, i] : [i, from];
+    const [lo, hi] = [shown.indexOf(from), shown.indexOf(i)].sort((x, y) => x - y);
+    const inRun = new Set(lo < 0 ? [i] : shown.slice(lo, hi + 1));
     setTicked((prev) => {
       const on = !prev.has(i);
       const next = new Set(prev);
-      for (const j of tickable) if (j >= lo && j <= hi) { if (on) next.add(j); else next.delete(j); }
+      for (const j of tickable) if (inRun.has(j)) { if (on) next.add(j); else next.delete(j); }
       return next;
     });
     tickAnchor.current = i;
@@ -265,6 +305,66 @@ export default function MarketView({ market, kind, filmTitle, clientId, filmKey,
   const onControl = (e) => !!e.target.closest?.("input, select, textarea, button, a, label");
   const tickClick = (e) => canTick && (e.metaKey || e.ctrlKey || e.shiftKey) && !onControl(e);
   const waitingForArtwork = orders.filter((o, i) => !matches[i] && !hasArtwork(o)).length;
+  const unbatched = orders.filter((_, i) => !matches[i] && !byRow.has(i)).length;
+  // The counts a PM works through, each a filter on the table. Only the ones with something in them are shown.
+  const [show, setShow] = useState("all");
+  const FILTERS = [
+    { id: "all", label: `${orders.length} ${orders.length === 1 ? "order" : "orders"}`, test: () => true },
+    { id: "notInWrike", label: "Not in Wrike", test: (i) => !matches[i] },
+    { id: "noArtwork", label: "Waiting for artwork", test: (i) => !matches[i] && !hasArtwork(orders[i]) },
+    { id: "duplicates", label: "Look duplicated", test: (i) => duplicates.has(i) },
+    { id: "close", label: "Close matches", test: (i) => matches[i]?.how === "close" },
+  ].map((f) => ({ ...f, count: orders.filter((_, i) => f.test(i)).length }));
+  const filter = FILTERS.find((f) => f.id === show) || FILTERS[0];
+  const closeMatches = orders.map((_, i) => i).filter((i) => matches[i]?.how === "close");
+  // A fact every order shares, as the strip above the table says it.
+  const sharedFact = (id) => {
+    const o = orders[0];
+    if (id === "status") return <span key={id} className={`${pillClass} ${STATUS_CLASS[o.status]}`}>{STATUS_LABEL[o.status]}</span>;
+    const text = id === "deliveryDeadline" ? `Due ${formatDay(o.deliveryDeadline, today)}${o.liveDate ? ` · live ${formatDay(o.liveDate, today)}` : ""}`
+      : id === "duration" ? lengthOf(o.duration)
+      : id === "artwork" ? (artworkChosen(o.artwork) ? `Artwork: ${o.artwork}` : `Artwork: ${o.artwork}, not chosen yet`)
+      : o[id];
+    return <span key={id} className="rounded-full bg-slate-100 px-2.5 py-0.5 text-[11px] font-bold text-[#46606b]">{text}</span>;
+  };
+  // One save for all of them: each save rewrites the film's shared copy.
+  const confirmClose = () => {
+    decide?.onLinks?.(closeMatches.map((i) => [orders[i], matches[i].task.id]));
+    notify(`${closeMatches.length} ${closeMatches.length === 1 ? "match" : "matches"} confirmed`, "success");
+    setShow("all");
+  };
+  // With batches, the table reads as them: a band per batch heading its rows, then the rows in none. Editing
+  // keeps the sheet's own order, since that's what is being changed.
+  const sectionHead = (key, chip, title, detail) => (
+    <tr key={`head-${key}`}>
+      <td colSpan={columns.length + 1} className="px-5 pt-4 pb-2 border-b border-[#dce4ec] bg-slate-50/60">
+        <span className="flex flex-wrap items-center gap-2">
+          {chip}
+          <span className="font-mono text-xs font-bold text-[#122027]">{title}</span>
+          <span className="text-xs text-[#768994]">{detail}</span>
+        </span>
+      </td>
+    </tr>
+  );
+  const sections = batches.length && !editing
+    ? [
+        ...batches.filter((b) => b.rows.length).map((b) => ({
+          key: b.id,
+          rows: b.rows,
+          header: sectionHead(
+            b.id,
+            <span className="flex h-5 w-5 items-center justify-center rounded-md text-[11px] font-black text-white" style={{ background: b.colour }}>{b.number}</span>,
+            b.name || `Batch ${b.number}`,
+            `${b.rows.length} ${b.rows.length === 1 ? "order" : "orders"}${b.due ? ` · due ${formatDay(b.due, today)}` : ""}`,
+          ),
+        })),
+        ...(() => {
+          const rest = orders.map((_, i) => i).filter((i) => !byRow.has(i));
+          return rest.length ? [{ key: "rest", rows: rest, header: sectionHead("rest", null, "Not in a batch", `${rest.length} ${rest.length === 1 ? "order" : "orders"}`) }] : [];
+        })(),
+      ]
+    : [{ key: "all", rows: orders.map((_, i) => i), header: null }];
+  const shownSections = sections.map((section) => ({ ...section, rows: section.rows.filter(filter.test) })).filter((section) => section.rows.length);
   const toBrief = orders.filter((_, i) => !matches[i] && hasArtwork(orders[i])).length;
   // What the last Refresh changed here and hasn't been acknowledged, and which
   // of the orders on screen it was (decide.changes; see status.js).
@@ -279,7 +379,7 @@ export default function MarketView({ market, kind, filmTitle, clientId, filmKey,
     return (i) => tags.get(keys[i]) || "";
   }, [changed, orders]);
 
-  useEffect(() => { setSelected(0); setExpanded(null); setEditing(false); setEdits({}); setUndo(null); setTicked(new Set()); tickAnchor.current = null; setBriefing(null); }, [market.name]);
+  useEffect(() => { setSelected(0); setExpanded(null); setEditing(false); setEdits({}); setUndo(null); setTicked(new Set()); tickAnchor.current = null; setBriefing(null); setPlanning(false); setShow("all"); }, [market.name]);
   // A fresh read replaces the orders, and with them what each cell held.
   useEffect(() => { setEdits({}); setChoices({}); setExpanded(null); setTicked(new Set()); tickAnchor.current = null; asked.current = new Set(); }, [orders]);
 
@@ -313,9 +413,31 @@ export default function MarketView({ market, kind, filmTitle, clientId, filmKey,
   const firstTicked = orders[[...ticked][0]];
   const bulkChoices = bulkField && !bulkField.type ? choicesFor(firstTicked?.cells?.[bulk.field]) : null;
 
-  // `only` is the orders to tick (a row's "Brief just this order"); otherwise
-  // everything ready to brief starts ticked, which is usually the batch.
-  const startBriefing = async (only) => {
+  // The market's own code ("Colombia (COL)") is what the PMs' batch names carry; the code in the order sheet can
+  // be the two-letter spelling.
+  const marketCode = /\(([A-Za-z]{2,4})\)\s*$/.exec(market.name || "")?.[1] || "";
+  const suggestName = (rows) =>
+    suggestBatchName([...(folderTasks || []).map((t) => t.title), ...(decide?.batches || []).map((b) => b.name)], rows.map((i) => orders[i]), marketCode);
+
+  // Grouping the ticked rows: into a new batch (named and dated as a first guess), into one already made, or out of theirs.
+  const tickedRows = () => [...ticked].sort((a, b) => a - b);
+  const groupTicked = () => {
+    const rows = tickedRows();
+    saveBatches(groupInto(decide?.batches, rows.map((i) => orderKey(orders[i])), { name: suggestName(rows), due: suggestDue(rows.map((i) => orders[i])) }));
+    setTicked(new Set());
+  };
+  const addTicked = (id) => {
+    saveBatches(addTo(decide?.batches, id, tickedRows().map((i) => orderKey(orders[i]))));
+    setTicked(new Set());
+  };
+  const takeOutTicked = () => {
+    saveBatches(takeOut(decide?.batches, tickedRows().map((i) => orderKey(orders[i]))));
+    setTicked(new Set());
+  };
+
+  // `only` is the orders to tick (a row's "Brief just this order", or a batch's rows); otherwise
+  // everything ready to brief starts ticked, which is usually the batch. A batch brings its own name and date.
+  const startBriefing = async (only, batch = null) => {
     const fresh = new Set((Array.isArray(only) ? only : orders.map((_, i) => i)).filter(briefable));
     setTicked(fresh);
     setExpanded(null);
@@ -323,15 +445,19 @@ export default function MarketView({ market, kind, filmTitle, clientId, filmKey,
     try {
       const found = await readMarketForBriefing({ filmTitle, kind, marketName: market.name });
       const mine = [...fresh].map((i) => orders[i]);
-      // The market's own code ("Colombia (COL)") is what the PMs' batch names
-      // carry; the code in the order sheet can be the two-letter spelling.
-      const marketCode = /\(([A-Za-z]{2,4})\)\s*$/.exec(market.name || "")?.[1] || "";
-      setBriefing(found.ok ? { ...found, name: suggestBatchName(found.existingTitles, mine.length ? mine : orders, marketCode), due: suggestDue(mine) } : found);
+      setBriefing(found.ok ? {
+        ...found,
+        name: batch?.name || suggestBatchName(found.existingTitles, mine.length ? mine : orders, marketCode),
+        due: batch?.due || suggestDue(mine),
+        batchId: batch?.id || null,
+      } : found);
     } catch (err) {
       setBriefing({ ok: false, reason: /\(401\)|not_connected/.test(err.message) ? "Connect Wrike in Profile first." : "Wrike couldn't be reached." });
     }
   };
   const stopBriefing = () => { setBriefing(null); setTicked(new Set()); };
+  const startPlanning = () => { setExpanded(null); setTicked(new Set()); tickAnchor.current = null; setPlanning(true); };
+  const stopPlanning = () => { setTicked(new Set()); setPlanning(false); };
 
   // Right-click (or a long press) on an order: what isn't already a click
   // away on the row. Opening it, Wrike and the delivery link are on the row
@@ -418,6 +544,7 @@ export default function MarketView({ market, kind, filmTitle, clientId, filmKey,
     try {
       const result = await createBatch({ folder: briefing.folder, status: briefing.status, plan, fields, onProgress: (done, total) => setCreating({ done, total }) });
       if (result.made.length) decide?.onBriefed(result.made);
+      if (briefing.batchId && result.made.length) saveBatches(disband(decide?.batches, briefing.batchId));
       notify(
         result.failed.length
           ? `${plan.name} created with ${result.made.length} of ${plan.tasks.length} subtasks. Wrike refused ${result.failed.length === 1 ? "row" : "rows"} ${result.failed.map((f) => f.row).join(", ")}.`
@@ -645,7 +772,16 @@ export default function MarketView({ market, kind, filmTitle, clientId, filmKey,
           </span>
         );
       case "duration":
-        return o.duration ? `${o.duration}s` : "";
+        return lengthOf(o.duration);
+      case "artwork":
+        // Not chosen yet: said in the row, where the "waiting for artwork" count comes from.
+        if (!o.artwork) return matches[i] ? "" : <span className={`${pillClass} border border-dashed border-[#9aabb5] text-[#768994]`}>No artwork</span>;
+        return artworkChosen(o.artwork) ? <span className="block truncate" title={o.artwork}>{o.artwork}</span> : (
+          <span className="flex min-w-0 items-center gap-1.5">
+            <span className="truncate text-[#768994]" title={o.artwork}>{o.artwork}</span>
+            {!matches[i] && <span className={`${pillClass} shrink-0 bg-slate-100 text-[#46606b]`}>Not chosen</span>}
+          </span>
+        );
       case "wrike":
         // The delivery link shows with or without a matched task: it can come
         // from the sheet alone.
@@ -705,26 +841,21 @@ export default function MarketView({ market, kind, filmTitle, clientId, filmKey,
     <div className="view-in bg-white border border-[#dce4ec] rounded-2xl shadow-sm overflow-hidden">
       {rowMenu.menu}
       <div className="flex flex-wrap items-center gap-3 px-5 py-4 border-b border-[#dce4ec]">
-        <nav aria-label="Where you are" className="flex items-center gap-1.5 min-w-0">
+        {/* Where this is, the page's header says; the card starts with the way back to the film's markets, then
+            how this one stands and what to do. */}
+        {onBack && (
           <button
+            type="button"
             onClick={onBack}
-            className="px-2 py-1.5 -ml-2 rounded-lg text-sm font-bold text-[#768994] hover:text-[#122027] hover:bg-slate-100 transition-colors truncate max-w-[16rem]"
+            className="group press -ml-1 flex items-center gap-1.5 rounded-xl border border-[#dce4ec] px-3 py-1.5 text-sm font-bold text-[#122027] transition-colors hover:border-[#12a0e1]"
           >
-            {filmTitle || "All markets"}
+            <ArrowLeft className="h-4 w-4 transition-transform duration-200 group-hover:-translate-x-0.5" />
+            All markets
           </button>
-          <ChevronRight className="w-4 h-4 text-[#b6c3cc] shrink-0" />
-          <h2 className="flex items-center gap-2.5 font-display text-xl font-bold tracking-tight text-[#122027]">
-            <MarketFlag name={market.name} className="w-7 h-5" />
-            {market.name}
-          </h2>
-        </nav>
+        )}
+        <MarketFlag name={market.name} className="w-7 h-5" />
         <span className={`${pillClass} ${STATUS_CLASS[summary.status]}`}>{STATUS_LABEL[summary.status]}</span>
-        <p className="ml-auto text-sm text-[#768994]">
-          {summary.total} {summary.total === 1 ? "order" : "orders"} · {summary.confirmed} confirmed
-          {inWrike > 0 && ` · ${inWrike} in Wrike`}
-          {delivered > 0 && ` · ${delivered} with a delivery link`}
-          {summary.undated > 0 && ` · ${undatedNote(summary.undated)}`}
-        </p>
+        <span className="mr-auto" />
         {filmTitle && (editing ? (
           <>
             {changes.length > 0 && (
@@ -750,6 +881,10 @@ export default function MarketView({ market, kind, filmTitle, clientId, filmKey,
         ) : briefing ? (
           <button onClick={stopBriefing} disabled={!!creating} className="press px-3 py-1.5 rounded-lg bg-[#122027] hover:bg-[#25373c] text-sm font-bold text-white transition-colors disabled:opacity-60">
             Cancel briefing
+          </button>
+        ) : planning ? (
+          <button onClick={stopPlanning} className="press flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#122027] hover:bg-[#25373c] text-sm font-bold text-white transition-colors">
+            <Check className="w-3.5 h-3.5" strokeWidth={3} /> Done planning
           </button>
         ) : (
           <>
@@ -782,6 +917,14 @@ export default function MarketView({ market, kind, filmTitle, clientId, filmKey,
             {/* Wrike: the market's folder, then its orders. Whichever is next
                 is the one that stands out. */}
             <div className="flex items-center gap-2">
+              {/* Preparing batches comes before briefing them, so it sits first. */}
+              {decide?.onBatches && (toBrief > 0 || waitingForArtwork > 0) && (
+                <button onClick={startPlanning} className={`group ${sweepClass} ${outlineClass}`}>
+                  <Sweep />
+                  <Package className="w-3.5 h-3.5 text-indigo-600 transition-[transform,color] duration-200 group-hover:-rotate-6 group-hover/s:!text-white" />
+                  {batches.length ? `Batches · ${batches.length}` : "Plan batches"}
+                </button>
+              )}
               <WrikeFolderButton
                 filmTitle={filmTitle}
                 kind={kind}
@@ -791,8 +934,8 @@ export default function MarketView({ market, kind, filmTitle, clientId, filmKey,
                 onMade={(folder) => setWrikeFolder({ state: "exists", folder })}
               />
               {orders.length > 0 && (toBrief === 0 && waitingForArtwork > 0 ? (
-                <span title="Choose their artwork in the sheet, or with Edit, to brief them" className="px-3 py-1.5 text-sm font-bold text-amber-700">
-                  {waitingForArtwork} waiting for artwork
+                <span title="Choose their artwork in the sheet, or with Edit, to brief them" className="px-3 py-1.5 text-sm font-bold text-[#768994]">
+                  Nothing ready to brief
                 </span>
               ) : toBrief === 0 ? (
                 <span className="flex items-center gap-1.5 px-3 py-1.5 text-sm font-bold text-emerald-600">
@@ -824,6 +967,54 @@ export default function MarketView({ market, kind, filmTitle, clientId, filmKey,
           </a>
         )}
       </div>
+
+      {/* The market at a glance: what there is to work through, each a filter on the table, and what every order
+          has in common. */}
+      {orders.length > 0 && !editing && (
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-2.5 px-5 py-3 border-b border-[#dce4ec]">
+          <div role="group" aria-label="Show" className="flex flex-wrap items-center gap-2">
+            {FILTERS.filter((f) => f.id === "all" || f.count > 0).map((f) => {
+              const on = filter.id === f.id;
+              return (
+                <button
+                  key={f.id}
+                  type="button"
+                  onClick={() => setShow(on ? "all" : f.id)}
+                  aria-pressed={on}
+                  className={`press flex items-center gap-2 rounded-xl border px-3 py-1.5 text-xs font-bold transition-colors ${
+                    on ? "border-indigo-600 bg-indigo-600 text-white" : "border-[#dce4ec] text-[#122027] hover:border-[#12a0e1]"
+                  }`}
+                >
+                  {f.label}
+                  {f.id !== "all" && <span className={`rounded-md px-1.5 tabular-nums ${on ? "bg-white/20" : "bg-slate-100 text-[#46606b]"}`}>{f.count}</span>}
+                </button>
+              );
+            })}
+          </div>
+          {(delivered > 0 || summary.undated > 0) && (
+            <p className="text-xs text-[#768994]">
+              {[delivered > 0 && `${delivered} with a delivery link`, summary.undated > 0 && undatedNote(summary.undated)].filter(Boolean).join(" · ")}
+            </p>
+          )}
+          {shared.length > 0 && (
+            <div className="ml-auto flex flex-wrap items-center gap-1.5">
+              <span className="mr-1 text-[10px] font-black uppercase tracking-widest text-[#768994]">Every order</span>
+              {shared.map((col) => sharedFact(col.id))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {show === "close" && closeMatches.length > 0 && decide?.onLinks && (
+        <div className="flex flex-wrap items-center gap-3 px-5 py-2.5 border-b border-[#dce4ec] bg-sky-500/10">
+          <p className="mr-auto text-sm text-[#122027]">
+            These found a Wrike task by a similar name rather than the exact one. Open a row to see which; if they're right, confirm them.
+          </p>
+          <button onClick={confirmClose} className="press flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-bold shadow-sm transition-colors">
+            <Check className="w-3.5 h-3.5" strokeWidth={3} /> Confirm all {closeMatches.length}
+          </button>
+        </div>
+      )}
 
       {changed && (
         <div className="flex flex-wrap items-center gap-3 px-5 py-2.5 border-b border-[#dce4ec] bg-indigo-50">
@@ -933,6 +1124,77 @@ export default function MarketView({ market, kind, filmTitle, clientId, filmKey,
         </div>
       )}
 
+      {/* The batches being prepared, while planning and whenever there are some to see. */}
+      {(planning || batches.length > 0) && !editing && !briefing && (
+        <div className="px-5 py-4 border-b border-[#dce4ec] bg-slate-50/60">
+          <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1 mb-3">
+            <h3 className="text-[10px] font-black uppercase tracking-widest text-[#768994]">Batches</h3>
+            <p className="text-xs text-[#768994]">
+              {batches.length
+                ? `${batches.length} prepared · ${unbatched} ${unbatched === 1 ? "order" : "orders"} not in one yet`
+                : "Tick orders below, then group them into a batch to brief together."}
+            </p>
+            {!planning && (
+              <button onClick={startPlanning} className="ml-auto text-xs font-bold text-[#122027] underline underline-offset-2 hover:text-[#12a0e1]">
+                Change batches
+              </button>
+            )}
+          </div>
+          {batches.length > 0 && (
+            <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
+              {batches.map((b, n) => (
+                <BatchCard
+                  key={b.id}
+                  index={n}
+                  batch={b}
+                  orders={orders}
+                  inWrike={(i) => !!matches[i]}
+                  duplicates={duplicates}
+                  today={today}
+                  busy={!!creating}
+                  onRename={(name) => saveBatches(renameBatch(decide?.batches, b.id, { name }))}
+                  onDue={(due) => saveBatches(renameBatch(decide?.batches, b.id, { due }))}
+                  onDisband={() => saveBatches(disband(decide?.batches, b.id))}
+                  onBrief={() => { stopPlanning(); startBriefing(b.rows, b); }}
+                />
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* What the ticked rows can do while planning: become a batch, join one, or leave theirs. */}
+      {planning && ticked.size > 0 && (
+        <div className="flex flex-wrap items-center gap-2 px-5 py-3 border-b border-[#dce4ec] bg-white animate-in fade-in slide-in-from-top-1 duration-200">
+          <p className="mr-1 text-sm font-bold text-[#122027]">{ticked.size} {ticked.size === 1 ? "order" : "orders"} ticked</p>
+          <button onClick={groupTicked} className="group press flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-bold shadow-sm transition-colors">
+            <PackagePlus className="w-3.5 h-3.5 transition-transform duration-200 group-hover:-rotate-6" />
+            Group into a new batch
+          </button>
+          {batches.length > 0 && <span className="text-xs text-[#768994]">or add to</span>}
+          {batches.map((b) => (
+            <button
+              key={b.id}
+              onClick={() => addTicked(b.id)}
+              title={`Add to ${b.name}`}
+              className="press flex items-center gap-1.5 rounded-full py-1 pl-1 pr-3 text-xs font-bold text-white shadow-sm transition-[filter] hover:brightness-110"
+              style={{ background: b.colour }}
+            >
+              <span className="flex h-5 w-5 items-center justify-center rounded-full bg-white/20 text-[11px]">{b.number}</span>
+              <span className="max-w-[10rem] truncate">{b.name.split(" - ").pop() || `Batch ${b.number}`}</span>
+            </button>
+          ))}
+          {tickedRows().some((i) => byRow.has(i)) && (
+            <button onClick={takeOutTicked} className="press px-3 py-1.5 rounded-lg border border-[#dce4ec] hover:border-[#12a0e1] text-xs font-bold text-[#122027] transition-colors">
+              Take out of {new Set(tickedRows().map((i) => byRow.get(i)?.id).filter(Boolean)).size > 1 ? "their batches" : "its batch"}
+            </button>
+          )}
+          <button onClick={() => setTicked(new Set())} className="px-2 py-1.5 text-xs font-bold text-[#768994] hover:text-[#122027]">
+            Untick all
+          </button>
+        </div>
+      )}
+
       {editing && ticked.size > 0 && (
         <div className="flex flex-wrap items-end gap-3 px-5 py-3 border-b border-[#dce4ec] bg-slate-50 animate-in fade-in slide-in-from-top-1 duration-200">
           <p className="text-sm font-bold text-[#122027] pb-2 mr-1">
@@ -999,18 +1261,23 @@ export default function MarketView({ market, kind, filmTitle, clientId, filmKey,
           No orders with a delivery deadline yet.
           {summary.undated > 0 && ` ${undatedNote(summary.undated)}.`}
         </p>
+      ) : shownSections.length === 0 ? (
+        <p className="px-5 py-12 text-center text-sm text-[#768994]">
+          No orders here for that.{" "}
+          <button onClick={() => setShow("all")} className="font-bold text-[#122027] underline underline-offset-2 hover:text-[#12a0e1]">Show every order</button>
+        </p>
       ) : (
         <div className="overflow-x-auto">
           <table className={`w-full ${editing ? "min-w-[1360px]" : "min-w-[920px]"} table-fixed text-sm text-left text-[#122027] border-separate border-spacing-0`}>
             <colgroup>
-              <col style={{ width: editing || briefing?.ok ? 84 : 64 }} />
+              <col style={{ width: (editing || briefing?.ok || planning ? 84 : 64) + (duplicates.size || batches.length ? 26 : 0) }} />
               {columns.map((col) => <col key={col.id} style={col.width ? { width: col.width } : undefined} />)}
             </colgroup>
             <thead>
               <tr className="text-[10px] font-black uppercase tracking-widest text-[#768994]">
                 <th className="px-3 py-2.5 bg-slate-50 border-b border-[#dce4ec] font-black">
                   <span className="flex items-center gap-2">
-                    {(editing || briefing?.ok) && (
+                    {(editing || briefing?.ok || planning) && (
                       <input
                         type="checkbox"
                         aria-label="Tick every order"
@@ -1031,7 +1298,11 @@ export default function MarketView({ market, kind, filmTitle, clientId, filmKey,
               </tr>
             </thead>
             <tbody>
-              {orders.map((o, i) => {
+              {shownSections.map((section) => (
+                <React.Fragment key={section.key}>
+                {section.header}
+                {section.rows.map((i) => {
+                const o = orders[i];
                 const open = expanded === i;
                 return (
                   <React.Fragment key={orderKey(o)}>
@@ -1048,19 +1319,19 @@ export default function MarketView({ market, kind, filmTitle, clientId, filmKey,
                       title={editing ? undefined : "Open this order's details"}
                       style={{ "--i": i }}
                       className={`list-row-in group ${editing ? "" : "cursor-pointer"} ${
-                        open ? "bg-[#12a0e1]/10" : statusFor(i)?.style.row ? `${statusFor(i).style.row} hover:brightness-[0.97]` : "hover:bg-slate-50"
+                        open ? "bg-[#12a0e1]/10" : "hover:bg-slate-50"
                       }`}
                     >
                       <td className="px-3 py-2 border-b border-slate-100">
                         <span className="flex items-center gap-2">
-                        {(editing || briefing?.ok) && (
+                        {(editing || briefing?.ok || planning) && (
                           <input
                             type="checkbox"
                             aria-label={`Tick row ${o.row}`}
-                            // An order already in Wrike isn't briefed again, and
-                            // one without its artwork isn't ready to be.
-                            disabled={!!briefing && !briefable(i)}
-                            title={briefing && matches[i] ? "Already in Wrike" : briefing && !hasArtwork(o) ? "No artwork selected yet" : "Shift-click to tick every row from the last one"}
+                            // An order already in Wrike isn't briefed or batched again, and
+                            // one without its artwork isn't ready to be briefed.
+                            disabled={(!!briefing && !briefable(i)) || (planning && !!matches[i])}
+                            title={(briefing || planning) && matches[i] ? "Already in Wrike" : briefing && !hasArtwork(o) ? "No artwork selected yet" : "Shift-click to tick every row from the last one"}
                             checked={ticked.has(i)}
                             // A checkbox's change comes from its click, which
                             // carries Shift.
@@ -1083,6 +1354,24 @@ export default function MarketView({ market, kind, filmTitle, clientId, filmKey,
                         </span>
                         {changedTag(i) && (
                           <span className="block mt-0.5 text-[9px] font-black uppercase tracking-wider text-indigo-600 whitespace-nowrap">{changedTag(i)}</span>
+                        )}
+                        {byRow.get(i) && (
+                          <span
+                            title={byRow.get(i).name}
+                            className="mt-1 inline-flex items-center rounded-full px-1.5 py-px text-[9px] font-black uppercase tracking-wider text-white whitespace-nowrap"
+                            style={{ background: byRow.get(i).colour }}
+                          >
+                            Batch {byRow.get(i).number}
+                          </span>
+                        )}
+                        {duplicates.has(i) && (
+                          <span
+                            title={`Same artwork, country and size as row ${duplicates.get(i).map((j) => orders[j].row).join(", ")}`}
+                            className="mt-1 flex items-center gap-1 text-[9px] font-black uppercase tracking-wider text-fuchsia-700 whitespace-nowrap"
+                          >
+                            <Copy className="w-2.5 h-2.5 shrink-0" />
+                            {duplicates.get(i).length === 1 ? `As row ${orders[duplicates.get(i)[0]].row}` : `${duplicates.get(i).length + 1} alike`}
+                          </span>
                         )}
                       </td>
                       {columns.map((col) => (
@@ -1135,6 +1424,8 @@ export default function MarketView({ market, kind, filmTitle, clientId, filmKey,
                   </React.Fragment>
                 );
               })}
+                </React.Fragment>
+              ))}
             </tbody>
           </table>
         </div>

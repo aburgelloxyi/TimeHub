@@ -176,12 +176,12 @@ export async function saveFile(file) {
   }
 }
 
-// Rows set aside, tasks matched by hand and tasks created from here, saved on
-// their own: a decision made from an older copy of a film mustn't put that
-// older copy back.
+// Rows set aside, tasks matched by hand, tasks created from here and batches
+// being prepared, saved on their own: a decision made from an older copy of a
+// film mustn't put that older copy back.
 export async function saveDecisions(file) {
   try {
-    const { rev } = await api(at(file.id), { method: "PATCH", body: JSON.stringify({ ignored: file.ignored || {}, links: file.links || {}, briefed: file.briefed || {}, wrapped: !!file.wrapped }) });
+    const { rev } = await api(at(file.id), { method: "PATCH", body: JSON.stringify({ ignored: file.ignored || {}, links: file.links || {}, briefed: file.briefed || {}, wrapped: !!file.wrapped, batches: file.batches || {} }) });
     await localPut({ ...file, rev });
     return true;
   } catch {

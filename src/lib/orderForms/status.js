@@ -4,6 +4,7 @@
 
 import { orderKey, taskKey } from "./wrikeMatch";
 import { isTestFolder } from "./driveTree";
+import { artworkChosen } from "./artwork";
 
 const DUE_SOON_DAYS = 7;
 
@@ -190,7 +191,7 @@ export function ordersByMarket(files, todayIso, matchFor = () => []) {
         });
         group.orders.push(order);
         // Briefable: not in Wrike, and its artwork chosen (see wrikeBatch.js).
-        if (!match && String(order.artwork || "").trim()) group.toBrief++;
+        if (!match && artworkChosen(order.artwork)) group.toBrief++;
       };
       market.orders.forEach((order, i) => {
         counts.orders++;
@@ -200,7 +201,7 @@ export function ordersByMarket(files, todayIso, matchFor = () => []) {
         const longOver = urgency === "overdue" && order.deliveryDeadline < longAgo;
         // Not in Wrike yet, unless long past its deadline (the film is
         // usually over by then).
-        if (!match && !longOver && order.status !== "pending") into(String(order.artwork || "").trim() ? "toBrief" : "waitingArtwork", order, match);
+        if (!match && !longOver && order.status !== "pending") into(artworkChosen(order.artwork) ? "toBrief" : "waitingArtwork", order, match);
         const list = urgency === "overdue" ? (longOver ? "longOverdue" : "overdue")
           : urgency
           || (order.status === "requested" && !match ? "requested" : order.status === "pending" ? "pending" : null);

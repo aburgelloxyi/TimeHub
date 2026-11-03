@@ -2,6 +2,7 @@ import { useEffect, useRef } from "react";
 import { X } from "lucide-react";
 import { SECTIONS } from "../../lib/orderForms/sections";
 import { extraSummary } from "../../lib/orderForms/extras";
+import { ON_COLOUR } from "./media";
 
 // The drawer that slides out from behind a film's poster with the kinds of work
 // the film has: International, Domestic, Titles, Launches, each counted, and
@@ -55,7 +56,7 @@ export default function FilmDrawer({ film, width, tuck, media, onOpen, onOpenExt
             <li
               key={s.id}
               className={`drawer-row border-t border-white/10 ${s.chips ? "flex-[1.6]" : "flex-1"}`}
-              style={{ "--i": i, "--from": s.from, "--to": s.to }}
+              style={{ "--i": i, "--from": s.from, "--to": s.to, "--fill-from": s.fillFrom, "--fill-to": s.fillTo }}
             >
               <div className={`drawer-section relative flex h-full items-center gap-4 px-5 ${s.open ? "" : "cursor-default"}`} aria-disabled={s.open ? undefined : "true"}>
                 {/* The whole row opens it; the chips above open one side directly. */}
@@ -71,7 +72,7 @@ export default function FilmDrawer({ film, width, tuck, media, onOpen, onOpenExt
                 <span className="drawer-count relative font-display text-5xl font-bold leading-none tracking-tighter">{s.count}</span>
                 <div className="drawer-text relative min-w-0 flex-1">
                   <p className="truncate font-display text-[1.7rem] font-bold leading-none tracking-tight">{s.label}</p>
-                  <p className="mt-1.5 truncate text-xs font-semibold text-white/70">
+                  <p className="drawer-detail mt-1.5 truncate text-xs font-semibold text-white/70">
                     {s.count === 1 ? s.unit.one : s.unit.many}
                     {s.detail ? ` · ${s.detail}` : ""}
                   </p>
@@ -84,7 +85,7 @@ export default function FilmDrawer({ film, width, tuck, media, onOpen, onOpenExt
                             key={m}
                             type="button"
                             onClick={() => onOpen(film.sides[m].file)}
-                            className="drawer-chip press flex items-center gap-1.5 rounded-full px-3 py-1 text-[11px] font-black uppercase tracking-wide text-[#122027] shadow-sm"
+                            className={`drawer-chip press flex items-center gap-1.5 rounded-full px-3 py-1 text-[11px] font-black uppercase tracking-wide shadow-sm ${ON_COLOUR}`}
                             style={{ background: colour }}
                           >
                             <Icon className="h-3 w-3" strokeWidth={2.75} />

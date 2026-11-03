@@ -1,8 +1,9 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Check, FileSpreadsheet, Loader2, PencilLine, Plus, RefreshCw, Trash2 } from "lucide-react";
+import { Check, CloudOff, FileSpreadsheet, FolderX, Loader2, PencilLine, RefreshCw, Trash2 } from "lucide-react";
 import PageHeader from "./shared/PageHeader";
 import DropZone from "./orderForms/DropZone";
 import MediumSwitch from "./orderForms/MediumSwitch";
+import Notice, { noticeButton, noticeDanger } from "./orderForms/Notice";
 import GoogleSource, { googleMessage } from "./orderForms/GoogleSource";
 import HeaderSearch from "./orderForms/HeaderSearch";
 import ReportButton from "./orderForms/ReportButton";
@@ -65,6 +66,10 @@ const hasFiles = (e) => Array.from(e.dataTransfer?.types || []).includes("Files"
 
 const readAt = (iso) => new Date(iso).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 
+// Films a PM has kept despite looking to have left Drive, by id, with what Drive showed when they did.
+const KEPT_STORE = "orderforms.keptStale";
+const staleSign = (found) => (found.gone ? "gone" : `${found.left}`);
+
 // How old an open film's last read is before it's read again by itself.
 const AUTO_READ_AFTER = 2 * 60 * 60 * 1000;
 
@@ -90,9 +95,7 @@ export default function OrderForms({ wrikeData, isAdmin = false, filmCodes = {} 
   useEffect(() => onGoogleChange(() => { if (googleConnected()) setSignedInTick((n) => n + 1); }), []);
   const [dragging, setDragging] = useState(false);
   const [error, setError] = useState("");
-  // The film loader is shown when asked for (the plus beside the film
-  // switcher), or when nothing is loaded yet. `editingSheets` opens the correction on the overview.
-  const [adding, setAdding] = useState(false);
+  // `editingSheets` opens the correction on the overview.
   const [editingSheets, setEditingSheets] = useState(false);
   // The studio whose films are open on the front page, or none for the studio cards. Kept here rather than in
   // the grid so it survives opening a film, and so the header can say it.
@@ -162,7 +165,21 @@ export default function OrderForms({ wrikeData, isAdmin = false, filmCodes = {} 
     }
     return () => { live = false; };
   }, [studios, signedInTick, ready]);
-  const stalenessOf = useCallback((f) => driveStaleness(f, drive[f?.source?.clientId]), [drive]);
+  // A PM can keep a film that looks to have left Drive, in this browser, until what Drive shows for it changes.
+  const [kept, setKept] = useState(() => {
+    try { return JSON.parse(localStorage.getItem(KEPT_STORE) || "{}"); } catch { return {}; }
+  });
+  const stalenessOf = useCallback((f) => {
+    const found = driveStaleness(f, drive[f?.source?.clientId]);
+    return found && kept[f.id] === staleSign(found) ? null : found;
+  }, [drive, kept]);
+  const keepFilm = (f) => {
+    const found = driveStaleness(f, drive[f?.source?.clientId]);
+    if (!found) return;
+    const next = { ...kept, [f.id]: staleSign(found) };
+    setKept(next);
+    try { localStorage.setItem(KEPT_STORE, JSON.stringify(next)); } catch { /* private mode: kept for this visit */ }
+  };
 
   // Someone else may have refreshed a film or set a row aside. Coming back to
   // the tab picks that up, at most once a minute and never mid-load.
@@ -326,11 +343,20 @@ export default function OrderForms({ wrikeData, isAdmin = false, filmCodes = {} 
         ...f,
         briefed: { ...f.briefed, [marketName]: { ...f.briefed?.[marketName], ...Object.fromEntries(made.map(({ key, ...task }) => [key, task])) } },
       })),
+      // Batches being prepared here before briefing (batches.js), and saving a new set of them.
+      batches: target.batches?.[marketName] || [],
+      onBatches: (list) => change((f) => ({ ...f, batches: { ...f.batches, [marketName]: list } })),
       onSetAside: (order) => setIgnored(order, true),
       onRestore: (order) => setIgnored(order, false),
       onLink: (order, value) => change((f) => {
         const links = { ...f.links?.[marketName] };
         if (value) links[orderKey(order)] = value; else delete links[orderKey(order)];
+        return { ...f, links: { ...f.links, [marketName]: links } };
+      }),
+      // Several at once ([[order, taskId], …]), as one save: confirming a market's close matches.
+      onLinks: (pairs) => change((f) => {
+        const links = { ...f.links?.[marketName] };
+        for (const [order, value] of pairs) links[orderKey(order)] = value;
         return { ...f, links: { ...f.links, [marketName]: links } };
       }),
     };
@@ -347,7 +373,7 @@ export default function OrderForms({ wrikeData, isAdmin = false, filmCodes = {} 
       ...read,
       id: fileKey(read),
       ...(replaces
-        ? { ignored: replaces.ignored, links: replaces.links, briefed: replaces.briefed, wrapped: replaces.wrapped, changes: fileChanges(replaces, read) }
+        ? { ignored: replaces.ignored, links: replaces.links, briefed: replaces.briefed, wrapped: replaces.wrapped, batches: replaces.batches, changes: fileChanges(replaces, read) }
         : {}),
     };
     if (replaces && replaces.id !== parsed.id) await removeFile(replaces.id);
@@ -415,7 +441,6 @@ export default function OrderForms({ wrikeData, isAdmin = false, filmCodes = {} 
     const existing = (files || []).find((f) => f.id === fileKey(loaded));
     if (existing && !(await confirmReplace(loaded.name))) return;
     await adopt(loaded, existing);
-    setAdding(false);
   }, [files, adopt]);
 
   // Read a Google-loaded film again from the client's folders. Asking to refresh
@@ -501,6 +526,7 @@ export default function OrderForms({ wrikeData, isAdmin = false, filmCodes = {} 
           links: latest.links,
           briefed: latest.briefed,
           wrapped: latest.wrapped,
+          batches: latest.batches,
           changes: fileChanges(latest, loaded),
         };
         await saveFile(next);
@@ -607,15 +633,21 @@ export default function OrderForms({ wrikeData, isAdmin = false, filmCodes = {} 
         {/* Apart enough that the connected G's glow fades before the search's
             glass, which would otherwise cut it off in a hard line. */}
         <div className="flex items-center gap-3.5">
-          {files?.length > 0 && <HeaderSearch files={files} matcher={matcher} today={today} />}
+          {/* Searches where you are: the open market, else the open film (both sides), else everything. */}
+          {files?.length > 0 && (
+            <HeaderSearch
+              files={files}
+              matcher={matcher}
+              today={today}
+              scope={opened
+                ? market
+                  ? { label: market.name, fileIds: [opened.id], market: market.name }
+                  : { label: filmTitleOf(opened), fileIds: [opened.id, ...(twin ? [twin.id] : [])] }
+                : null}
+            />
+          )}
           {googleConfigured() && <GoogleButton />}
           <ReportButton />
-          {/* The front page's one main action, so it stands apart at the end of the page's tools. */}
-          {!view.fileId && files && !empty && !adding && (
-            <button onClick={() => setAdding(true)} className="group/load press ml-2 flex items-center gap-2 rounded-xl bg-white px-4 py-2 text-sm font-bold text-[#4338ca] shadow-sm transition-colors hover:bg-white/90">
-              <Plus className="h-4 w-4 transition-transform duration-300 group-hover/load:rotate-90" strokeWidth={2.75} /> Load a film
-            </button>
-          )}
         </div>
       </PageHeader>
 
@@ -627,7 +659,7 @@ export default function OrderForms({ wrikeData, isAdmin = false, filmCodes = {} 
         onChange={(e) => {
           const picked = e.target.files?.[0];
           e.target.value = "";
-          if (picked) addFile(picked).then(() => setAdding(false));
+          if (picked) addFile(picked);
         }}
       />
 
@@ -635,19 +667,14 @@ export default function OrderForms({ wrikeData, isAdmin = false, filmCodes = {} 
         {files === null && <div className="h-64 rounded-2xl bg-white/60 border border-[#dce4ec] animate-pulse" />}
 
         {local && files?.length > 0 && (
-          <p role="status" className="px-4 py-2.5 rounded-xl bg-amber-50 border border-amber-200 text-sm text-amber-700">
-            The shared orders couldn't be reached, so this is this browser's last copy. What you load or decide now stays here until it can be shared.
-          </p>
+          <Notice tone="info" icon={CloudOff} title="Showing this browser's last copy">
+            The shared orders couldn't be reached. What you load or decide now stays here until it can be shared.
+          </Notice>
         )}
 
-        {files && googleConfigured() && (empty || adding || partial) && (
-          <GoogleSource onLoaded={addFilm} onBusy={setGoogleBusy} onPartial={setPartial} signedInTick={signedInTick} onClose={adding && !empty ? () => setAdding(false) : undefined} />
-        )}
-        {adding && !empty && !partial && (
-          <p className="text-sm text-[#768994] px-1">
-            Or drop a downloaded .xlsx anywhere on the page, or{" "}
-            <button onClick={() => fileInputRef.current?.click()} disabled={working} className="font-bold text-[#122027] underline underline-offset-2 hover:text-[#12a0e1]">choose a file</button>.
-          </p>
+        {/* The first film of all; after that, films are loaded from the end of their studio's shelf. */}
+        {files && googleConfigured() && (empty || partial) && (
+          <GoogleSource onLoaded={addFilm} onBusy={setGoogleBusy} onPartial={setPartial} signedInTick={signedInTick} />
         )}
 
         {partial && <MarketList file={partial} today={today} matcher={matcher} arriving />}
@@ -661,20 +688,28 @@ export default function OrderForms({ wrikeData, isAdmin = false, filmCodes = {} 
         {files && files.length > 0 && !partial && view.fileId && !openExtra && (
           <>
             {error && <p role="alert" className="text-sm font-medium text-rose-600">{error}</p>}
-            {stalenessOf(file) && (
-              <div role="status" className="flex flex-wrap items-center gap-3 px-4 py-2.5 rounded-xl bg-amber-50 border border-amber-200 text-sm text-amber-700">
-                <p className="mr-auto">
-                  {stalenessOf(file).gone
-                    ? `This film's order sheets are no longer in ${clientFor(file.source.clientId)?.label || "the studio"}'s Drive folders, so it has probably run its course. What's here is the last read.`
-                    : stalenessOf(file).had
-                      ? `Only ${stalenessOf(file).left} of this film's ${stalenessOf(file).had} markets still have a sheet in Drive, so it looks like it's being wound down.`
-                      : `Only ${stalenessOf(file).left} ${stalenessOf(file).left === 1 ? "market has" : "markets have"} a sheet for this film in Drive, where the studio's fullest film has ${stalenessOf(file).typical}. Its folders look to have been cleared out.`}
-                </p>
-                <button onClick={() => dropFile(file)} className="px-3 py-1 rounded-lg bg-white border border-amber-200 hover:border-amber-600 text-xs font-bold text-amber-700 transition-colors">
-                  Remove it
-                </button>
-              </div>
-            )}
+            {stalenessOf(file) && (() => {
+              const found = stalenessOf(file);
+              const studioName = clientFor(file.source.clientId)?.label || "the studio";
+              return (
+                <Notice
+                  icon={FolderX}
+                  title={found.gone ? "This film has left Drive" : found.had ? "This film is leaving Drive" : "This film's folders look cleared out"}
+                  actions={(
+                    <>
+                      <button type="button" onClick={() => keepFilm(file)} className={noticeButton}>Keep it</button>
+                      <button type="button" onClick={() => dropFile(file)} className={noticeDanger}>Remove it</button>
+                    </>
+                  )}
+                >
+                  {found.gone
+                    ? `Its order sheets are no longer in ${studioName}'s Drive folders, so it has probably run its course. What's here is the last read.`
+                    : found.had
+                      ? `Only ${found.left} of its ${found.had} markets still have a sheet in Drive, so it looks to be winding down.`
+                      : `Only ${found.left} ${found.left === 1 ? "market has" : "markets have"} a sheet for it, where ${studioName}'s fullest film has ${found.typical}, and none has been edited in a month.`}
+                </Notice>
+              );
+            })()}
             {market
               ? <MarketView market={market} kind={market.kind || file.kind} filmTitle={filmTitleOf(file)} clientId={file.source?.clientId} filmKey={file.source?.filmKey} startBriefing={view.action === "brief"} openRow={Number(/^row-(\d+)$/.exec(view.action || "")?.[1]) || null} onStarted={() => go(file.id, market.name, { replace: true })} onChanged={refresh} today={today} matcher={matcher} wrikeParents={wrikeParents} decide={decideFor(file, market.name)} onBack={() => go(file.id, null)} />
               : (
@@ -717,6 +752,9 @@ export default function OrderForms({ wrikeData, isAdmin = false, filmCodes = {} 
             delivered={(f) => deliveredFilms.has(f.id)}
             onOpen={(id) => { setEditingSheets(false); go(id, null); }}
             onOpenExtra={(id) => go(id, null)}
+            onLoaded={addFilm}
+            onBusy={setGoogleBusy}
+            onChooseFile={() => fileInputRef.current?.click()}
             onSetPoster={setFilmPoster}
             onSetStudioImage={setStudioImage}
             canEdit={isAdmin}

@@ -362,7 +362,7 @@ async function handleJobsFeed(request, env) {
 const ORDERS_MAX_BYTES = 8 * 1024 * 1024;
 // What a PM decides about a film's orders, saved on their own so that setting
 // a row aside from an older copy of the film can't undo someone's Refresh.
-const ORDER_DECISIONS = ["ignored", "links", "briefed", "wrapped"];
+const ORDER_DECISIONS = ["ignored", "links", "briefed", "wrapped", "batches"];
 
 async function ordersCaller(request, env) {
   const session = parseCookies(request)[SESSION_COOKIE];

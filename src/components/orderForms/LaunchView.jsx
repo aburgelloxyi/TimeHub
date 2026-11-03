@@ -1,8 +1,9 @@
 import { useMemo, useState } from "react";
-import { AlertTriangle, History, Search } from "lucide-react";
+import { History, Search } from "lucide-react";
 import { SECTIONS } from "../../lib/orderForms/sections";
 import SectionBand from "./SectionBand";
 import MarketFlag from "./MarketFlag";
+import Notice from "./Notice";
 
 // A launch artwork as each market asked for it: the formats it needs, its own
 // versions of the artwork's lines beside the English they translate, whether
@@ -42,7 +43,7 @@ function Market({ market, index }) {
 
       <div className="mt-3 flex flex-wrap gap-1.5">
         {market.formats.map((f) => (
-          <span key={f} className="rounded-full bg-gradient-to-r from-[#14b8a6] to-[#22c55e] px-2.5 py-0.5 text-[11px] font-bold text-white shadow-sm">{f}</span>
+          <span key={f} className="rounded-full px-2.5 py-0.5 text-[11px] font-bold text-white shadow-sm" style={{ backgroundImage: `linear-gradient(90deg, ${LOOK.fillFrom}, ${LOOK.fillTo})` }}>{f}</span>
         ))}
       </div>
 
@@ -68,8 +69,8 @@ function Market({ market, index }) {
       )}
 
       {market.replaced > 0 && (
-        <p className="mt-3 flex items-start gap-1.5 rounded-xl bg-amber-50 px-3 py-2 text-[11px] font-semibold leading-snug text-amber-800">
-          <History className="mt-px h-3.5 w-3.5 shrink-0" />
+        <p className="mt-3 flex items-start gap-1.5 border-t border-[#eef2f6] pt-3 text-[11px] font-semibold leading-snug text-[#46606b]">
+          <History className="mt-px h-3.5 w-3.5 shrink-0 text-[#f59e0b]" />
           <span>
             Answered {market.replaced + 1} times, the newest shown.{" "}
             {market.changed.length ? `It changed ${market.changed.map((c) => (c === "formats" || c === "literal" ? c : `“${c.toLowerCase()}”`)).join(", ")}.` : "Nothing changed."}
@@ -119,21 +120,17 @@ export default function LaunchView({ file, film, onRemove }) {
       </SectionBand>
 
       {drift ? (
-        <div role="status" className="flex gap-3 rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800">
-          <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0" />
-          <div>
-            <p className="font-bold">The Wrike_Import tab doesn't line up with its task names.</p>
-            <p className="mt-1">
-              Of its {checked.tasks} tasks, {checked.offCountry} have a Country that isn't the market in their name
-              {checked.offFormat ? `, and ${checked.offFormat} a Format that isn't the one their name says` : ""}. Check it before importing it into Wrike.
-            </p>
-            {checked.examples.length > 0 && (
-              <ul className="mt-2 space-y-1 font-mono text-[11px]">
-                {checked.examples.map((t) => <li key={t.title} className="truncate">{t.title} → {t.country}{t.format ? `, ${t.format}` : ""}</li>)}
-              </ul>
-            )}
-          </div>
-        </div>
+        <Notice title="The Wrike_Import tab doesn't line up with its task names">
+          <p>
+            Of its {checked.tasks} tasks, {checked.offCountry} have a Country that isn't the market in their name
+            {checked.offFormat ? `, and ${checked.offFormat} a Format that isn't the one their name says` : ""}. Check it before importing it into Wrike.
+          </p>
+          {checked.examples.length > 0 && (
+            <ul className="mt-2 space-y-1 font-mono text-[11px] text-[#46606b]">
+              {checked.examples.map((t) => <li key={t.title} className="truncate">{t.title} → {t.country}{t.format ? `, ${t.format}` : ""}</li>)}
+            </ul>
+          )}
+        </Notice>
       ) : null}
 
       {markets.length > 6 && (

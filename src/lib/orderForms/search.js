@@ -3,6 +3,7 @@
 // holds, so it asks nothing of Google or Wrike.
 
 import { applySetAside, orderUrgency } from "./status";
+import { artworkChosen } from "./artwork";
 
 const lower = (s) => String(s || "").toLowerCase();
 const filmTitle = (name) => String(name || "").replace(/\.xlsx$/i, "");
@@ -43,7 +44,7 @@ export function searchIndex(files, todayIso, matchFor = () => []) {
         out.push({
           fileId: file.id, film: file.name, kind: market.kind || file.kind, market: market.name, wrapped: !!raw.wrapped,
           order, task, wrikeStatus, urgency: orderUrgency(order, todayIso),
-          hasArtwork: !!String(order.artwork || "").trim(), text,
+          hasArtwork: artworkChosen(order.artwork), text,
         });
       });
     }

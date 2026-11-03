@@ -12,6 +12,12 @@ export function posterKey(clientId, film) {
   return `${String(clientId ?? "").trim()}::${title}`;
 }
 
+// A studio's own picture lives in the same map, under its own prefix, so the
+// one read and write serve both.
+export function studioKey(studioId) {
+  return `studio::${String(studioId ?? "").trim().toLowerCase()}`;
+}
+
 export async function loadPosters() {
   const { data, error } = await supabase.from("film_posters").select("posters").eq("id", 1).single();
   if (error) return {};

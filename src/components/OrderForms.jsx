@@ -18,7 +18,7 @@ import { HoverLabel } from "./shared/FloatingCard";
 import { loadFilm, loadMarketOf, listFilms } from "../lib/orderForms/loadFilm";
 import { clientFor, driveStaleness } from "../lib/orderForms/driveTree";
 import StudioGrid from "./orderForms/StudioGrid";
-import { loadPosters, posterKey, setPoster } from "../lib/filmPosters";
+import { loadPosters, posterKey, setPoster, studioKey } from "../lib/filmPosters";
 import { makeMatcher, indexParents, orderKey } from "../lib/orderForms/wrikeMatch";
 import { applySetAside, fileChanges, filmDelivered, marketChanges, mergeChanges, teamNews } from "../lib/orderForms/status";
 import { confirmAction } from "../lib/confirm";
@@ -165,6 +165,17 @@ export default function OrderForms({ wrikeData }) {
     // The same studio id the grid groups by, so a dropped workbook's poster finds its card.
     const key = posterKey(file.source?.clientId || "dropped", title);
     const url = window.prompt(`Paste the image URL for ${title || "this film"}'s poster (or leave it blank to reset):`, posters[key] || "");
+    if (url === null) return;
+    const { posters: next, error: why } = await setPoster(key, url);
+    if (why) notify(why, "error");
+    else setPosters(next);
+  }, [posters]);
+
+  // A studio's card image: the same prompt and the same map, under the studio's own key.
+  const setStudioImage = useCallback(async (studioId) => {
+    const label = studioId === "amazonmgm" ? "Amazon MGM" : studioId.charAt(0).toUpperCase() + studioId.slice(1);
+    const key = studioKey(studioId);
+    const url = window.prompt(`Paste the image URL for ${label} (or leave it blank to reset):`, posters[key] || "");
     if (url === null) return;
     const { posters: next, error: why } = await setPoster(key, url);
     if (why) notify(why, "error");
@@ -515,6 +526,7 @@ export default function OrderForms({ wrikeData }) {
             delivered={(f) => deliveredFilms.has(f.id)}
             onOpen={(id) => { setEditingSheets(false); go(id, null); }}
             onSetPoster={setFilmPoster}
+            onSetStudioImage={setStudioImage}
           />
         )}
       </div>

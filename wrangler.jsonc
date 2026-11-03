@@ -12,8 +12,9 @@
     // Run the Worker before the static-assets/SPA layer for API routes.
     // Without this, navigation requests (Sec-Fetch-Mode: navigate) to
     // /api/wrike/oauth/* get served index.html instead of hitting the Worker,
-    // which breaks the OAuth redirect + callback.
-    "run_worker_first": ["/api/*"]
+    // which breaks the OAuth redirect + callback. /r is the page a Wrike
+    // comment links to for a Reviewer link, so it must reach the Worker too.
+    "run_worker_first": ["/api/*", "/r"]
   },
   "compatibility_flags": [
     "nodejs_compat"

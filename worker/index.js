@@ -1937,9 +1937,30 @@ async function handlePanelComment(request, url, env) {
     text: panelPlainText(c.text), author: names[c.authorId] || "", date: c.createdDate || "",
     motion: motionAuthors.has(c.authorId),
   }));
-  const body = { task, count: comments.length, comment: shaped[0] || null, recent: shaped };
+  // When the task first went into Motion, so XYi in Motion counts only the amends
+  // from then on (the comments before it are the brief going round, not a
+  // motion designer's). null when the six weeks of history don't reach it.
+  const motionSince = await panelMotionSince(env, task);
+  const body = { task, count: comments.length, comment: shaped[0] || null, recent: shaped, motionSince };
   panelCommentCache.set(cacheKey, { at: Date.now(), body });
   return json(body, { headers: panelCors({ "Cache-Control": "no-store" }) });
+}
+
+// The first time a task's status became one named Motion, from the status
+// changes the webhook keeps six weeks (wrike_task_activity). One indexed read of
+// one task; the status names are the cached workflows map. Never throws.
+async function panelMotionSince(env, task) {
+  try {
+    const res = await sbFetch(env, `/wrike_task_activity?select=custom_status_id,occurred_at&task_id=eq.${encodeURIComponent(task)}&event_type=eq.TaskStatusChanged&order=occurred_at.asc&limit=200`, { timeoutMs: 4000 });
+    if (!res.ok) return null;
+    const rows = (await res.json()) || [];
+    if (!rows.length) return null;
+    const names = await panelStatusNameMap(env);
+    const hit = rows.find((r) => /\bmotion\b/i.test(names[r.custom_status_id] || ""));
+    return hit ? hit.occurred_at : null;
+  } catch (_) {
+    return null;
+  }
 }
 
 // A campaign's motion jobs, live and delivered, as CampaignAmends finds them on

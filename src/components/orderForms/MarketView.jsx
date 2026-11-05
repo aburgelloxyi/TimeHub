@@ -24,6 +24,9 @@ import { readMarketForBriefing, suggestBatchName, suggestDue, planBatch, createB
 import { planFields } from "../../lib/orderForms/wrikeFields";
 import BriefPreview from "./BriefPreview";
 import BatchCard from "./BatchCard";
+import BriefPanel from "./BriefPanel";
+import { readBriefTemplate } from "../../lib/orderForms/wrikeBrief";
+import { batchDescription, readTemplate, suggestFolder } from "../../lib/orderForms/briefTemplate";
 import { addTo, disband, findDuplicates, groupInto, placeBatches, renameBatch, takeOut } from "../../lib/orderForms/batches";
 import { artworkChosen } from "../../lib/orderForms/artwork";
 import { confirmAction } from "../../lib/confirm";
@@ -172,6 +175,8 @@ export default function MarketView({ market, kind, filmTitle, clientId, filmKey,
   // Preparing batches before briefing: ticked rows are grouped into named batches, kept with the film for every
   // PM (decide.batches, batches.js), each briefed into Wrike as one batch task when it's ready.
   const [planning, setPlanning] = useState(false);
+  // The batch whose Wrike description is open beside its card.
+  const [describing, setDescribing] = useState(null);
   const { batches, byRow } = useMemo(() => placeBatches(decide?.batches || [], orders), [decide?.batches, orders]);
   const saveBatches = (list) => decide?.onBatches?.(list);
   // Rows that look like one order twice: same artwork, country and size.
@@ -379,7 +384,7 @@ export default function MarketView({ market, kind, filmTitle, clientId, filmKey,
     return (i) => tags.get(keys[i]) || "";
   }, [changed, orders]);
 
-  useEffect(() => { setSelected(0); setExpanded(null); setEditing(false); setEdits({}); setUndo(null); setTicked(new Set()); tickAnchor.current = null; setBriefing(null); setPlanning(false); setShow("all"); }, [market.name]);
+  useEffect(() => { setSelected(0); setExpanded(null); setEditing(false); setEdits({}); setUndo(null); setTicked(new Set()); tickAnchor.current = null; setBriefing(null); setPlanning(false); setShow("all"); setDescribing(null); }, [market.name]);
   // A fresh read replaces the orders, and with them what each cell held.
   useEffect(() => { setEdits({}); setChoices({}); setExpanded(null); setTicked(new Set()); tickAnchor.current = null; asked.current = new Set(); }, [orders]);
 
@@ -443,13 +448,19 @@ export default function MarketView({ market, kind, filmTitle, clientId, filmKey,
     setExpanded(null);
     setBriefing({ loading: true });
     try {
-      const found = await readMarketForBriefing({ filmTitle, kind, marketName: market.name });
+      const [found, template] = await Promise.all([
+        readMarketForBriefing({ filmTitle, kind, marketName: market.name }),
+        batch ? readBriefTemplate({ filmTitle, kind, marketName: market.name }).catch(() => null) : null,
+      ]);
+      const read = template?.ok ? readTemplate(template.html) : null;
+      const description = read ? batchDescription(read, suggestFolder(read, template.marketsJob, template.marketFolder), batch.brief || {}) : "";
       const mine = [...fresh].map((i) => orders[i]);
       setBriefing(found.ok ? {
         ...found,
         name: batch?.name || suggestBatchName(found.existingTitles, mine.length ? mine : orders, marketCode),
         due: batch?.due || suggestDue(mine),
         batchId: batch?.id || null,
+        description,
       } : found);
     } catch (err) {
       setBriefing({ ok: false, reason: /\(401\)|not_connected/.test(err.message) ? "Connect Wrike in Profile first." : "Wrike couldn't be reached." });
@@ -542,14 +553,14 @@ export default function MarketView({ market, kind, filmTitle, clientId, filmKey,
     if (!plan.ok) return notify(plan.problems[0]);
     setCreating({ done: 0, total: plan.tasks.length });
     try {
-      const result = await createBatch({ folder: briefing.folder, status: briefing.status, plan, fields, onProgress: (done, total) => setCreating({ done, total }) });
+      const result = await createBatch({ folder: briefing.folder, status: briefing.status, plan, fields, description: briefing.description || "", onProgress: (done, total) => setCreating({ done, total }) });
       if (result.made.length) decide?.onBriefed(result.made);
       if (briefing.batchId && result.made.length) saveBatches(disband(decide?.batches, briefing.batchId));
       notify(
         result.failed.length
           ? `${plan.name} created with ${result.made.length} of ${plan.tasks.length} subtasks. Wrike refused ${result.failed.length === 1 ? "row" : "rows"} ${result.failed.map((f) => f.row).join(", ")}.`
-          : `${plan.name} created in Wrike with ${result.made.length} ${result.made.length === 1 ? "subtask" : "subtasks"}.`,
-        result.failed.length ? "error" : "success"
+          : `${plan.name} created in Wrike with ${result.made.length} ${result.made.length === 1 ? "subtask" : "subtasks"}.${result.describedFailed ? " Wrike didn't take its description: copy it from the batch's Description and paste it in." : ""}`,
+        result.failed.length || result.describedFailed ? "error" : "success"
       );
       stopBriefing();
     } catch (err) {
@@ -1074,7 +1085,14 @@ export default function MarketView({ market, kind, filmTitle, clientId, filmKey,
                   })}
                   onCreate={createInWrike}
                 />
-              ) : (
+              ) : null}
+              {/* Checking: what the batch task will say, from the batch's Description. Otherwise, the form. */}
+              {briefing.previewing && brief?.plan.ok ? (briefing.description ? (
+                <details className="mt-3 rounded-xl border border-[#dce4ec] bg-white">
+                  <summary className="cursor-pointer px-3 py-2 text-xs font-bold text-[#122027]">The batch task's description, from the batch's Description</summary>
+                  <div className="brief-preview border-t border-[#dce4ec] px-4 py-3 text-sm leading-relaxed text-[#122027] break-words" dangerouslySetInnerHTML={{ __html: briefing.description }} />
+                </details>
+              ) : null) : (
               <>
               <div className="flex flex-wrap items-end gap-3">
                 <p className="pb-2 mr-1 text-sm text-[#768994]">
@@ -1143,8 +1161,8 @@ export default function MarketView({ market, kind, filmTitle, clientId, filmKey,
           {batches.length > 0 && (
             <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
               {batches.map((b, n) => (
+                <React.Fragment key={b.id}>
                 <BatchCard
-                  key={b.id}
                   index={n}
                   batch={b}
                   orders={orders}
@@ -1155,8 +1173,23 @@ export default function MarketView({ market, kind, filmTitle, clientId, filmKey,
                   onRename={(name) => saveBatches(renameBatch(decide?.batches, b.id, { name }))}
                   onDue={(due) => saveBatches(renameBatch(decide?.batches, b.id, { due }))}
                   onDisband={() => saveBatches(disband(decide?.batches, b.id))}
-                  onBrief={() => { stopPlanning(); startBriefing(b.rows, b); }}
+                  onBrief={() => { stopPlanning(); setDescribing(null); startBriefing(b.rows, b); }}
+                  onDescribe={filmTitle ? () => setDescribing((d) => (d === b.id ? null : b.id)) : null}
+                  describing={describing === b.id}
                 />
+                {describing === b.id && (
+                  <div className="sm:col-span-2">
+                    <BriefPanel
+                      batch={b}
+                      filmTitle={filmTitle}
+                      kind={kind}
+                      marketName={market.name}
+                      onSave={(brief) => saveBatches(renameBatch(decide?.batches, b.id, { brief }))}
+                      onClose={() => setDescribing(null)}
+                    />
+                  </div>
+                )}
+                </React.Fragment>
               ))}
             </div>
           )}

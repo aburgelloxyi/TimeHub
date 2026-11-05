@@ -12,6 +12,7 @@ import { resolveFields, fieldUse } from "./wrikeFields";
 import { planMarketFolderLive } from "./wrikeMarketFolder";
 import { orderKey } from "./wrikeMatch";
 import { artworkChosen } from "./artwork";
+import { setTaskDescription } from "./wrikeBrief";
 
 const titleOf = (order) => String(order.xyi?.title || order.deliveryName || "").trim();
 
@@ -119,13 +120,17 @@ export async function readMarketForBriefing(request) {
 // that fails nothing is made. Then each order as a subtask, one at a time, so
 // a failure part-way leaves a batch that says exactly which orders are in it.
 // `fields` is planFields' plan: the custom fields go in with each task as it
-// is made. Returns { batch, made: [{ key, id, title, permalink }], failed: [{ row, title }] }.
-export async function createBatch({ folder, status, plan, fields, onProgress }) {
+// is made. `description` is the batch's brief as HTML, given to the batch task once it exists; if Wrike refuses
+// it the batch is made all the same and `describedFailed` says so.
+// Returns { batch, made: [{ key, id, title, permalink }], failed: [{ row, title }], describedFailed }.
+export async function createBatch({ folder, status, plan, fields, description = "", onProgress }) {
   const dates = { type: "Milestone", due: plan.due };
   const common = { dates, ...(status ? { customStatus: status.id } : {}) };
   const withFields = (list) => (list?.length ? { customFields: list } : {});
   const batch = await createTaskIn(folder.id, { title: plan.name, ...common, ...withFields(fields?.batch) });
   if (!batch.id) throw new Error("Wrike didn't return the batch task.");
+  let describedFailed = false;
+  if (description) await setTaskDescription(batch.id, description).catch(() => { describedFailed = true; });
   const made = [];
   const failed = [];
   for (const task of plan.tasks) {
@@ -140,5 +145,5 @@ export async function createBatch({ folder, status, plan, fields, onProgress }) 
     }
     onProgress?.(made.length + failed.length, plan.tasks.length);
   }
-  return { batch, made, failed };
+  return { batch, made, failed, describedFailed };
 }

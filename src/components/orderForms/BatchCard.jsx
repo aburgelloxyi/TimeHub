@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Check, Copy, Send, X } from "lucide-react";
+import { Check, Copy, FileText, Send, X } from "lucide-react";
 import DateField from "../shared/DateField";
 import { batchSizes } from "../../lib/orderForms/batches";
 import { hasArtwork } from "../../lib/orderForms/wrikeBatch";
@@ -9,7 +9,7 @@ import { hasArtwork } from "../../lib/orderForms/wrikeBatch";
 // have them, what it holds at a glance, anything that would stop it briefing,
 // and the way to brief it. The name is saved when it's left, not as it's typed:
 // each save rewrites the film's shared copy.
-export default function BatchCard({ batch, orders, inWrike, duplicates, today, onRename, onDue, onBrief, onDisband, busy, index = 0 }) {
+export default function BatchCard({ batch, orders, inWrike, duplicates, today, onRename, onDue, onBrief, onDisband, onDescribe, describing = false, busy, index = 0 }) {
   const [name, setName] = useState(batch.name);
   useEffect(() => setName(batch.name), [batch.name]);
   const save = () => {
@@ -92,7 +92,21 @@ export default function BatchCard({ batch, orders, inWrike, duplicates, today, o
         </ul>
       )}
 
-      <div className="mt-auto pt-1">
+      <div className="mt-auto space-y-2 pt-1">
+        {/* The batch task's description, opened beside the card (BriefPanel). */}
+        {onDescribe && (
+          <button
+            type="button"
+            onClick={onDescribe}
+            aria-expanded={describing}
+            className={`press flex w-full items-center justify-center gap-1.5 rounded-xl border px-3 py-1.5 text-xs font-bold transition-colors ${
+              describing ? "border-indigo-600 text-indigo-700" : "border-[#dce4ec] text-[#122027] hover:border-[#12a0e1]"
+            }`}
+          >
+            <FileText className="h-3.5 w-3.5" />
+            {batch.brief && Object.keys(batch.brief).length ? "Description · edited" : "Description"}
+          </button>
+        )}
         {ready > 0 ? (
           <button
             type="button"

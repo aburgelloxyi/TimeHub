@@ -1,15 +1,17 @@
 // The Billable view's grouping and rounding.
 //
-// Rows for one person, job, item category and territory in one week are one
-// block, billed through the week's running pot: each entry is added and the pot
-// rounded to the client's increment, the half going up, and what is too few
-// minutes to bill is banked for the next entry. These cases pin the grouping
-// key, the week boundary, the rounding either side of a half step, and the bank.
+// Rows for one person, job and item category in one week, with countries in
+// common, are one block, billed through the week's running pot: each entry is
+// added and the pot rounded to the client's increment, the half going up, and
+// what is too few minutes to bill is banked for the next entry. These cases pin
+// the grouping, the week boundary, the rounding either side of a half step, and
+// the bank.
 import {
   consolidateRows,
   weekStartIso,
   billCycle,
   incrementFor,
+  countriesOf,
   DEFAULT_INCREMENT_MINUTES,
 } from "../src/lib/consolidate.js";
 
@@ -62,7 +64,7 @@ check("different item categories stay apart", consolidateRows([
   row({ _iso: "2026-10-26", time_spent: "0:10" }),
   row({ _iso: "2026-10-26", time_spent: "0:10", category: "Proofreading" }),
 ]).length, 2);
-check("different territories stay apart", consolidateRows([
+check("countries with nothing in common stay apart", consolidateRows([
   row({ _iso: "2026-10-26", time_spent: "0:10" }),
   row({ _iso: "2026-10-26", time_spent: "0:10", territory: "Germany" }),
 ]).length, 2);
@@ -143,3 +145,47 @@ const late = row({ _iso: "2026-10-28", time_spent: "0:22" });
 const later = row({ _iso: "2026-10-29", time_spent: "0:15" });
 const twice = consolidateRows([late, later]);
 check("two entries that each cross bill 30 each", twice[0].billedSeconds, 60 * 60);
+
+// Countries in common. Tuesday's 6 minutes on Denmark were banked; Thursday's
+// entry for Peru, Bulgaria and Denmark spends them (6 + 22 = 28, billed 30).
+check("a list of countries is read as one each", countriesOf({ territory: " Peru, Bulgaria ,Denmark; " }), ["Peru", "Bulgaria", "Denmark"]);
+const shared = consolidateRows([
+  row({ _iso: "2026-11-03", time_spent: "0:06", territory: "Denmark" }),
+  row({ _iso: "2026-11-05", time_spent: "0:22", territory: "Peru, Bulgaria, Denmark" }),
+]);
+check("a country in common shares the pot", shared.length, 1);
+check("...the banked minutes are spent", [shared[0].billedSeconds, shared[0].bankedSeconds], [30 * 60, 0]);
+check("...and the block names every country once", shared[0].territory, "Denmark, Peru, Bulgaria");
+check("no country in common: the banked minutes wait", consolidateRows([
+  row({ _iso: "2026-11-03", time_spent: "0:08", territory: "Denmark" }),
+  row({ _iso: "2026-11-05", time_spent: "0:25", territory: "Peru, Ukraine" }),
+]).map((g) => g.bankedSeconds).sort(), [0, 8 * 60]);
+check("an entry for two countries links the two", consolidateRows([
+  row({ _iso: "2026-11-02", time_spent: "0:10", territory: "Denmark" }),
+  row({ _iso: "2026-11-03", time_spent: "0:10", territory: "Peru" }),
+  row({ _iso: "2026-11-04", time_spent: "0:10", territory: "Peru, Denmark" }),
+]).length, 1);
+check("linked whatever order the entries come in", consolidateRows([
+  row({ _iso: "2026-11-04", time_spent: "0:10", territory: "Peru, Denmark" }),
+  row({ _iso: "2026-11-02", time_spent: "0:10", territory: "Denmark" }),
+  row({ _iso: "2026-11-03", time_spent: "0:10", territory: "Peru" }),
+]).length, 1);
+check("case and spacing don't matter", consolidateRows([
+  row({ _iso: "2026-11-02", time_spent: "0:10", territory: "south  korea" }),
+  row({ _iso: "2026-11-03", time_spent: "0:10", territory: "Japan, South Korea" }),
+]).length, 1);
+check("names aren't translated", consolidateRows([
+  row({ _iso: "2026-11-02", time_spent: "0:10", territory: "Turkey" }),
+  row({ _iso: "2026-11-03", time_spent: "0:10", territory: "Türkiye" }),
+]).length, 2);
+const unplaced = consolidateRows([
+  row({ _iso: "2026-11-02", time_spent: "0:10", territory: "" }),
+  row({ _iso: "2026-11-03", time_spent: "0:10", territory: null }),
+  row({ _iso: "2026-11-03", time_spent: "0:10", territory: "Peru" }),
+]);
+check("no country shares only with no country", unplaced.map((g) => g.rows.length).sort(), [1, 2]);
+check("each block has its own key", new Set(unplaced.map((g) => g.key)).size, 2);
+check("a shared country doesn't cross jobs", consolidateRows([
+  row({ _iso: "2026-11-02", time_spent: "0:06", territory: "Denmark" }),
+  row({ _iso: "2026-11-03", time_spent: "0:22", territory: "Peru, Denmark", job_number: "Other : XY025165, Print" }),
+]).length, 2);

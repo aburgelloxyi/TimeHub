@@ -12,7 +12,7 @@ import { useColumnResize } from "../../lib/useColumnResize";
 import { toIsoDate } from "../../utils/dates";
 import { fullName as cleanFullName } from "../../lib/formatName";
 import { clientKey, formatMoney, hourlyRate, indexRates } from "../../lib/rateCards";
-import { consolidateRows, incrementFor, blockKey, rowSeconds } from "../../lib/consolidate";
+import { consolidateRows, incrementFor, rowSeconds } from "../../lib/consolidate";
 import { FeedSelect } from "./fields";
 import { tokenMatch } from "../../utils/search";
 import { Rolling } from "../shared/motion";
@@ -370,7 +370,12 @@ export function JobsFeedSection() {
   const billableBlocks = useMemo(() => consolidated.filter(g => !g.banked), [consolidated]);
   // Every block, banked ones too, so a raw row can show the block it belongs to: how many entries, how much it
   // logged, and what the week is holding for it. Billable leaves a banked block out; the raw view still says it.
-  const blocksByKey = useMemo(() => new Map(consolidated.map(g => [g.key, g])), [consolidated]);
+  // Looked up by the row itself: which block a row is in depends on the other rows that share its countries.
+  const blockOfRow = useMemo(() => {
+    const m = new Map();
+    for (const g of consolidated) for (const r of g.rows) m.set(r, g);
+    return m;
+  }, [consolidated]);
   // Each entry's own step in its week's cycle: what it bills, what the pot holds after it, and whether it is
   // spending minutes banked on an earlier day.
   const cycleByRow = useMemo(() => {
@@ -379,7 +384,7 @@ export function JobsFeedSection() {
     return m;
   }, [consolidated]);
   const rawDetail = useCallback((e) => {
-    const b = blocksByKey.get(blockKey(e, { jobOf: feedJobNo }));
+    const b = blockOfRow.get(e);
     const step = cycleByRow.get(e.id);
     return {
       _entries: 1,
@@ -391,7 +396,7 @@ export function JobsFeedSection() {
       _blockNote: b ? blockNote(b) : "",
       _entryList: [[e.date || e._iso || "", step ? step.logged : rowSeconds(e)]],
     };
-  }, [blocksByKey, cycleByRow]);
+  }, [blockOfRow, cycleByRow]);
 
   const fmtDate = (d) => {
     if (!d) return "—";

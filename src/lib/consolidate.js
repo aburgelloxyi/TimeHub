@@ -1,9 +1,10 @@
 // Consolidating a week of logged rows into billable blocks.
 //
 // The Billable view in Project/Time shows the lines a timesheet would bill as
-// one: same person, job, item category and territory in the same week. Each
-// block bills through a running pot over the week (billCycle): minutes too few
-// to bill are banked and counted with the next entry, until Sunday.
+// one: same person, job and item category in the same week, and countries in
+// common (blocksOf). Each block bills through a running pot over the week
+// (billCycle): minutes too few to bill are banked and counted with the next
+// entry, until Sunday.
 //
 // Nothing here writes. The raw rows stay the record of what happened; this is
 // a second, derived view of them.
@@ -33,14 +34,50 @@ export function rowSeconds(row) {
   return parseTimeToSeconds(row.time_spent) + parseTimeToSeconds(row.additional_time);
 }
 
-// What makes two rows one block. Exported so a single raw row can ask which
-// block it belongs to, and whether that block was banked.
-export function blockKey(row, { jobOf = (row) => row.job_number } = {}) {
+// The countries an entry is for: "Peru, Bulgaria, Denmark" is three. Compared
+// without case or spacing; names aren't translated, so "Turkey" and "Türkiye"
+// stay two countries.
+export function countriesOf(row) {
+  return String(row.territory || "").split(/[,;]/).map((c) => c.trim()).filter(Boolean);
+}
+const countryKey = (c) => c.toLowerCase().replace(/\s+/g, " ");
+// Entries with no country share a pot with each other, as one more "country".
+const NO_COUNTRY = "\u0000none";
+
+// Rows that could share a pot: same person, job and item category in one week.
+function potKey(row, jobOf) {
   const week = weekStartIso(row._iso || row.work_date);
   const person = row.wrike_user_id || row._name || "";
-  const job = jobOf(row) || "";
   // \u0000 cannot occur in these fields, so it can't make two keys collide.
-  return [person, job, row.category || "", row.territory || "", week].join("\u0000");
+  return [person, jobOf(row) || "", row.category || "", week].join("\u0000");
+}
+
+// One pot's rows split into the chains that share a country: an entry for
+// "Peru, Bulgaria, Denmark" joins Tuesday's Denmark and Wednesday's Peru, so
+// all three bank together. Linked through any country, so which chain an
+// entry belongs to never depends on the order they're read in.
+export function chainsOf(rows) {
+  const parent = new Map();
+  const find = (k) => {
+    while (parent.get(k) !== k) { parent.set(k, parent.get(parent.get(k))); k = parent.get(k); }
+    return k;
+  };
+  const keysOf = (row) => {
+    const keys = countriesOf(row).map(countryKey);
+    return keys.length ? keys : [NO_COUNTRY];
+  };
+  for (const row of rows) {
+    const keys = keysOf(row);
+    for (const k of keys) if (!parent.has(k)) parent.set(k, k);
+    for (const k of keys.slice(1)) parent.set(find(k), find(keys[0]));
+  }
+  const chains = new Map();
+  for (const row of rows) {
+    const root = find(keysOf(row)[0]);
+    if (!chains.has(root)) chains.set(root, []);
+    chains.get(root).push(row);
+  }
+  return [...chains.values()];
 }
 
 // The week's cycle, per block: walk the entries in the order they were worked, adding each to a pot. The pot is
@@ -76,59 +113,54 @@ export function billCycle(rows, incrementMinutes) {
 // jobOf lets the caller group by the job code inside the label, so a rename
 // mid-week doesn't split one job into two groups.
 export function consolidateRows(rows, { jobOf = (row) => row.job_number } = {}) {
-  const groups = new Map();
-
+  const pots = new Map();
   for (const row of rows || []) {
-    const seconds = rowSeconds(row);
     // A row with no time has nothing to bill, and would otherwise appear as an
     // empty block in the view.
-    if (!(seconds > 0)) continue;
-
-    const key = blockKey(row, { jobOf });
-    const week = weekStartIso(row._iso || row.work_date);
-    const person = row.wrike_user_id || row._name || "";
-    const job = jobOf(row) || "";
-
-    let group = groups.get(key);
-    if (!group) {
-      group = {
-        key,
-        week,
-        person,
-        name: row._name || "",
-        job,
-        client: row.client || "",
-        category: row.category || "",
-        territory: row.territory || "",
-        incrementMinutes: incrementFor(row._increment),
-        rows: [],
-        seconds: 0,
-      };
-      groups.set(key, group);
-    }
-    group.rows.push(row);
-    group.seconds += seconds;
+    if (!(rowSeconds(row) > 0)) continue;
+    const key = potKey(row, jobOf);
+    if (!pots.has(key)) pots.set(key, []);
+    pots.get(key).push(row);
   }
 
-  return [...groups.values()]
-    .map((group) => {
+  const blocks = [];
+  for (const [key, potRows] of pots) {
+    for (const chain of chainsOf(potRows)) {
+      const first = chain[0];
+      // Every country in the chain, each once, in the order they first appear.
+      const countries = new Map();
+      for (const r of chain) for (const c of countriesOf(r)) if (!countries.has(countryKey(c))) countries.set(countryKey(c), c);
       // The week's own cycle decides both: what it bills, and what it is still holding. Never carried past Sunday.
-      const cycle = billCycle(group.rows, group.incrementMinutes);
-      return {
-        ...group,
+      const incrementMinutes = incrementFor(first._increment);
+      const seconds = chain.reduce((sum, r) => sum + rowSeconds(r), 0);
+      const cycle = billCycle(chain, incrementMinutes);
+      blocks.push({
+        key: [key, ...[...countries.keys()].sort()].join("\u0000"),
+        week: weekStartIso(first._iso || first.work_date),
+        person: first.wrike_user_id || first._name || "",
+        name: first._name || "",
+        job: jobOf(first) || "",
+        client: first.client || "",
+        category: first.category || "",
+        territory: [...countries.values()].join(", "),
+        incrementMinutes,
+        rows: chain,
+        seconds,
         billedSeconds: cycle.billed,
-        upliftSeconds: cycle.billed - group.seconds,
+        upliftSeconds: cycle.billed - seconds,
         banked: cycle.billed === 0,
         bankedSeconds: cycle.banked,
         cycle,
-      };
-    })
-    // Newest week first, then the order the raw table reads in.
-    .sort((a, b) =>
-      b.week.localeCompare(a.week) ||
-      a.name.localeCompare(b.name) ||
-      a.job.localeCompare(b.job) ||
-      a.category.localeCompare(b.category) ||
-      a.territory.localeCompare(b.territory)
-    );
+      });
+    }
+  }
+
+  // Newest week first, then the order the raw table reads in.
+  return blocks.sort((a, b) =>
+    b.week.localeCompare(a.week) ||
+    a.name.localeCompare(b.name) ||
+    a.job.localeCompare(b.job) ||
+    a.category.localeCompare(b.category) ||
+    a.territory.localeCompare(b.territory)
+  );
 }

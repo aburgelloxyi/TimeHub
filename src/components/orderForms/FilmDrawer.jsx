@@ -1,19 +1,20 @@
 import { useEffect, useRef } from "react";
 import { X } from "lucide-react";
-import { SECTIONS } from "../../lib/orderForms/sections";
+import { SECTIONS, UPLOADS } from "../../lib/orderForms/sections";
 import { extraSummary } from "../../lib/orderForms/extras";
 import { ON_COLOUR } from "./media";
 
 // The drawer that slides out from behind a film's poster with the kinds of work
-// the film has: International, Domestic, Titles, Launches, each counted, and
-// opened when there is something to open. Its backdrop is the film's own
+// the film has: International, Domestic, Titles, Launches, and Uploads where the
+// studio keeps an uploads sheet, each counted, and opened when there is
+// something to open. Its backdrop is the film's own
 // poster, blurred, so each film's drawer wears that film's colours.
 // StudioGrid moves the poster so the drawer always has room on its right.
 //
 // The outer box sits where the drawer ends up and clips; the panel inside slides
 // from behind the poster's edge (the poster overlaps the box by `tuck`), so it
 // never shows on the poster's far side on the way out.
-export default function FilmDrawer({ film, width, tuck, media, onOpen, onOpenExtra, onClose }) {
+export default function FilmDrawer({ film, width, tuck, media, onOpen, onOpenExtra, uploads = null, onOpenUploads, onClose }) {
   const first = useRef(null);
   useEffect(() => { first.current?.focus({ preventScroll: true }); }, []);
 
@@ -26,6 +27,10 @@ export default function FilmDrawer({ film, width, tuck, media, onOpen, onOpenExt
     const { count, detail } = extra ? extraSummary(extra) : { count: 0, detail: "" };
     return { ...s, count, detail, open: extra ? () => onOpenExtra(extra) : null, chips: false };
   });
+  // Uploads opens while its count isn't known yet: the page itself reads the sheet.
+  if (uploads) {
+    rows.push({ ...UPLOADS, count: uploads.count ?? "–", detail: "AM sheet", open: uploads.count === 0 ? null : onOpenUploads, chips: false });
+  }
   const firstOpen = rows.find((r) => r.open)?.id;
 
   return (

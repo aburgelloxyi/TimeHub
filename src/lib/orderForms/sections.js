@@ -11,3 +11,7 @@ export const SECTIONS = [
   { id: "titles", label: "Titles", unit: { one: "title", many: "titles" }, from: "#f43f5e", to: "#ec4899", fillFrom: "#be123c", fillTo: "#be185d" },
   { id: "launches", label: "Launches", unit: { one: "market", many: "markets" }, from: "#14b8a6", to: "#22c55e", fillFrom: "#0f766e", fillTo: "#15803d" },
 ];
+
+// Enterprise Uploads: a film's rows in its studio's uploads sheet (enterpriseUploads.js). Not one of SECTIONS,
+// which are read per film from Drive; it shows in the drawer only for a studio that keeps such a sheet.
+export const UPLOADS = { id: "uploads", label: "Uploads", unit: { one: "upload", many: "uploads" }, from: "#a78bfa", to: "#22d3ee", fillFrom: "#6d28d9", fillTo: "#0e7490" };

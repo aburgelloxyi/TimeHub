@@ -20,13 +20,13 @@ export const BRIEF_FIELDS = [
   { title: "Reporting", from: (o) => o.xyi?.reporting },
 ];
 
-// The account's field for each title in BRIEF_FIELDS. Wrike lets each space
+// The account's field for each title (BRIEF_FIELDS' unless given). Wrike lets each space
 // make its own field with a title another already has (there are two "File
 // path"s), so where a title is taken twice the one the market's existing
 // tasks use (`inUse`, field id → how many) is picked, else the first.
-export function resolveFields(accountFields, inUse = {}) {
+export function resolveFields(accountFields, inUse = {}, titles = BRIEF_FIELDS.map((f) => f.title)) {
   const out = {};
-  for (const { title } of BRIEF_FIELDS) {
+  for (const title of titles) {
     const same = (accountFields || []).filter((f) => norm(f.title) === norm(title));
     if (!same.length) continue;
     out[title] = same.reduce((best, f) => ((inUse[f.id] || 0) > (inUse[best.id] || 0) ? f : best), same[0]);

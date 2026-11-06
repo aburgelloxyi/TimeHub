@@ -5,8 +5,11 @@ import { CLIENTS } from "../../lib/orderForms/driveTree";
 import { posterKey, studioKey } from "../../lib/filmPosters";
 import FilmDrawer from "./FilmDrawer";
 import { AddTile, GhostTile, LoaderBar, useShelfLoader } from "./ShelfLoader";
-import { SECTIONS } from "../../lib/orderForms/sections";
+import { SECTIONS, UPLOADS } from "../../lib/orderForms/sections";
 import { placeExtras, sameFilmName } from "../../lib/orderForms/extras";
+import { UPLOAD_SHEETS, codeOf } from "../../lib/orderForms/enterpriseUploads";
+import { uploadRowsFor } from "../../lib/orderForms/wrikeUploads";
+import { googleConnected, onGoogleChange } from "../../lib/orderForms/googleApi";
 import { EXTRA_STUDIOS, filmKey, mediumOf, studioLabel as labelOf, studioOf } from "../../lib/orderForms/studios";
 
 // Client Orders' front door. With no studio open, the studios are large cards.
@@ -41,11 +44,12 @@ const initials = (title) => {
 const readableMarkets = (file) => (file.markets || []).filter((m) => !m.unreadable).length;
 
 // A poster's width, which a short shelf is sized from; the drawer's, and how far it tucks behind the poster.
-const POSTER_WIDTH = 380;
+// Tall enough that a drawer with Uploads as its fifth row still reads at a glance.
+const POSTER_WIDTH = 420;
 const DRAWER_WIDTH = 340;
 const DRAWER_TUCK = 14;
 
-export default function StudioGrid({ files, extras = [], codes = {}, studio, onStudio, posters, titleOf, staleness, delivered, onOpen, onOpenExtra, onLoaded, onBusy, onChooseFile, onSetPoster, onSetStudioImage, canEdit = false }) {
+export default function StudioGrid({ files, extras = [], codes = {}, studio, onStudio, posters, titleOf, staleness, delivered, onOpen, onOpenExtra, onOpenUploads, onLoaded, onBusy, onChooseFile, onSetPoster, onSetStudioImage, canEdit = false }) {
   const [revealed, setRevealed] = useState(null);
   const timer = useRef(null);
   // The film whose drawer is open, where its poster moves to, and where every other poster goes meanwhile.
@@ -125,6 +129,20 @@ export default function StudioGrid({ files, extras = [], codes = {}, studio, onS
     return () => watch?.disconnect();
   }, [current, studios.length]);
 
+  // The studio's uploads sheet, if it keeps one, read for how many rows each film has. Only the sheet: where each
+  // goes in Wrike is worked out when a film's uploads are opened. null until read, or when it can't be.
+  const sheetKept = !!(current && UPLOAD_SHEETS[current.id]);
+  const [uploadRows, setUploadRows] = useState(null);
+  const [googleOn, setGoogleOn] = useState(googleConnected);
+  useEffect(() => onGoogleChange(() => setGoogleOn(googleConnected())), []);
+  useEffect(() => {
+    setUploadRows(null);
+    if (!sheetKept || !googleOn) return undefined;
+    let live = true;
+    uploadRowsFor(current.id).then((rows) => { if (live) setUploadRows(rows); }).catch(() => {});
+    return () => { live = false; };
+  }, [current?.id, sheetKept, googleOn]);
+
   // The same film loaded twice (Motion and Print) is one card: one title, a button for each side, markets added up.
   const films = useMemo(() => {
     const by = new Map();
@@ -154,6 +172,21 @@ export default function StudioGrid({ files, extras = [], codes = {}, studio, onS
       }
       at.extras = { ...(at.extras || {}), [p.extra.section]: p.extra };
     }
+    // Its uploads count joins a film's card too; a film with nothing else here has a card for them alone.
+    const uploadsBy = new Map();
+    for (const u of uploadRows || []) {
+      const name = codes[codeOf(u.name)];
+      if (name) uploadsBy.set(name, (uploadsBy.get(name) || 0) + 1);
+    }
+    for (const [name, n] of uploadsBy) {
+      let at = [...by.values()].find((g) => g.titles.some((t) => sameFilmName(t, name)));
+      if (!at) {
+        const key = filmKey(name);
+        at = by.get(key) || { key, title: name, titles: [name], files: [], markets: 0, sides: {}, delivered: false, stale: null };
+        by.set(key, at);
+      }
+      at.uploads = (at.uploads || 0) + n;
+    }
     for (const at of by.values()) {
       // Motion leads, since that is the side a film opens on; Print is a switch away in the header.
       at.primary = at.sides.Motion?.file || at.files[0] || null;
@@ -164,7 +197,7 @@ export default function StudioGrid({ files, extras = [], codes = {}, studio, onS
       at.title = withPoster || (at.primary ? titleOf(at.primary) : at.title);
     }
     return [...by.values()];
-  }, [current, posters, titleOf, delivered, staleness]);
+  }, [current, posters, titleOf, delivered, staleness, uploadRows, codes]);
 
   // Opening a film gathers the others behind it like a deck of cards: each slides to where the chosen poster is
   // going, tilting, shrinking and fading, the nearest first and the farther ones a beat later and further, which
@@ -222,7 +255,7 @@ export default function StudioGrid({ files, extras = [], codes = {}, studio, onS
   // more than that are a fixed width, centred as a block, wrapping as a shelf when the row is full.
   const shelf = (() => {
     const count = films.length + tiles;
-    if (count > 4) return { gridTemplateColumns: "repeat(auto-fit, minmax(220px, 270px))", justifyContent: "center" };
+    if (count > 4) return { gridTemplateColumns: "repeat(auto-fit, minmax(240px, 300px))", justifyContent: "center" };
     const want = count * POSTER_WIDTH;
     const w = glide ? Math.min(glide.room, want) : want;
     const left = glide ? Math.max(0, Math.min(glide.x - w / 2, glide.room - w)) : 0;
@@ -373,7 +406,7 @@ export default function StudioGrid({ files, extras = [], codes = {}, studio, onS
                       <p className="mt-0.5 flex items-center gap-1.5 text-[11px] font-medium text-white/60">
                         {g.media.map((m) => <span key={m} className="h-1.5 w-1.5 rounded-full" style={{ background: MEDIA[m].colour }} />)}
                         <span>
-                          {g.files.length ? `${g.markets} ${g.markets === 1 ? "market" : "markets"}` : SECTIONS.filter((x) => g.extras?.[x.id]).map((x) => x.label).join(" · ")}
+                          {g.files.length ? `${g.markets} ${g.markets === 1 ? "market" : "markets"}` : [...SECTIONS.filter((x) => g.extras?.[x.id]).map((x) => x.label), ...(g.uploads ? [UPLOADS.label] : [])].join(" · ")}
                           {g.stale ? (g.stale.gone ? " · gone from Drive" : ` · ${g.stale.left} left`) : ""}
                         </span>
                       </p>
@@ -398,6 +431,9 @@ export default function StudioGrid({ files, extras = [], codes = {}, studio, onS
                     media={MEDIA}
                     onOpen={(file) => { setDrawer(null); onOpen(file.id); }}
                     onOpenExtra={(extra) => { setDrawer(null); onOpenExtra(extra.id); }}
+                    // A studio keeping an uploads sheet: the film's count, null while it's unknown (not read, or no Google).
+                    uploads={sheetKept && onOpenUploads ? { count: uploadRows ? g.uploads || 0 : null } : null}
+                    onOpenUploads={() => { setDrawer(null); onOpenUploads(current.id, g.title); }}
                     onClose={() => setDrawer(null)}
                   />
                 )}

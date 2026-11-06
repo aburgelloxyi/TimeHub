@@ -21,6 +21,8 @@ import { clientFor, driveStaleness } from "../lib/orderForms/driveTree";
 import StudioGrid from "./orderForms/StudioGrid";
 import DomesticView from "./orderForms/DomesticView";
 import LaunchView from "./orderForms/LaunchView";
+import EnterpriseUploads from "./orderForms/EnterpriseUploads";
+import { UPLOAD_SHEETS } from "../lib/orderForms/enterpriseUploads";
 import { parseDomestic } from "../lib/orderForms/domestic";
 import { parseLaunch } from "../lib/orderForms/launch";
 import { isOrderFile, placeExtras, sameFilmName } from "../lib/orderForms/extras";
@@ -242,7 +244,9 @@ export default function OrderForms({ wrikeData, isAdmin = false, filmCodes = {} 
   // A Domestic or Launch read open in its own view, with the film and studio it belongs to.
   const placed = useMemo(() => placeExtras(files, extras, filmCodes, filmTitleOf), [files, extras, filmCodes]);
   const openExtra = view.fileId ? placed.find((p) => p.extra.id === view.fileId) || null : null;
-  const opened = view.fileId && !openExtra ? file : null;
+  // A film's Enterprise Uploads open, from the sheet its studio keeps for them: #orderforms/uploads:studio/film.
+  const uploadsFor = view.market ? /^uploads:(.+)$/.exec(view.fileId || "")?.[1] || null : null;
+  const opened = view.fileId && !openExtra && !/^uploads:/.test(view.fileId) ? file : null;
   const toFront = (studioId) => {
     openStudio(studioId);
     setEditingSheets(false);
@@ -261,6 +265,9 @@ export default function OrderForms({ wrikeData, isAdmin = false, filmCodes = {} 
       && filmKey(filmTitleOf(f)) === filmKey(filmTitleOf(opened))) || null
     : null;
   const posterOf = (studioId, titles) => titles.map((t) => posters[posterKey(studioId, t)]).find(Boolean) || null;
+  const uploadsPoster = uploadsFor
+    ? posterOf(uploadsFor, [view.market, ...(files || []).filter((f) => sameFilmName(filmTitleOf(f), view.market)).map(filmTitleOf)])
+    : null;
   const filmPoster = opened
     ? posterOf(studioOf(opened), [filmTitleOf(opened), ...(twin ? [filmTitleOf(twin)] : [])])
     : openExtra
@@ -269,7 +276,18 @@ export default function OrderForms({ wrikeData, isAdmin = false, filmCodes = {} 
   const headerChip = "flex items-center gap-1 rounded-full bg-white/15 px-3 py-1 text-[11px] font-bold text-white ring-1 ring-white/25";
   const readableCount = opened ? (opened.markets || []).filter((m) => !m.unreadable).length : 0;
 
-  const header = openExtra
+  const header = uploadsFor
+    ? {
+        crumbs: [
+          { label: "Client Orders", onClick: () => toFront(null) },
+          { label: studioLabel(uploadsFor), onClick: () => toFront(uploadsFor) },
+        ],
+        title: `${view.market} · Uploads`,
+        subtitle: UPLOAD_SHEETS[uploadsFor]?.label || "Enterprise Uploads",
+        cover: uploadsPoster,
+        backdrop: uploadsPoster,
+      }
+    : openExtra
     ? {
         crumbs: [
           { label: "Client Orders", onClick: () => toFront(null) },
@@ -685,7 +703,11 @@ export default function OrderForms({ wrikeData, isAdmin = false, filmCodes = {} 
           ? <DomesticView file={openExtra.extra} film={openExtra.name} onRemove={() => dropFile(openExtra.extra)} />
           : <LaunchView file={openExtra.extra} film={openExtra.name} onRemove={() => dropFile(openExtra.extra)} />)}
 
-        {files && files.length > 0 && !partial && view.fileId && !openExtra && (
+        {uploadsFor && (
+          <EnterpriseUploads studioId={uploadsFor} film={view.market} codes={filmCodes} />
+        )}
+
+        {files && files.length > 0 && !partial && view.fileId && !openExtra && !/^uploads:/.test(view.fileId) && (
           <>
             {error && <p role="alert" className="text-sm font-medium text-rose-600">{error}</p>}
             {stalenessOf(file) && (() => {
@@ -752,6 +774,7 @@ export default function OrderForms({ wrikeData, isAdmin = false, filmCodes = {} 
             delivered={(f) => deliveredFilms.has(f.id)}
             onOpen={(id) => { setEditingSheets(false); go(id, null); }}
             onOpenExtra={(id) => go(id, null)}
+            onOpenUploads={(studioId, film) => go(`uploads:${studioId}`, film)}
             onLoaded={addFilm}
             onBusy={setGoogleBusy}
             onChooseFile={() => fileInputRef.current?.click()}

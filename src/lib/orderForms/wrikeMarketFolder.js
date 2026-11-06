@@ -20,7 +20,7 @@ const bareName = (market) => String(market || "").replace(/\s*\([^)]*\)\s*$/, ""
 // as given finds nothing, folders whose letters and digits are the same are
 // tried.
 const lettersOnly = (s) => String(s || "").toLowerCase().replace(/[^\p{L}\p{N}]+/gu, "");
-function findFilm(byId, filmTitle) {
+export function findFilm(byId, filmTitle) {
   const asGiven = findFilmLocation(byId, filmTitle);
   if (asGiven || !lettersOnly(filmTitle)) return asGiven;
   const spellings = [...new Set(Object.values(byId).filter((f) => lettersOnly(f.title) === lettersOnly(filmTitle)).map((f) => f.title))];
@@ -77,7 +77,7 @@ export function planMarketFolder(byId, { filmTitle, kind, marketName }) {
 // once and not once a market.
 let savedTree = { at: 0, read: null };
 const SAVED_FOR_MS = 2 * 60 * 1000;
-function savedFolders() {
+export function savedFolders() {
   if (!savedTree.read || Date.now() - savedTree.at > SAVED_FOR_MS) {
     savedTree = {
       at: Date.now(),

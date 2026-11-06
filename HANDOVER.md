@@ -192,7 +192,7 @@ lives. Fill in the owner column during handover.
 | `WRIKE_CLIENT_ID`, `SUPABASE_URL` | `wrangler.jsonc` (not secret) | |
 | Wrike OAuth app | Wrike, under the app's developer settings | |
 | Wrike webhook and its signing secret | registered from Admin; secret stored in Supabase | |
-| Supabase project | Supabase dashboard | |
+| Supabase project | Supabase dashboard, organisation XYi Design (moved there from Antonio's personal organisation on 6 November 2026; same project, address and keys) | XYi Design (owner `licencing@`, Antonio administrator) |
 | Supabase anon key | `src/lib/supabaseClient.js` (public by design) | |
 | GitHub repository | GitHub | |
 

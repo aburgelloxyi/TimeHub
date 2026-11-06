@@ -18,7 +18,7 @@ import GoogleButton from "./orderForms/GoogleButton";
 import { HoverLabel } from "./shared/FloatingCard";
 import { loadFilm, loadMarketOf, listFilms } from "../lib/orderForms/loadFilm";
 import { clientFor, driveStaleness } from "../lib/orderForms/driveTree";
-import StudioGrid from "./orderForms/StudioGrid";
+import StudioGrid, { StudioGridLoading } from "./orderForms/StudioGrid";
 import DomesticView from "./orderForms/DomesticView";
 import LaunchView from "./orderForms/LaunchView";
 import EnterpriseUploads from "./orderForms/EnterpriseUploads";
@@ -147,6 +147,9 @@ export default function OrderForms({ wrikeData, isAdmin = false, filmCodes = {} 
     else news.forEach((n) => notify(n.text, "info", n.fileId ? { action: { label: "View", onClick: () => goRef.current?.(n.fileId, n.market || null) } } : undefined));
   }, []);
   const goRef = useRef(null);
+  // Whether the front page was first shown in outline (StudioGridLoading), for StudioGrid's entrance.
+  const outlined = useRef(false);
+  if (files === null && !view.fileId) outlined.current = true;
 
   useEffect(() => { let live = true; loadPosters().then((p) => { if (live) setPosters(p); }); return () => { live = false; }; }, []);
 
@@ -682,7 +685,10 @@ export default function OrderForms({ wrikeData, isAdmin = false, filmCodes = {} 
       />
 
       <div className="max-w-[1800px] mx-auto px-4 sm:px-6 py-6 space-y-4">
-        {files === null && <div className="h-64 rounded-2xl bg-white/60 border border-[#dce4ec] animate-pulse" />}
+        {/* The front page in outline while the orders come in; a film opened directly waits in a plainer shape. */}
+        {files === null && (view.fileId
+          ? <div className="h-64 rounded-2xl bg-white/60 border border-[#dce4ec] animate-pulse" />
+          : <StudioGridLoading studio={studio} posters={posters} />)}
 
         {local && files?.length > 0 && (
           <Notice tone="info" icon={CloudOff} title="Showing this browser's last copy">
@@ -781,6 +787,8 @@ export default function OrderForms({ wrikeData, isAdmin = false, filmCodes = {} 
             onSetPoster={setFilmPoster}
             onSetStudioImage={setStudioImage}
             canEdit={isAdmin}
+            // Straight after the outline, the cards are already where it drew them: they don't arrive again.
+            entrance={!outlined.current}
           />
         )}
       </div>

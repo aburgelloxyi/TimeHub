@@ -49,7 +49,7 @@ const POSTER_WIDTH = 420;
 const DRAWER_WIDTH = 340;
 const DRAWER_TUCK = 14;
 
-export default function StudioGrid({ files, extras = [], codes = {}, studio, onStudio, posters, titleOf, staleness, delivered, onOpen, onOpenExtra, onOpenUploads, onLoaded, onBusy, onChooseFile, onSetPoster, onSetStudioImage, canEdit = false }) {
+export default function StudioGrid({ files, extras = [], codes = {}, studio, onStudio, posters, titleOf, staleness, delivered, onOpen, onOpenExtra, onOpenUploads, onLoaded, onBusy, onChooseFile, onSetPoster, onSetStudioImage, canEdit = false, entrance = true }) {
   const [revealed, setRevealed] = useState(null);
   const timer = useRef(null);
   // The film whose drawer is open, where its poster moves to, and where every other poster goes meanwhile.
@@ -281,7 +281,7 @@ export default function StudioGrid({ files, extras = [], codes = {}, studio, onS
             // Films, not order forms: a film loaded for Motion and for Print is one, and so is its Domestic read.
             const count = new Set([...s.films.map((f) => filmKey(titleOf(f))), ...s.extras.filter((p) => p.alone).map((p) => filmKey(p.name))]).size;
             return (
-              <div key={s.id} className="list-row-in group relative" style={{ "--i": Math.min(i, 6) }} onMouseEnter={() => rest(key)} onMouseLeave={leave}>
+              <div key={s.id} className={`${entrance ? "list-row-in " : ""}group relative`} style={{ "--i": Math.min(i, 6) }} onMouseEnter={() => rest(key)} onMouseLeave={leave}>
                 <button
                   ref={(el) => { tabs.current[s.id] = el; }}
                   role="tab"
@@ -474,6 +474,74 @@ export default function StudioGrid({ files, extras = [], codes = {}, studio, onS
       )}
       </div>
       )}
+    </div>
+  );
+}
+
+// What's said while the orders come in, a line at a time.
+const LOADING_LINES = ["Fetching the team's orders", "Taking the films off the shelf", "Hanging the posters"];
+
+// The front page while the orders load: the studio cards, already in their own colours, names and pictures (the
+// pictures come separately and usually first), and under the studio left open, the posters' places. The real
+// cards take the same places when the orders arrive (StudioGrid with entrance off), so nothing jumps.
+export function StudioGridLoading({ studio, posters = {} }) {
+  const ids = [...CLIENTS.map((c) => c.id), ...EXTRA_STUDIOS.map((s) => s.id)];
+  const open = ids.includes(studio) ? studio : null;
+  const at = open ? ids.indexOf(open) : -1;
+  const [line, setLine] = useState(0);
+  useEffect(() => {
+    const t = setInterval(() => setLine((n) => (n + 1) % LOADING_LINES.length), 1100);
+    return () => clearInterval(t);
+  }, []);
+  // Three posters' places, centred under the open card as far as the row allows, as the shelf is.
+  const shelf = `min(100%, ${3 * POSTER_WIDTH}px)`;
+  return (
+    <div className="space-y-6" aria-busy="true">
+      <div className={`studio-row relative ${open ? "has-open pb-3" : ""}`}>
+        <div className="grid gap-3 sm:gap-4" style={{ gridTemplateColumns: `repeat(${ids.length}, minmax(0, 1fr))` }}>
+          {ids.map((id, i) => {
+            const look = LOOK[id] || LOOK.dropped;
+            const image = posters[studioKey(id)];
+            return (
+              <div key={id} className="list-row-in" style={{ "--i": i }}>
+                <div className={`studio-tab relative block w-full overflow-hidden rounded-2xl ring-1 ring-black/5 ${id === open ? "is-active shadow-xl" : "shadow-sm"}`}>
+                  <div className={`studio-tab-art relative bg-gradient-to-br ${look.gradient} ${open ? "h-20 sm:h-24" : "h-48 sm:h-64 xl:h-72"}`}>
+                    {image && <img src={image} alt="" className="absolute inset-0 h-full w-full object-cover" onError={(e) => { e.currentTarget.style.display = "none"; }} />}
+                    <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/30 to-black/5" />
+                    <span className="loading-sheen absolute inset-0" style={{ animationDelay: `${250 + i * 160}ms` }} />
+                    <div className={`absolute inset-x-0 bottom-0 ${open ? "px-4 py-3" : "p-5 sm:p-6"}`}>
+                      <p className={`truncate font-display font-bold tracking-tight text-white ${open ? "text-base sm:text-xl" : "text-2xl sm:text-3xl"}`}>{labelOf(id)}</p>
+                      <span className="mt-1.5 block h-2.5 w-24 rounded-full bg-white/20" />
+                    </div>
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+
+      {open && (
+        <div
+          className="grid grid-cols-3 gap-6"
+          style={{ width: shelf, marginLeft: `clamp(0px, calc(${((at + 0.5) / ids.length) * 100}% - ${shelf} / 2), calc(100% - ${shelf}))` }}
+        >
+          {[0, 1, 2].map((n) => (
+            <div key={n} className="list-row-in relative aspect-[2/3] overflow-hidden rounded-xl shadow-sm ring-1 ring-black/5" style={{ "--i": n + ids.length }}>
+              <div className={`absolute inset-0 bg-gradient-to-br opacity-70 ${(LOOK[open] || LOOK.dropped).tint}`} />
+              <span className="loading-sheen absolute inset-0" style={{ animationDelay: `${450 + n * 160}ms` }} />
+              <div className="absolute inset-x-0 bottom-0 space-y-2 p-4 pb-5">
+                <span className="block h-4 w-3/4 rounded-full bg-white/25" />
+                <span className="block h-2.5 w-1/3 rounded-full bg-white/15" />
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      <p className="flex justify-center text-sm font-semibold text-[#768994]" role="status">
+        <span key={line} className="loading-line">{LOADING_LINES[line]}…</span>
+      </p>
     </div>
   );
 }

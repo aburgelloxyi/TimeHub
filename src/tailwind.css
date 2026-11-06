@@ -140,6 +140,18 @@
    pointed at. `translate`, not transform, so .press still adds its scale. The
    pill under the row glides to the open card; it only transitions once it has
    a place to glide from (.is-moving), so it appears in place. */
+/* Client Orders loading: the studio cards and the posters to come, in place, with a light passing over them, and
+   a line that changes as it goes. Starts a beat late, so a quick load shows the shapes and no movement. */
+@keyframes loadingSheen { from { background-position: 140% 0; } to { background-position: -40% 0; } }
+.loading-sheen {
+  background-image: linear-gradient(105deg, transparent 35%, rgb(255 255 255 / 0.16) 50%, transparent 65%);
+  background-size: 250% 100%;
+  background-position: 140% 0;
+  animation: loadingSheen 1.5s var(--ease-app) 250ms infinite;
+}
+@keyframes loadingLine { from { opacity: 0; transform: translateY(4px); } 15%, 85% { opacity: 1; transform: none; } to { opacity: 0; transform: translateY(-4px); } }
+.loading-line { animation: loadingLine 1.1s var(--ease-app) both; }
+
 .studio-tab { transition: translate 220ms var(--ease-app), box-shadow 220ms var(--ease-app), scale 140ms var(--ease-app); }
 .studio-row:not(.has-open) .studio-tab:hover { translate: 0 -4px; }
 .studio-tab.is-active { translate: 0 -2px; }
@@ -273,7 +285,7 @@ html.theme-revealing::view-transition-new(root) { animation: themeReveal 480ms v
 @media (prefers-reduced-motion: reduce) {
   .roll-up, .roll-down, .row-enter, .row-enter > td, .day-in-right, .day-in-left,
   .tick-draw path, .tick-pop, .pop-in, .list-row-in, .view-in, .view-fade, .bar-fill,
-  .billable-row, .billable-figure { animation: none; }
+  .billable-row, .billable-figure, .loading-sheen, .loading-line { animation: none; }
   .press, .press:active:not(:disabled) { transition: none; scale: 1; }
   .studio-tab, .studio-tab-art, .studio-tab-label, .studio-tab-title, .studio-tab-image, .studio-glide.is-moving,
   .add-poster, .add-poster-glow, .ghost-poster, .ghost-edge, .ghost-fill,

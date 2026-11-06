@@ -180,43 +180,52 @@ export function makeGoogleAuth({ parseCookies, setCookie, clearCookie, json, sbF
     return done("google_connected=1");
   }
 
-  // A valid access token for the page, renewed when it is close to lapsing.
+  // A person's row with an access token good for a while yet, renewed when it
+  // is close to lapsing. null when they haven't connected Google, or have
+  // revoked it (the row is removed then, so they're asked to connect again).
+  // Throws when Supabase or Google can't be reached.
+  async function freshRow(env, me) {
+    let row = await readRow(env, me);
+    if (!row) return null;
+    if (row.access_token && Date.parse(row.expires_at) - Date.now() > EARLY_MS) return row;
+    let renewed;
+    try {
+      renewed = await tokenRequest(env, { grant_type: "refresh_token", refresh_token: row.refresh_token });
+    } catch (err) {
+      if (err instanceof GoogleAuthInvalid) {
+        await deleteRow(env, me).catch(() => {});
+        return null;
+      }
+      throw err;
+    }
+    row = {
+      ...row,
+      access_token: renewed.access_token,
+      expires_at: new Date(Date.now() + Number(renewed.expires_in || 3600) * 1000).toISOString(),
+      scopes: renewed.scope || row.scopes,
+      // Google rarely sends a new one; keep the old otherwise.
+      refresh_token: renewed.refresh_token || row.refresh_token,
+      updated_at: new Date().toISOString(),
+    };
+    // A failed save costs nothing: Google's refresh tokens aren't used up,
+    // so the next request just renews again.
+    await saveRow(env, row).catch((err) => console.error("[google] save after refresh failed:", err.message));
+    return row;
+  }
+
+  // A valid access token for the page.
   async function token(request, env) {
     const me = await caller(request, env);
     if (me === undefined) return json({ error: "unavailable" }, { status: 503 });
     if (!me) return json({ error: "not_signed_in" }, { status: 401 });
     let row;
-    try { row = await readRow(env, me); } catch (err) {
-      console.error("[google] token read failed:", err.message);
+    try {
+      row = await freshRow(env, me);
+    } catch (err) {
+      console.error("[google] token failed:", err.message);
       return json({ error: "unavailable" }, { status: 503 });
     }
     if (!row) return json({ error: "google_not_connected" }, { status: 404 });
-    const fresh = row.access_token && Date.parse(row.expires_at) - Date.now() > EARLY_MS;
-    if (!fresh) {
-      let renewed;
-      try {
-        renewed = await tokenRequest(env, { grant_type: "refresh_token", refresh_token: row.refresh_token });
-      } catch (err) {
-        if (err instanceof GoogleAuthInvalid) {
-          await deleteRow(env, me).catch(() => {});
-          return json({ error: "google_not_connected" }, { status: 404 });
-        }
-        console.error("[google] refresh failed:", err.message);
-        return json({ error: "unavailable" }, { status: 503 });
-      }
-      row = {
-        ...row,
-        access_token: renewed.access_token,
-        expires_at: new Date(Date.now() + Number(renewed.expires_in || 3600) * 1000).toISOString(),
-        scopes: renewed.scope || row.scopes,
-        // Google rarely sends a new one; keep the old otherwise.
-        refresh_token: renewed.refresh_token || row.refresh_token,
-        updated_at: new Date().toISOString(),
-      };
-      // A failed save costs nothing: Google's refresh tokens aren't used up,
-      // so the next request just renews again.
-      await saveRow(env, row).catch((err) => console.error("[google] save after refresh failed:", err.message));
-    }
     return json(
       { accessToken: row.access_token, expiresAt: row.expires_at, scopes: row.scopes, email: row.google_email },
       { headers: { "Cache-Control": "no-store" } }
@@ -255,8 +264,9 @@ export function makeGoogleAuth({ parseCookies, setCookie, clearCookie, json, sbF
     return json({ ok: true });
   }
 
-  // Routes this module answers, or null for the rest of the Worker.
-  return async function handleGoogle(request, url, env, ctx, isHttps) {
+  // Routes this module answers, or null for the rest of the Worker. `freshRow`
+  // rides along for work the Worker does on someone's behalf (uploadsSweep.js).
+  const handleGoogle = async function handleGoogle(request, url, env, ctx, isHttps) {
     const p = url.pathname;
     if (p === "/api/google/oauth/start") return start(request, url, env, isHttps);
     if (p === "/api/google/oauth/callback") return callback(request, url, env);
@@ -265,4 +275,6 @@ export function makeGoogleAuth({ parseCookies, setCookie, clearCookie, json, sbF
     if (p === "/api/google/token") return token(request, env);
     return null;
   };
+  handleGoogle.freshRow = freshRow;
+  return handleGoogle;
 }

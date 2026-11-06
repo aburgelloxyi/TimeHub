@@ -13,17 +13,11 @@ import { planMarketFolderLive } from "./wrikeMarketFolder";
 import { orderKey } from "./wrikeMatch";
 import { artworkChosen } from "./artwork";
 import { setTaskDescription } from "./wrikeBrief";
+import { tidyTaskName } from "./taskName";
 
 const titleOf = (order) => String(order.xyi?.title || order.deliveryName || "").trim();
 
-// The task name as a PM would type it from the sheet's: the sheet's formula
-// leaves a doubled underscore where a field is empty (no site name gives
-// "EBZR_INTL__DFOH__1920x1080px_10s_ZA"), and a site name can have spaces.
-// Spaces become underscores, runs of them become one, and none is left at
-// either end. Matching ignores the same differences (taskKey), so a task
-// named either way is still found.
-export const tidyTaskName = (name) =>
-  String(name || "").trim().replace(/\s+/g, "_").replace(/_+/g, "_").replace(/^_+|_+$/g, "");
+export { tidyTaskName } from "./taskName";
 
 // An order goes to Wrike with its artwork chosen: the artwork is part of the
 // task's name and of what the studio works from, and an order without one (or

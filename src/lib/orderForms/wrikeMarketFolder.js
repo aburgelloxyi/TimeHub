@@ -6,30 +6,17 @@
 // would be made; creating happens after someone confirms that.
 
 import {
-  fetchAllFolders, findFilmLocation, collectSubtreeIds, discoverDriveLinkField,
+  fetchAllFolders, collectSubtreeIds, discoverDriveLinkField,
   createFolderIn, setFolderField, fetchFolderPermalink,
 } from "../wrikeCampaign";
 import { marketFlag } from "../../components/orderForms/format";
 import { supabase } from "../supabaseClient";
+import { findFilm } from "./wrikeFilm";
 
 const norm = (s) => String(s || "").toLowerCase().replace(/[^\p{L}\p{N}]+/gu, " ").trim();
 const bareName = (market) => String(market || "").replace(/\s*\([^)]*\)\s*$/, "").trim();
 
-// The film in Wrike. Its folder there isn't always punctuated the way the
-// order sheets name it ("Focker In-Law" for "Focker In Law"), so when the name
-// as given finds nothing, folders whose letters and digits are the same are
-// tried.
-const lettersOnly = (s) => String(s || "").toLowerCase().replace(/[^\p{L}\p{N}]+/gu, "");
-export function findFilm(byId, filmTitle) {
-  const asGiven = findFilmLocation(byId, filmTitle);
-  if (asGiven || !lettersOnly(filmTitle)) return asGiven;
-  const spellings = [...new Set(Object.values(byId).filter((f) => lettersOnly(f.title) === lettersOnly(filmTitle)).map((f) => f.title))];
-  for (const title of spellings) {
-    const found = findFilmLocation(byId, title);
-    if (found) return found;
-  }
-  return null;
-}
+export { findFilm } from "./wrikeFilm";
 
 const MARKETS_FOLDER = { motion: /_INTL_DIGITAL_Outdoor_Campaign_Markets$/i, print: /_INTL_PRINT_Outdoor_Campaign_Markets$/i };
 

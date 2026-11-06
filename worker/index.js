@@ -1,6 +1,7 @@
 import { isBoardTask, isStale } from "../src/lib/jobFilter";
 import { folderPatchPlan, folderEntries, parentsToRead } from "../src/lib/folderMirror";
 import { makeGoogleAuth } from "./googleAuth.js";
+import { makeUploadsSweep } from "./uploadsSweep.js";
 import { FILM_MAPPINGS } from "../src/constants";
 // Cloudflare Worker: Wrike OAuth (authorization code flow) + API proxy.
 //
@@ -56,6 +57,21 @@ const handleGoogle = makeGoogleAuth({
     if (!session) return null;
     const row = await getTokenRowBySession(env, session);
     return row?.wrike_user_id || null;
+  },
+});
+
+// Enterprise Uploads made every half hour as one person (uploadsSweep.js): their Google row as the Google
+// routes keep it, and their freshest Wrike session, renewed through refreshTokenRow so it can't race their browser.
+const sweepUploads = makeUploadsSweep({
+  sbFetch,
+  filmCodes: panelFilmCodes,
+  googleRowFor: (env, wrikeUserId) => handleGoogle.freshRow(env, wrikeUserId),
+  wrikeRowFor: async (env, wrikeUserId) => {
+    const res = await sbFetch(env, `/wrike_oauth_tokens?wrike_user_id=eq.${encodeURIComponent(wrikeUserId)}&select=*&order=expires_at.desc&limit=1`);
+    if (!res.ok) throw new Error(`wrike token read ${res.status}`);
+    const row = ((await res.json()) || [])[0];
+    if (!row) return null;
+    return new Date(row.expires_at).getTime() - Date.now() < 60_000 ? refreshTokenRow(env, row) : row;
   },
 });
 
@@ -247,6 +263,15 @@ export default {
     }
 
     return env.ASSETS.fetch(request);
+  },
+
+  // The half-hourly cron (wrangler.jsonc): Enterprise Uploads into Wrike.
+  async scheduled(event, env, ctx) {
+    ctx.waitUntil(
+      sweepUploads(env)
+        .then((result) => console.log("[uploads] sweep", JSON.stringify(result)))
+        .catch((err) => console.error("[uploads] sweep failed:", err.message))
+    );
   },
 };
 

@@ -8,8 +8,10 @@ import {
   fetchAllFolders, fetchTasksUnderFolder, discoverCustomStatus, createTaskIn, fetchCustomFields, fetchFolderPermalink,
 } from "../wrikeCampaign";
 import { savedFolders } from "./wrikeMarketFolder";
-import { resolveFields, fieldUse, fieldValue } from "./wrikeFields";
-import { UPLOAD_FIELDS, UPLOAD_SHEETS, findUploadsFolder, isDomestic, planUploads, readUploads, taskKey, codeOf } from "./enterpriseUploads";
+import { resolveFields, fieldUse } from "./wrikeFields";
+import { UPLOAD_FIELDS, UPLOAD_SHEETS, findUploadsFolder, planUploads, readUploads, taskKey, codeOf, uploadFields } from "./enterpriseUploads";
+
+export { uploadFields };
 import { sameFilmName } from "./extras";
 
 const SHEETS = "https://sheets.googleapis.com/v4/spreadsheets";
@@ -51,12 +53,8 @@ export async function readUploadsSheet(sheetId, codes, film) {
   if (!all.ok) return { ...all, tab: sheet.tab };
   const read = { ...all, uploads: uploadsOfFilm(all.uploads, codes, film) };
 
-  const wanted = [...new Map(read.uploads.map((u) => [`${codes[codeOf(u.name)] || ""}|${isDomestic(u.name)}`, u])).values()]
-    .filter((u) => codes[codeOf(u.name)]);
-  const placesFrom = (byId) => new Map(wanted.map((u) => {
-    const film = codes[codeOf(u.name)];
-    return [`${film}|${isDomestic(u.name)}`, findUploadsFolder(byId, film, { domestic: isDomestic(u.name) })];
-  }));
+  const films = [...new Set(read.uploads.map((u) => codes[codeOf(u.name)]).filter(Boolean))];
+  const placesFrom = (byId) => new Map(films.map((film) => [film, findUploadsFolder(byId, film)]));
   const saved = await savedFolders();
   let places = saved ? placesFrom(saved) : null;
   if (!places || [...places.values()].some((p) => !p.ok)) places = placesFrom(await fetchAllFolders());
@@ -73,7 +71,7 @@ export async function readUploadsSheet(sheetId, codes, film) {
 
   const uploads = planUploads(read.uploads, {
     codes,
-    placeOf: (film, domestic) => places.get(`${film}|${domestic}`),
+    placeOf: (film) => places.get(film),
     existing: (id) => existing.get(id) || new Map(),
   });
   return {
@@ -85,21 +83,6 @@ export async function readUploadsSheet(sheetId, codes, film) {
     status,
     fields: resolveFields(accountFields, fieldUse(tasksByFolder.flat()), UPLOAD_FIELDS.map((f) => f.title)),
   };
-}
-
-// The custom fields one upload's task is given, and any value a field refused.
-export function uploadFields(upload, fields) {
-  const set = [];
-  const refused = [];
-  for (const spec of UPLOAD_FIELDS) {
-    const field = fields[spec.title];
-    if (!field) continue;
-    const got = fieldValue(field, spec.from(upload, upload.place));
-    if (!got) continue;
-    if (got.refused) refused.push(`${spec.title}: ${got.refused}`);
-    else set.push({ id: field.id, value: got.value });
-  }
-  return { set, refused };
 }
 
 // Makes a task for each upload, one at a time, in its folder, due on its date.

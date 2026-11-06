@@ -4,13 +4,14 @@
 // sheet's other columns (Market Deadline, Department…) fill its fields.
 //
 // The film is the code the name starts with (FIL_…, EBZR_…), looked up in the
-// film codes. A row whose name says _DOM_ goes to the domestic side's folder.
-// Pure; wrikeUploads.js does the reading and writing.
+// film codes; every row of a film goes to its one uploads folder, domestic
+// (_DOM_) or not. Pure; wrikeUploads.js does the reading and writing.
 
 import { collectSubtreeIds } from "../wrikeCampaign";
-import { findFilm } from "./wrikeMarketFolder";
+import { findFilm } from "./wrikeFilm";
 import { sheetDate, sheetText } from "./domestic";
-import { tidyTaskName } from "./wrikeBatch";
+import { tidyTaskName } from "./taskName";
+import { fieldValue } from "./wrikeFields";
 
 // The studios that have a sheet, and where it is.
 export const UPLOAD_SHEETS = {
@@ -91,35 +92,26 @@ export function readUploads(values) {
   return { ok: true, columns, uploads };
 }
 
-// The film code a name starts with, and whether it's for the domestic side.
+// The film code a name starts with.
 export const codeOf = (name) => String(name || "").split("_")[0].toUpperCase();
-export const isDomestic = (name) => /(^|_)DOM(_|$)/i.test(String(name || ""));
 
 // Matching a task by name: case and runs of underscores or spaces don't count.
 export const taskKey = (title) => tidyTaskName(title).toLowerCase();
 
 const UPLOADS_FOLDER = /_Enterprise_Daily_Uploads$/i;
 
-// A film's uploads folder in the Wrike tree. Its INT and DOM sides are told
-// apart by the folder above (INT_Digital, DOM_Digital) or the folder's own
-// name; one on neither counts as INT. { ok, film, folder, jobNumber, jobCode }
-// or { ok: false, reason } when there isn't exactly one.
-export function findUploadsFolder(byId, filmTitle, { domestic = false } = {}) {
+// A film's uploads folder in the Wrike tree. { ok, film, folder, jobNumber,
+// jobCode } or { ok: false, reason } when there isn't exactly one.
+export function findUploadsFolder(byId, filmTitle) {
   const location = findFilm(byId, filmTitle);
   if (!location) return { ok: false, reason: `No film called "${filmTitle}" was found in Wrike.` };
   const film = location.filmProject;
-  const ids = collectSubtreeIds(byId, film.id);
-  const parentOf = {};
-  for (const id of ids) for (const child of byId[id]?.childIds || []) parentOf[child] = byId[id];
-  const side = (f) => (/(^|_)DOM(_|$)/i.test(f.title) || /^DOM/i.test(parentOf[f.id]?.title || "") ? "dom" : "int");
-  const found = [...ids].map((id) => byId[id]).filter((f) => f && UPLOADS_FOLDER.test(String(f.title || "").trim()));
-  const wanted = found.filter((f) => side(f) === (domestic ? "dom" : "int"));
-  const kind = domestic ? "domestic " : "";
-  if (!wanted.length) return { ok: false, reason: `${film.title} has no ${kind}Enterprise_Daily_Uploads folder in Wrike.` };
-  if (wanted.length > 1) {
-    return { ok: false, reason: `${film.title} has ${wanted.length} ${kind}Enterprise_Daily_Uploads folders (${wanted.map((f) => f.title).join(", ")}), so it isn't clear which.` };
+  const found = [...collectSubtreeIds(byId, film.id)].map((id) => byId[id]).filter((f) => f && UPLOADS_FOLDER.test(String(f.title || "").trim()));
+  if (!found.length) return { ok: false, reason: `${film.title} has no Enterprise_Daily_Uploads folder in Wrike.` };
+  if (found.length > 1) {
+    return { ok: false, reason: `${film.title} has ${found.length} Enterprise_Daily_Uploads folders (${found.map((f) => f.title).join(", ")}), so it isn't clear which.` };
   }
-  const folder = wanted[0];
+  const folder = found[0];
   return {
     ok: true,
     film: film.title,
@@ -130,7 +122,7 @@ export function findUploadsFolder(byId, filmTitle, { domestic = false } = {}) {
 }
 
 // Where each row would go, and whether it can. `codes` is the film-code map,
-// `placeOf(film, domestic)` findUploadsFolder's answer, `existing(folderId)`
+// `placeOf(film)` findUploadsFolder's answer, `existing(folderId)`
 // the tasks already in a folder as Map(taskKey → task). Each upload comes back
 // with { code, film, place, state, reason, task }: state is "in-wrike" (with
 // the task), "ready", or "blocked" (with the reason).
@@ -144,10 +136,25 @@ export function planUploads(uploads, { codes = {}, placeOf, existing = () => new
     if (twin) return { ...base, state: "blocked", reason: `Same name as row ${twin}.` };
     seen.set(taskKey(u.name), u.row);
     if (!film) return { ...base, state: "blocked", reason: `"${code}" isn't a known film code. Add it in Film Codes.` };
-    const place = placeOf(film, isDomestic(u.name));
+    const place = placeOf(film);
     if (!place?.ok) return { ...base, state: "blocked", reason: place?.reason || "Its folder couldn't be found." };
     const task = existing(place.folder.id).get(taskKey(u.name)) || null;
     if (task) return { ...base, place, task, state: "in-wrike" };
     return { ...base, place, state: "ready", reason: u.dateText && !u.date ? `"${u.dateText}" isn't a date, so it has no due date.` : "" };
   });
+}
+
+// The custom fields one upload's task is given ({ id, value }), and any value a field refused.
+export function uploadFields(upload, fields) {
+  const set = [];
+  const refused = [];
+  for (const spec of UPLOAD_FIELDS) {
+    const field = fields?.[spec.title];
+    if (!field) continue;
+    const got = fieldValue(field, spec.from(upload, upload.place));
+    if (!got) continue;
+    if (got.refused) refused.push(`${spec.title}: ${got.refused}`);
+    else set.push({ id: field.id, value: got.value });
+  }
+  return { set, refused };
 }

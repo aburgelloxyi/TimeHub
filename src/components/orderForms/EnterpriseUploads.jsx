@@ -4,15 +4,15 @@ import SectionBand from "./SectionBand";
 import Notice, { noticeButton } from "./Notice";
 import { googleMessage } from "./GoogleSource";
 import { connectGoogle, connectGoogleForWriting, googleCanWrite, googleConnected, onGoogleChange } from "../../lib/orderForms/googleApi";
-import { UPLOAD_SHEETS, isDomestic } from "../../lib/orderForms/enterpriseUploads";
+import { UPLOAD_SHEETS } from "../../lib/orderForms/enterpriseUploads";
 import { createUploadTasks, readUploadsSheet, uploadFields, writeJobNumbers } from "../../lib/orderForms/wrikeUploads";
 import { UPLOADS } from "../../lib/orderForms/sections";
 
 // A film's Enterprise Uploads: its rows in the studio's uploads sheet, as the
-// plain tasks they become in its Enterprise_Daily_Uploads folder, International
-// and Domestic apart since each has its own folder. Each row says whether it's
-// there already; "Create" makes what's ready, then puts the job number in the
-// sheet. Nothing is made until it's asked for.
+// plain tasks they become in its Enterprise_Daily_Uploads folder. Each row says whether it's
+// there already. The Worker makes the ready ones every half hour
+// (worker/uploadsSweep.js); "Create" does it now, then puts the job number in
+// the sheet, as the sweep does.
 
 const LOOK = UPLOADS;
 // The dark themes repaint bg-white and bg-slate-100 (Timesheeter.css), so the band's white button is written as
@@ -78,7 +78,7 @@ function Side({ group, permalink, fields, index, onCreate, busy }) {
     <section className="list-row-in overflow-hidden rounded-2xl border border-[#dce4ec] bg-white shadow-sm" style={{ "--i": Math.min(index, 8) }}>
       <header className="flex flex-wrap items-center gap-4 border-b border-[#dce4ec] px-4 py-3">
         <div className="mr-auto min-w-0">
-          <p className="font-display text-xl font-bold tracking-tight text-[#122027]">{group.domestic ? "Domestic" : "International"}</p>
+          <p className="font-display text-xl font-bold tracking-tight text-[#122027]">{group.title}</p>
       {place ? (
             <p className="mt-0.5 flex flex-wrap items-center gap-2 text-xs text-[#768994]">
               <span className="rounded-full px-2 py-0.5 text-[11px] font-bold text-white" style={{ backgroundImage: GRADIENT }}>{place.jobCode || "No job number"}</span>
@@ -131,10 +131,11 @@ export default function EnterpriseUploads({ studioId, film, codes }) {
   useEffect(() => { read(); }, [read, connected]);
 
   const uploads = useMemo(() => state.uploads || [], [state.uploads]);
-  // International and Domestic rows go to different folders, so each is a group of its own.
-  const groups = useMemo(() => [false, true]
-    .map((domestic) => ({ key: domestic ? "dom" : "int", domestic, uploads: uploads.filter((u) => isDomestic(u.name) === domestic) }))
-    .filter((g) => g.uploads.length), [uploads]);
+  // The rows that have a folder, under it, and any that don't, apart, saying why.
+  const groups = useMemo(() => [
+    { key: "placed", title: "Enterprise Uploads", uploads: uploads.filter((u) => u.place) },
+    { key: "unplaced", title: "Not placed", uploads: uploads.filter((u) => !u.place) },
+  ].filter((g) => g.uploads.length), [uploads]);
   const count = (s) => uploads.filter((u) => u.state === s).length;
   const ready = uploads.filter((u) => u.state === "ready");
 
@@ -164,7 +165,7 @@ export default function EnterpriseUploads({ studioId, film, codes }) {
         title="Ready for Wrike"
         unit={state.uploads ? `of ${uploads.length} ${uploads.length === 1 ? "upload" : "uploads"} in the AMs' sheet` : "Reading the sheet"}
         facts={state.uploads ? [`${count("in-wrike")} in Wrike`, ...(count("blocked") ? [`${count("blocked")} can't be placed`] : [])] : []}
-        fileName="A plain task per row"
+        fileName="Ready rows go into Wrike by themselves every half hour"
         loadedAt={state.at}
       >
         <div className="flex flex-wrap items-center gap-2">

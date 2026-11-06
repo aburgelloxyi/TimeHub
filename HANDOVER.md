@@ -50,6 +50,15 @@ jobs are set up in Wrike. It also has a team board for each department, notes
 - **Wrike** is the source of truth for work. See WRIKE.md.
 - **The bookmarklet** (`bookmarklet.src.js`, built into `bookmarklet.txt`)
   runs on the company timesheet site, not in TimeHub.
+- **The half-hourly sweep** (`worker/uploadsSweep.js`, the cron in
+  `wrangler.jsonc`) turns the rows of Paramount's Digital Enterprise Uploads
+  sheet into tasks in each film's `…_Enterprise_Daily_Uploads` folder. It runs
+  as the person named in `UPLOADS_RUN_AS` (James), with the Wrike and Google
+  connections they made in TimeHub, so the tasks show as made by them. A row
+  is done once its Job Number cell is filled: the sweep writes it after making
+  the task, and a row with one is never looked at again. Film codes say which
+  film a row is for (Film Codes in the Canvas). The same rows have a Create
+  button on each film's Uploads page for anyone who won't wait.
 
 
 ## Finding your way around the code
@@ -235,6 +244,8 @@ what keeps the orders themselves private; the Control Centre follows it too.
 - **Worker logs.** Observability is switched on in `wrangler.jsonc`, so the
   Worker's logs are in the Cloudflare dashboard under the `timesheeter` Worker.
   Useful things to search for: `[webhook]` for webhook problems,
+  `[uploads]` for the Enterprise Uploads sweep (each run logs what it made,
+  what it couldn't place and why, or why it didn't run),
   `token_refresh_failed` for people being signed out of Wrike, and `503` for
   Supabase being slow.
 - **Errors in the browser** aren't collected anywhere yet. If something breaks

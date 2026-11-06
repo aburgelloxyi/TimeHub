@@ -173,9 +173,16 @@ site is serving that commit.
 setup is in DEPLOY.md.
 
 The other two copies of the repository (`aburgelloxyi/TimeHub` and
-`xyidesign/timehub`) aren't connected to Cloudflare as far as anyone has
-checked, so pushing there doesn't deploy. Confirm that under Workers →
-timesheeter → Settings → Build before relying on it.
+`xyidesign/timehub`) aren't connected to Cloudflare, so pushing there doesn't
+deploy. All three hold the same history: push with `git pushall` (an alias in
+this clone that pushes the branch to every remote), never a plain `git push`,
+which only reaches `origin`. Each remote's address names the GitHub account it
+needs (`aburgello@` for `origin`, `aburgelloxyi@` for the other two), so the
+right login is used whichever account `gh` has active.
+
+`xyidesign/timehub` (private, the company's organisation) is to become the real
+one, deployed from by the company's Cloudflare account; see "Moving to the
+company" in the accounts section.
 
 
 ## Accounts, secrets and configuration
@@ -199,6 +206,18 @@ lives. Fill in the owner column during handover.
 The Supabase anon key is meant to be public. It's in every visitor's browser
 anyway. That only holds up if the database's access rules (row level security,
 in `schema.sql`) are what actually protect the data. See "Known issues" below.
+
+**Moving to the company** (November 2026). The Supabase project is in the XYi
+Design organisation (done 6 November). Next: the company's Cloudflare account
+deploys from `xyidesign/timehub` through Workers Builds, with its own copy of the
+four secrets, while the personal account's `timesheeter` Worker keeps deploying
+the same code, so the old address stays up for good: Reviewer links in Wrike
+comments and older app builds point at it. The apps (XYi in Motion, the Reviewer,
+the Toolbox) move to the new address by themselves once it answers as TimeHub,
+and fall back to the old one. Planned domain `portal.xyi.com`, but `xyi.com`'s
+DNS is at Network Solutions, and a Worker can only be put on a domain whose DNS
+Cloudflare runs. Only one Wrike webhook at a time: register it on the new
+address, then remove the old one.
 
 **Who can open Administration** is the "Admin" button on each person's row in
 Administration › People (`profiles.is_admin`). Only an administrator can change
@@ -271,12 +290,12 @@ These were found during a review in October 2026 and haven't been resolved.
    Step one is in: on sign-in, the Worker's `/api/auth/link` records each
    person's Wrike id on their database account, from their Wrike login. The
    access rules switch over to it once everyone active has been recorded.
-2. **The repository is public** and contains the Supabase URL and anon key.
-   Decide whether it should be private, and in a company-owned GitHub
-   organisation.
+2. **One copy of the repository is public**: `aburgelloxyi/TimeHub`, with the
+   Supabase URL and anon key. `aburgello/Timesheeter` and `xyidesign/timehub`
+   are private. Archive or privatise the public one once nothing relies on it.
 3. **There are three copies of the repository** (`aburgelloxyi/TimeHub`,
-   `xyidesign/timehub`, `aburgello/Timesheeter`) with different histories.
-   Choose one as the real one and archive or mirror the others.
+   `xyidesign/timehub`, `aburgello/Timesheeter`), kept identical by
+   `git pushall`. `xyidesign/timehub` is to be the real one.
 4. **No error reporting from browsers** (see above).
 5. **The Toolbox panel borrows a person's Wrike login**: whichever connected
    person's token was refreshed most recently. If nobody stays connected, the

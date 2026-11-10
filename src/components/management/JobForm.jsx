@@ -7,6 +7,8 @@ import { useState, useEffect, useMemo } from "react";
 import { Check, RefreshCw, ChevronRight, X } from "lucide-react";
 import { selectAll } from "../../lib/supabaseClient";
 import { PRINT_DIGITAL, buildJobLabel, parseJobLabel } from "../../lib/jobBook";
+import { highestCode, codeFor } from "../../lib/jobSetup";
+import { scanSavedTree } from "../../hooks/useWrikeJobCheck";
 import { isoToday } from "../../utils/dates";
 import DateField from "../shared/DateField";
 import { JOB_STATUSES } from "./constants";
@@ -53,21 +55,27 @@ const CLIENT_PIN_RANK = (name) => {
 const DESC_GROUP_ORDER = ["AUS", "UK", "DOM", "INT", "IRE", "XYi"];
 const PD_COLOR_MAP = { Digital: "bg-cyan-600 border-cyan-600", Print: "bg-orange-500 border-orange-500", Both: "bg-violet-600 border-violet-600" };
 const STATUS_COLOR_MAP = { Inactive: "bg-slate-400 border-slate-400", Active: "bg-[#1cc1a5] border-[#1cc1a5]", Closed: "bg-[#122027] border-[#122027]" };
-// Allocate the next sequential XY code. selectAll is essential here, not just
-// tidier: this scans for the HIGHEST code in use, and a truncated read returns a
-// max that's thousands too low — every allocation then collides with an existing
-// job number. Reads jobs AND tasks, since either can carry the newest code.
+// The next job number: one past the highest in use anywhere. selectAll is
+// essential, not just tidier: a truncated read gives a highest that is
+// thousands too low, and every new number then collides.
+//
+// Three places can hold the newest number: the Job Book, a timesheet row, and
+// a Wrike folder. The last matters when a job is removed from the book while
+// its folder still carries the number, or someone numbers a folder by hand in
+// Wrike. It is read from the saved folder list, and left out if that can't be
+// read.
 export async function nextJobCode() {
-  const [jobRows, taskRows] = await Promise.all([
+  const [jobRows, taskRows, wrikeCodes] = await Promise.all([
     selectAll("jobs", "job_number"),
     selectAll("tasks", "job_number"),
+    scanSavedTree().then((s) => s.candidates.map((c) => c.code)).catch(() => []),
   ]);
-  let maxNum = 0;
-  [...jobRows, ...taskRows].forEach(r => {
-    const m = (r.job_number || "").match(/XY(\d+)/);
-    if (m) maxNum = Math.max(maxNum, parseInt(m[1], 10));
-  });
-  return `XY${String(maxNum + 1).padStart(6, "0")}`;
+  const highest = Math.max(
+    highestCode(jobRows.map((r) => r.job_number)),
+    highestCode(taskRows.map((r) => r.job_number)),
+    highestCode(wrikeCodes),
+  );
+  return codeFor(highest + 1);
 }
 // ── Job Form ───────────────────────────────────────────────────────────────────
 // Fields + footer for creating/editing a Job Book row. Shared by JobModal (edit,
@@ -372,9 +380,9 @@ export function JobModal({ job, clients, films, workCategories, descs, onSave, o
   return (
     // onMouseDown instead of onClick: fires before blur, so the close is instant
     // and never races with a combobox dropdown's state updates.
-    <div className="fixed inset-0 z-[9999] bg-[#122027]/60 backdrop-blur-sm flex items-center justify-center p-4"
+    <div className="fade-in-fast fixed inset-0 z-[9999] bg-[#122027]/60 backdrop-blur-sm flex items-center justify-center p-4"
       onMouseDown={onClose}>
-      <div className="bg-white rounded-3xl shadow-2xl w-full max-w-2xl max-h-[92vh] flex flex-col overflow-hidden border border-[#dce4ec]"
+      <div className="rise-in bg-white rounded-3xl shadow-2xl w-full max-w-2xl max-h-[92vh] flex flex-col overflow-hidden border border-[#dce4ec]"
         onMouseDown={e => e.stopPropagation()}>
 
         <div className="px-6 pt-5 pb-4 border-b border-[#dce4ec] flex items-center justify-between shrink-0">

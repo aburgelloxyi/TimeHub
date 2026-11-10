@@ -8,6 +8,7 @@ import { supabase } from "../../lib/supabaseClient";
 import { notify } from "../../lib/toast";
 import { planFilmSync } from "../../lib/wrikeCampaign";
 import { STUDIOS } from "../../lib/studios";
+import { plainWrikeError } from "../../lib/wrikeErrors";
 import { WrikeApplyShell } from "./WrikeApplyShell";
 
 // Req 6 — preview + apply the Film DB sync from Wrike's studio-folder projects.
@@ -17,32 +18,41 @@ export function FilmSyncModal({ studio: initialStudio = "Paramount", existingFil
   const [plan, setPlan] = useState(null); // { error, studioFolder, projectCount, toAdd }
   const [loading, setLoading] = useState(true);
   const [applying, setApplying] = useState(false);
+  const [skipped, setSkipped] = useState(() => new Set()); // titles unticked
 
   useEffect(() => {
     let alive = true;
     setLoading(true);
     setPlan(null);
+    setSkipped(new Set());
     planFilmSync(studio, existingFilms)
       .then((p) => alive && setPlan(p))
-      .catch((e) => alive && setPlan({ error: e.message, toAdd: [] }))
+      .catch((e) => alive && setPlan({ error: plainWrikeError(e), toAdd: [] }))
       .finally(() => alive && setLoading(false));
     return () => { alive = false; };
   }, [studio, existingFilms]);
 
+  const chosen = (plan?.toAdd || []).filter((t) => !skipped.has(t));
+  const toggle = (t) => setSkipped((prev) => {
+    const next = new Set(prev);
+    next.has(t) ? next.delete(t) : next.add(t);
+    return next;
+  });
+
   const apply = async () => {
-    if (!plan?.toAdd?.length) return;
+    if (!chosen.length) return;
     setApplying(true);
-    const rows = plan.toAdd.map((title) => ({ title, studio }));
+    const rows = chosen.map((title) => ({ title, studio }));
     const { error } = await supabase.from("films").insert(rows);
     setApplying(false);
-    if (error) { notify("Film sync failed: " + error.message, "error"); return; }
+    if (error) { notify("Couldn't add the films: " + error.message, "error"); return; }
     notify(`Added ${rows.length} film${rows.length === 1 ? "" : "s"} from Wrike.`, "success");
     onApplied?.();
     onClose();
   };
 
   return (
-    <WrikeApplyShell title="Sync films from Wrike" accent="#1cc1a5"
+    <WrikeApplyShell title="Films in Wrike"
       subtitle={`Films in ${studio}'s Wrike folders that aren't in your Films list yet`} onClose={onClose}>
       <div className="px-6 py-5 overflow-y-auto flex-1">
         {/* Which studio folder to pull film projects from. */}
@@ -50,7 +60,7 @@ export function FilmSyncModal({ studio: initialStudio = "Paramount", existingFil
           <span className="text-[10px] font-black uppercase tracking-widest text-[#768994] mr-1">Studio</span>
           {STUDIOS.map((x) => x.studio).map((s) => (
             <button key={s} onClick={() => setStudio(s)}
-              className={`px-3 py-1.5 rounded-xl text-xs font-bold border transition-[background-color,border-color,color] ease-[cubic-bezier(0.16,1,0.3,1)] ${
+              className={`press px-3 py-1.5 rounded-xl text-xs font-bold border ${
                 studio === s
                   ? "bg-[#122027] text-white border-[#122027]"
                   : "bg-white text-[#122027] border-[#dce4ec] hover:border-[#1cc1a5]"
@@ -81,13 +91,15 @@ export function FilmSyncModal({ studio: initialStudio = "Paramount", existingFil
             ) : (
               <>
                 <p className="text-[10px] font-black uppercase tracking-widest text-[#768994] mb-2">
-                  {plan.toAdd.length} new film{plan.toAdd.length === 1 ? "" : "s"} to add
+                  {plan.toAdd.length} film{plan.toAdd.length === 1 ? "" : "s"} not in your list
+                  <span className="normal-case tracking-normal font-bold"> · untick any you don&rsquo;t want</span>
                 </p>
                 <div className="border border-[#dce4ec] rounded-2xl divide-y divide-[#f0f4f8] max-h-[320px] overflow-y-auto scrollbar-thin scrollbar-inset">
                   {plan.toAdd.map((t) => (
-                    <div key={t} className="flex items-center gap-2 px-4 py-2 text-sm text-[#122027]">
+                    <label key={t} className={`flex items-center gap-2.5 px-4 py-2 text-sm cursor-pointer transition-colors duration-150 ease-[cubic-bezier(0.22,1,0.36,1)] hover:bg-slate-50 ${skipped.has(t) ? "text-[#768994]" : "text-[#122027]"}`}>
+                      <input type="checkbox" checked={!skipped.has(t)} onChange={() => toggle(t)} className="accent-[#1cc1a5] w-3.5 h-3.5 shrink-0" />
                       <Film className="w-3.5 h-3.5 text-[#1cc1a5] shrink-0" /> {t}
-                    </div>
+                    </label>
                   ))}
                 </div>
               </>
@@ -97,13 +109,13 @@ export function FilmSyncModal({ studio: initialStudio = "Paramount", existingFil
       </div>
       <div className="px-6 py-4 border-t border-[#dce4ec] flex items-center justify-end gap-2 shrink-0">
         <button onClick={onClose}
-          className="px-5 py-2.5 text-sm font-bold text-[#768994] hover:text-[#122027] bg-white border border-[#dce4ec] rounded-xl transition-[color] ease-[cubic-bezier(0.16,1,0.3,1)]">
-          Cancel
+          className="press px-5 py-2.5 text-sm font-bold text-[#768994] hover:text-[#122027] bg-white border border-[#dce4ec] rounded-xl">
+          Not now
         </button>
-        <button onClick={apply} disabled={applying || loading || !plan?.toAdd?.length}
-          className="flex items-center gap-2 px-6 py-2.5 bg-[#1cc1a5] hover:bg-[#17a892] text-white text-sm font-bold rounded-xl transition-[background-color] ease-[cubic-bezier(0.16,1,0.3,1)] disabled:opacity-40">
+        <button onClick={apply} disabled={applying || loading || !chosen.length}
+          className="press flex items-center gap-2 px-6 py-2.5 bg-[#1cc1a5] hover:bg-[#17a892] text-white text-sm font-bold rounded-xl disabled:opacity-40">
           {applying ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Download className="w-3.5 h-3.5" />}
-          {plan?.toAdd?.length ? `Add ${plan.toAdd.length} film${plan.toAdd.length === 1 ? "" : "s"}` : "Nothing to add"}
+          {chosen.length ? `Add ${chosen.length} film${chosen.length === 1 ? "" : "s"}` : "Nothing to add"}
         </button>
       </div>
     </WrikeApplyShell>

@@ -11,6 +11,7 @@ import { confirmAction } from "../../lib/confirm";
 import { scanStudioJobNumbers, fetchFoldersNow } from "../../lib/wrikeCampaign";
 import { changedSinceCopy, copyHealth, correctionPatch, filmsToAdd, reconcile } from "../../lib/jobSync";
 import { timeAgo } from "../../lib/systemStatus";
+import { plainWrikeError } from "../../lib/wrikeErrors";
 import { loadKeptCodes, scanSavedTree } from "../../hooks/useWrikeJobCheck";
 
 const plural = (n, one, many = one + "s") => `${n} ${n === 1 ? one : many}`;
@@ -28,11 +29,11 @@ function KeepButtons({ kept, onKeep, onUndo }) {
   return kept ? (
     <>
       <span className="text-[10px] font-black uppercase tracking-wider text-emerald-700 bg-emerald-50 border border-emerald-200 px-1.5 py-0.5 rounded">Left as it is</span>
-      <button onClick={onUndo} className="px-2 py-1 text-[11px] font-bold rounded-lg bg-slate-100 text-slate-600 hover:bg-slate-200 transition-colors">Undo</button>
+      <button onClick={onUndo} className="px-2 py-1 text-[11px] font-bold rounded-lg bg-slate-100 text-slate-600 hover:bg-slate-200 press">Undo</button>
     </>
   ) : (
     <button onClick={onKeep} title="Leave the Job Book as it is and stop raising this job"
-      className="px-2.5 py-1 text-[11px] font-bold rounded-lg border border-slate-300 text-slate-600 hover:border-slate-400 hover:text-[#122027] transition-colors">
+      className="px-2.5 py-1 text-[11px] font-bold rounded-lg border border-slate-300 text-slate-600 hover:border-slate-400 hover:text-[#122027] press">
       Keep ours
     </button>
   );
@@ -96,7 +97,7 @@ export function StudioJobScanModal({ onClose, onApplied, startFrom = "saved" }) 
       setCandidates(found);
       setSelected(sel);
     } catch (e) {
-      setError(e.message || String(e));
+      setError(plainWrikeError(e));
     }
     setPhase("review");
   }, [loadBook]);
@@ -235,12 +236,12 @@ export function StudioJobScanModal({ onClose, onApplied, startFrom = "saved" }) 
   const close = () => (changed ? onApplied() : onClose());
   const contested = candidates.contestedCodes || [];
   const unplaced = candidates.truncatedCodes || [];
-  const rowBtn = "px-2.5 py-1 text-[11px] font-bold rounded-lg transition-colors disabled:opacity-50";
+  const rowBtn = "px-2.5 py-1 text-[11px] font-bold rounded-lg press disabled:opacity-50";
 
   return (
-    <div className="fixed inset-0 z-[9999] bg-black/40 flex items-center justify-center p-4" onMouseDown={close}>
+    <div className="fade-in-fast fixed inset-0 z-[9999] bg-black/40 flex items-center justify-center p-4" onMouseDown={close}>
       <div
-        className="bg-white rounded-3xl w-full max-w-6xl max-h-[92vh] flex flex-col shadow-2xl overflow-hidden"
+        className="rise-in bg-white rounded-3xl w-full max-w-6xl max-h-[92vh] flex flex-col shadow-2xl overflow-hidden"
         onMouseDown={(e) => e.stopPropagation()}
       >
         <div className="flex items-start justify-between gap-4 px-6 py-4 border-b border-slate-100">
@@ -265,7 +266,7 @@ export function StudioJobScanModal({ onClose, onApplied, startFrom = "saved" }) 
               </p>
             )}
           </div>
-          <button onClick={close} aria-label="Close" className="text-slate-400 hover:text-slate-700"><X className="w-5 h-5" /></button>
+          <button onClick={close} aria-label="Close" className="press text-slate-400 hover:text-slate-700"><X className="w-5 h-5" /></button>
         </div>
 
         {phase === "scanning" && (
@@ -277,7 +278,7 @@ export function StudioJobScanModal({ onClose, onApplied, startFrom = "saved" }) 
 
         {phase === "done" && (
           <div className="flex-1 flex flex-col items-center justify-center py-20 gap-2 text-center px-8">
-            <CheckCircle2 className="w-10 h-10 text-emerald-500 mb-1" />
+            <CheckCircle2 className="settle-in w-10 h-10 text-emerald-500 mb-1" />
             <p className="font-black text-[#122027]">
               Added {plural(done.jobs, "job")} to the Job Book{done.films ? ` and ${plural(done.films, "film")} to the Films list` : ""}.
             </p>
@@ -286,7 +287,7 @@ export function StudioJobScanModal({ onClose, onApplied, startFrom = "saved" }) 
                 {done.undated === done.jobs ? "They have" : `${done.undated} of them have`} no start date, because Wrike couldn&rsquo;t be asked for one. You&rsquo;ll find them under &ldquo;No date&rdquo;.
               </p>
             )}
-            <button onClick={onApplied} className="mt-3 px-5 py-2 bg-[#1cc1a5] hover:bg-[#17a892] text-white text-sm font-bold rounded-xl">
+            <button onClick={onApplied} className="press mt-3 px-5 py-2 bg-[#1cc1a5] hover:bg-[#17a892] text-white text-sm font-bold rounded-xl">
               Done
             </button>
           </div>
@@ -337,19 +338,19 @@ export function StudioJobScanModal({ onClose, onApplied, startFrom = "saved" }) 
                     {openCount < mismatchCount && ` · ${mismatchCount - openCount} left as ${mismatchCount - openCount === 1 ? "it is" : "they are"}`}
                   </span>
                   <button onClick={() => setShowMismatches((v) => !v)}
-                    className="ml-auto shrink-0 px-3 py-1.5 bg-white border border-amber-300 hover:border-amber-400 text-amber-800 text-[11px] font-bold rounded-lg transition-colors">
+                    className="ml-auto shrink-0 px-3 py-1.5 bg-white border border-amber-300 hover:border-amber-400 text-amber-800 text-[11px] font-bold rounded-lg press">
                     {showMismatches ? "Hide" : "Show them"}
                   </button>
                   {/* Only once the list is open, so nobody changes rows they haven't seen. */}
                   {showMismatches && openCount > 0 && (
                     <button onClick={matchWrikeForAll} disabled={phase === "saving"}
-                      className="shrink-0 px-3 py-1.5 bg-amber-500 hover:bg-amber-600 disabled:opacity-50 text-white text-[11px] font-bold rounded-lg transition-colors">
+                      className="shrink-0 px-3 py-1.5 bg-amber-500 hover:bg-amber-600 disabled:opacity-50 text-white text-[11px] font-bold rounded-lg press">
                       Use Wrike&rsquo;s for all {openCount}
                     </button>
                   )}
                 </div>
                 {showMismatches && (
-                  <ul className="max-h-[45vh] overflow-y-auto border-t border-amber-100 divide-y divide-amber-100/70">
+                  <ul className="rise-in max-h-[45vh] overflow-y-auto border-t border-amber-100 divide-y divide-amber-100/70">
                     {corrections.map((x) => {
                       const kept = keptCodes.has(x.code);
                       return (
@@ -415,7 +416,7 @@ export function StudioJobScanModal({ onClose, onApplied, startFrom = "saved" }) 
             {newOnes.length === 0 ? (
               <div className="flex-1 flex items-center justify-center py-16 text-center text-[#768994] text-sm px-8">
                 {error
-                  ? "The check didn't finish. The message above says why."
+                  ? "The comparison couldn't be made. The message above says why."
                   : candidates.length === 0
                   ? "No job folders were found in Wrike. If that can't be right, your Wrike connection may have dropped: reconnect from your profile and try again."
                   : "Nothing new in Wrike. Every job there is already in the Job Book."}
@@ -490,7 +491,7 @@ export function StudioJobScanModal({ onClose, onApplied, startFrom = "saved" }) 
                     )}
                   </p>
                   <button onClick={addJobs} disabled={chosen.length === 0 || phase === "saving"}
-                    className="shrink-0 flex items-center gap-1.5 px-5 py-2 bg-[#1cc1a5] hover:bg-[#17a892] disabled:bg-slate-200 disabled:text-slate-400 text-white text-sm font-bold rounded-xl transition-[background-color] ease-[cubic-bezier(0.16,1,0.3,1)]">
+                    className="shrink-0 flex items-center gap-1.5 px-5 py-2 bg-[#1cc1a5] hover:bg-[#17a892] disabled:bg-slate-200 disabled:text-slate-400 text-white text-sm font-bold rounded-xl press">
                     {phase === "saving" ? <><RefreshCw className="w-4 h-4 animate-spin" /> Saving…</> : <><Plus className="w-4 h-4" /> Add {plural(chosen.length, "job")} to the Job Book</>}
                   </button>
                 </div>

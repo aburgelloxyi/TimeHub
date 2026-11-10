@@ -299,8 +299,14 @@ regional ones included (Universal UK, Universal Australia, Universal - New
 Media) but not its archives or house-keeping folders, lists every film project
 that isn't in TimeHub yet (underscores become spaces, so
 `Angry_Birds_3_Movie` becomes "Angry Birds 3 Movie"), and adds the ones you
-confirm. It only ever adds films, never deletes, so a film someone added by
-hand is never lost. It runs only when someone presses it.
+confirm (untick any you don't want; a film already in the list under a name
+that differs only in punctuation isn't offered). It only ever adds films, never
+deletes, so a film someone added by hand is never lost. It runs only when
+someone presses it.
+
+A job belongs to its film by title, and repeats the title in its label. So
+renaming a film on the Films page offers to rename it on its jobs too
+(`filmEdits.js`), and deleting one says how many jobs are filed under it.
 
 **How a job gets into the Job Book.** There are five ways in, from most to
 least automatic:
@@ -312,12 +318,16 @@ least automatic:
    left empty so the Studio Scan notices the row and fills it in properly. If
    the job already exists, only blank fields are filled; nothing is
    overwritten.
-2. *Jobs setup, for planned new work.* A PM picks a studio and a film, sees
-   the studio's template of job types (the "slots": French Canada Assets,
-   1 Sheets and so on) and clicks the ones the film needs. Each click reserves
-   the next free job code: one higher than the highest code in either the Job
-   Book or anyone's timesheet. If two PMs take the same number at once, the
-   second is given the next one.
+2. *Jobs setup, for planned new work.* A PM picks a film; its studio follows
+   from where the film sits in Wrike. The page shows the jobs the film already
+   has, and the kinds of job its studio's template offers (French Canada
+   Assets, 1 Sheets and so on). The PM ticks the kinds the film needs, checks
+   the descriptions and costs, and creates them together. Each gets the next
+   free job code: one higher than the highest code in the Job Book, in
+   anyone's timesheet, or on a Wrike folder. If two PMs take the same number
+   at once, the second is given the next one. A job made here is named the way
+   the scan would name it (region prefix on the description, the studio's
+   client), so the scan doesn't later report it as not matching.
 3. *The Studio Scan*, for catching up with Wrike. See below.
 4. *By hand*, adding or editing a job in the Job Book, including editing one
    field across many jobs at once. A job's label ("Film : CODE, Description")
@@ -368,8 +378,8 @@ The scan writes only to the Job Book and the Films list, never to Wrike. The sca
 the regression check described in HANDOVER.md); the comparison with the book
 is `src/lib/jobSync.js`.
 
-**Push to Wrike** is the only part that writes to Wrike. Once a film's jobs are
-set up in the Job Book, it creates the matching folders:
+**Send to Wrike** ("Push" in the code) is the only part that writes to Wrike.
+Once a film's jobs are in the Job Book, it creates the matching folders:
 
 1. It copies the studio's master template folder into the film's Wrike
    project.
@@ -381,12 +391,28 @@ set up in the Job Book, it creates the matching folders:
    job without anyone doing anything.
 4. It records on the Job Book row which Wrike folder the job now owns.
 
-You always see a preview of exactly what will change, and nothing is written
-until you confirm. It refuses to run if anything is off: no template, no film
-project, or no Job Number field. It never writes inside the template itself and
-never hands one job's folder to another job. **Re-tag** is the lighter
-version: no copy, it just re-applies job numbers to a film's existing folders,
-which is useful after tasks have been added.
+You always see what will change first, and nothing is written until you
+confirm. It refuses to run if anything is off: no template, no film project,
+or no Job Number field. The film's project is chosen for you only when the
+page already found it or one has exactly the film's name; a near match has to
+be picked by hand. It never writes inside the template itself and never hands
+one job's folder to another job. Afterwards it lists each job and what
+happened to it. If it stops part-way, what was done stays done and sending
+again finishes the rest, because a folder already carrying a job's number is
+recognised.
+
+The confirmation opens straight after jobs are created, but it isn't the only
+way in: a film's page lists any job "Not in Wrike yet" with a Send button.
+**Update job numbers on new tasks** ("retag" in the code) is the lighter
+version: no copy, it re-applies job numbers to a film's existing folders, for
+tasks added since.
+
+Taking a job back depends on whether Wrike carries its number. If nothing in
+Wrike does (never sent, or its folder is gone or renamed), the job is removed
+and the number is free again. If its folder still carries the number, the job
+is cancelled instead: the row stays, closed, so the number can't be given to
+another job. TimeHub never undoes its own writes to Wrike; the folder is left
+for a PM to rename or delete there.
 
 The template folders also carry an "Item Price" field in Wrike. Jobs setup
 reads it to suggest a job's cost, for PMs who can see that field in Wrike.
@@ -398,7 +424,7 @@ reads it to suggest a job's cost, for PMs who can see that field in Wrike.
 | Bare Job Book rows for new job codes seen in timesheets | The Studio Scan, and accepting its corrections |
 | Filling a blank film or client on an existing job | Film sync |
 | The shared task cache and live updates from Wrike | Activating slots and creating jobs |
-| The daily refresh of the folder, people and status lists | Push to Wrike and Re-tag |
+| The daily refresh of the folder, people and status lists | Send to Wrike and Update job numbers |
 | Job Number copied down to new tasks (Wrike does this after a push) | Editing, bulk-editing or deleting jobs, and CSV import |
 
 In short: timesheets feed new job codes in on their own, the Studio Scan is how

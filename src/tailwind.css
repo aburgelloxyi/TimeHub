@@ -674,3 +674,51 @@ html.dark-theme .home-mark {
 .review-url-hidden { font-size: 0 !important; letter-spacing: 0 !important; }
 .review-link-label { font-size: 0.95rem; letter-spacing: normal; cursor: pointer; }
 .review-link-label:hover { text-decoration: underline; }
+
+/* ── Press, pop and rise ─────────────────────────────────────────────────────
+   The small feedback the job pages share. Two curves only, the ones the rest of
+   the app already uses: 0.16,1,0.3,1 for something arriving, 0.22,1,0.36,1 for
+   hover and press. Nothing overshoots: these are tools used all day, and a
+   bounce on a button pressed fifty times is fifty bounces.
+
+   `.press` sits after the utilities so it owns the element's transition list;
+   don't pair it with a transition-[…] class.
+
+   Every transform is inside prefers-reduced-motion: no-preference. Under
+   reduced motion the entrances fall back to a short fade and the press and
+   hover movements don't happen at all. */
+.press {
+  transition:
+    transform 160ms cubic-bezier(0.22, 1, 0.36, 1),
+    background-color 150ms cubic-bezier(0.22, 1, 0.36, 1),
+    border-color 150ms cubic-bezier(0.22, 1, 0.36, 1),
+    color 150ms cubic-bezier(0.22, 1, 0.36, 1),
+    box-shadow 150ms cubic-bezier(0.22, 1, 0.36, 1),
+    opacity 150ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+@keyframes fadeOnly { from { opacity: 0; } }
+@keyframes popIn    { from { opacity: 0; transform: translateY(-4px) scale(0.97); } }
+@keyframes riseIn   { from { opacity: 0; transform: translateY(8px); } }
+@keyframes settleIn { from { opacity: 0; transform: scale(0.9); } }
+
+.pop-in, .rise-in, .settle-in, .fade-in-fast {
+  animation: fadeOnly 150ms cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .press:active:not(:disabled) { transform: scale(0.97); }
+  /* A menu grows from the control that opened it. */
+  .pop-in    { animation: popIn 140ms cubic-bezier(0.16, 1, 0.3, 1) both; transform-origin: var(--pop-origin, top left); }
+  .rise-in   { animation: riseIn 220ms cubic-bezier(0.16, 1, 0.3, 1) both; }
+  .settle-in { animation: settleIn 300ms cubic-bezier(0.16, 1, 0.3, 1) both; }
+}
+
+/* Hover movement only where there is a real pointer: a tap fires :hover too,
+   and would leave the icon turned. */
+@media (hover: hover) and (pointer: fine) and (prefers-reduced-motion: no-preference) {
+  .turn-on-hover svg  { transition: transform 300ms cubic-bezier(0.16, 1, 0.3, 1); }
+  .turn-on-hover:hover svg  { transform: rotate(180deg); }
+  .nudge-on-hover svg { transition: transform 160ms cubic-bezier(0.22, 1, 0.36, 1); }
+  .nudge-on-hover:hover svg { transform: translateX(2px); }
+}

@@ -41,12 +41,12 @@ function Pager({ page, totalPages, setPage }) {
   return (
     <div className="flex items-center gap-2">
       <button onClick={() => setPage(Math.max(0, page - 1))} disabled={page === 0}
-        aria-label="Previous page" className="p-1 disabled:opacity-30 hover:bg-slate-100 rounded-lg">
+        aria-label="Previous page" className="press p-1 disabled:opacity-30 hover:bg-slate-100 rounded-lg">
         <ChevronLeft className="w-3.5 h-3.5" />
       </button>
       <span className="text-xs font-bold text-[#768994] tabular-nums">{page + 1} / {totalPages}</span>
       <button onClick={() => setPage(Math.min(totalPages - 1, page + 1))} disabled={page === totalPages - 1}
-        aria-label="Next page" className="p-1 disabled:opacity-30 hover:bg-slate-100 rounded-lg">
+        aria-label="Next page" className="press p-1 disabled:opacity-30 hover:bg-slate-100 rounded-lg">
         <ChevronRight className="w-3.5 h-3.5" />
       </button>
     </div>
@@ -83,21 +83,21 @@ function MenuSelect({ value, options, onChange, label, placeholder = "Choose…"
     <>
       <button ref={btnRef} type="button" aria-haspopup="menu" aria-expanded={open} aria-label={label}
         onClick={() => setRect(open ? null : layoutRect(btnRef.current))}
-        className={`inline-flex items-center justify-between gap-1 outline-none focus-visible:ring-2 focus-visible:ring-[#1cc1a5]/50 transition-[box-shadow] ${className}`}>
+        className={`press inline-flex items-center justify-between gap-1 outline-none focus-visible:ring-2 focus-visible:ring-[#1cc1a5]/50 ${className}`}>
         <span className={current ? "truncate" : "truncate opacity-60"}>{current ? current.label : placeholder}</span>
-        <ChevronDown className={`w-3 h-3 shrink-0 opacity-60 transition-transform ${open ? "rotate-180" : ""}`} />
+        <ChevronDown className={`w-3 h-3 shrink-0 opacity-60 transition-transform duration-150 ease-[cubic-bezier(0.22,1,0.36,1)] ${open ? "rotate-180" : ""}`} />
       </button>
       {open && createPortal(
         <>
           <div className="fixed inset-0 z-[9998]" onClick={() => setRect(null)} />
           <div role="menu" aria-label={label}
-            className="fixed z-[9999] bg-white border border-[#dce4ec] rounded-xl shadow-xl p-1 overflow-y-auto"
-            style={{ left: rect.left, minWidth: Math.max(150, rect.width), maxHeight: MENU_H,
+            className="pop-in fixed z-[9999] bg-white border border-[#dce4ec] rounded-xl shadow-xl p-1 overflow-y-auto"
+            style={{ "--pop-origin": above ? "bottom left" : "top left", left: rect.left, minWidth: Math.max(150, rect.width), maxHeight: MENU_H,
                      ...(above ? { top: rect.top - MENU_H - 4 } : { top: rect.bottom + 4 }) }}>
             {options.map((o) => (
               <button key={o.value} type="button" role="menuitemradio" aria-checked={o.value === value} autoFocus={o.value === value}
                 onClick={() => { setRect(null); if (o.value !== value) onChange(o.value); }}
-                className="w-full h-8 flex items-center gap-2 px-2.5 rounded-lg text-xs font-bold text-[#122027] whitespace-nowrap hover:bg-slate-100 focus-visible:bg-slate-100 outline-none">
+                className="w-full h-8 flex items-center gap-2 px-2.5 rounded-lg text-xs font-bold text-[#122027] whitespace-nowrap transition-colors duration-100 ease-[cubic-bezier(0.22,1,0.36,1)] hover:bg-slate-100 focus-visible:bg-slate-100 outline-none">
                 {o.dot && <span className={`w-2 h-2 rounded-full ${o.dot}`} />}
                 {o.label}
                 {o.value === value && <Check className="ml-auto w-3.5 h-3.5 text-[#1cc1a5]" />}
@@ -123,10 +123,10 @@ function WrikeStrip({ check, onOpen }) {
       <button onClick={() => onOpen("live")} className="font-bold underline underline-offset-2 hover:text-[#122027]">Read Wrike again</button>
     </span>
   );
-  const box = "mb-4 flex flex-wrap items-center gap-x-3 gap-y-1 rounded-xl border px-4 py-2.5 text-xs";
+  const box = "fade-in-fast mb-4 flex flex-wrap items-center gap-x-3 gap-y-1 rounded-xl border px-4 py-2.5 text-xs";
   if (state === "checking") {
     return (
-      <div className={`${box} border-[#dce4ec] text-[#768994]`}>
+      <div key="checking" className={`${box} border-[#dce4ec] text-[#768994]`}>
         <RefreshCw className="w-3.5 h-3.5 animate-spin" /> Checking Wrike for new jobs…
       </div>
     );
@@ -143,8 +143,8 @@ function WrikeStrip({ check, onOpen }) {
   const mismatched = waiting.corrections.length + waiting.redundant.length;
   if (!fresh && !mismatched) {
     return (
-      <div className={`${box} border-[#dce4ec] text-[#768994]`}>
-        <CheckCircle2 className="w-4 h-4 text-[#1cc1a5]" />
+      <div key="in-step" className={`${box} border-[#dce4ec] text-[#768994]`}>
+        <CheckCircle2 className="settle-in w-4 h-4 text-[#1cc1a5]" />
         <span className="font-bold text-[#122027]">In step with Wrike</span>
         {treeAt && !behind && <span>Wrike&rsquo;s folders were last read in full {timeAgo(treeAt, new Date())}</span>}
         <button onClick={() => onOpen("saved")} className="ml-auto font-bold text-[#0f766e] hover:underline">Open the comparison</button>
@@ -153,14 +153,14 @@ function WrikeStrip({ check, onOpen }) {
     );
   }
   return (
-    <div className={`${box} border-[#1cc1a5]/40 bg-[#1cc1a5]/[0.06] text-[#122027]`}>
+    <div key="waiting" className={`${box} border-[#1cc1a5]/40 bg-[#1cc1a5]/[0.06] text-[#122027]`}>
       <span className="font-bold">
         {fresh > 0 && `${fresh} new job${fresh === 1 ? "" : "s"} in Wrike ${fresh === 1 ? "isn't" : "aren't"} in the Job Book yet`}
         {fresh > 0 && mismatched > 0 && " · "}
         {mismatched > 0 && `${mismatched} job${mismatched === 1 ? "" : "s"} here ${mismatched === 1 ? "doesn't" : "don't"} match Wrike`}
       </span>
       <button onClick={() => onOpen("saved")}
-        className="ml-auto px-3.5 py-1.5 bg-[#1cc1a5] hover:bg-[#17a892] text-white font-bold rounded-lg transition-[background-color] ease-[cubic-bezier(0.16,1,0.3,1)]">
+        className="ml-auto px-3.5 py-1.5 bg-[#1cc1a5] hover:bg-[#17a892] text-white font-bold rounded-lg press">
         {fresh > 0 ? "Review and add" : "Review"}
       </button>
       {behind}
@@ -173,7 +173,7 @@ const STATUS_OPTIONS = JOB_STATUSES.map((s) => ({ value: s, label: s, dot: STATU
 function Chip({ on, onClick, children, title }) {
   return (
     <button type="button" onClick={onClick} title={title} aria-pressed={on}
-      className={`px-3 py-2 text-xs font-bold rounded-xl border transition-[background-color,border-color,color] ease-[cubic-bezier(0.16,1,0.3,1)] ${
+      className={`px-3 py-2 text-xs font-bold rounded-xl border press ${
         on ? "bg-[#1cc1a5]/10 border-[#1cc1a5]/50 text-[#0f766e]" : "bg-white border-[#dce4ec] text-[#768994] hover:text-[#122027] hover:border-slate-300"
       }`}>
       {children}
@@ -472,7 +472,7 @@ export function JobBookSection({ setActiveTab }) {
           />
         </div>
         <button onClick={() => setActiveTab?.("jobsSetup")}
-          className="flex items-center gap-1.5 px-4 py-2 bg-[#1cc1a5] hover:bg-[#17a892] text-white text-sm font-bold rounded-xl transition-[background-color] ease-[cubic-bezier(0.16,1,0.3,1)] shrink-0">
+          className="flex items-center gap-1.5 px-4 py-2 bg-[#1cc1a5] hover:bg-[#17a892] text-white text-sm font-bold rounded-xl press shrink-0">
           <Plus className="w-4 h-4" /> Add Jobs
         </button>
       </div>
@@ -520,7 +520,7 @@ export function JobBookSection({ setActiveTab }) {
       </div>
 
       {selectedIds.size > 0 && (
-        <div className="mb-3 flex flex-wrap items-center gap-2 bg-[#1cc1a5]/[0.06] border border-[#1cc1a5]/30 rounded-2xl px-4 py-2.5">
+        <div className="rise-in mb-3 flex flex-wrap items-center gap-2 bg-[#1cc1a5]/[0.06] border border-[#1cc1a5]/30 rounded-2xl px-4 py-2.5">
           <span className="text-[11px] font-black text-[#0f766e]">
             {allSelected && totalPages > 1
               ? `All ${selectedIds.size} matching jobs selected, across ${totalPages} pages`
@@ -563,11 +563,11 @@ export function JobBookSection({ setActiveTab }) {
             </>
           )}
           <button onClick={applyBulk} disabled={bulkBusy || (bulkNeedsValue && !bulkValue)}
-            className="ml-auto flex items-center gap-1.5 px-4 py-1.5 bg-[#1cc1a5] hover:bg-[#17a892] disabled:bg-slate-200 disabled:text-slate-400 text-white text-[12px] font-bold rounded-lg transition-[background-color] ease-[cubic-bezier(0.16,1,0.3,1)]">
+            className="ml-auto flex items-center gap-1.5 px-4 py-1.5 bg-[#1cc1a5] hover:bg-[#17a892] disabled:bg-slate-200 disabled:text-slate-400 text-white text-[12px] font-bold rounded-lg press">
             {bulkBusy ? <><RefreshCw className="w-3.5 h-3.5 animate-spin" /> Applying…</> : `Apply to ${selectedIds.size}`}
           </button>
           <button onClick={bulkDelete} disabled={bulkBusy} title="Delete selected rows"
-            className="flex items-center gap-1.5 px-3 py-1.5 bg-white border border-rose-200 hover:bg-rose-50 hover:border-rose-300 disabled:opacity-40 text-rose-600 text-[12px] font-bold rounded-lg transition-[background-color,border-color] ease-[cubic-bezier(0.16,1,0.3,1)]">
+            className="flex items-center gap-1.5 px-3 py-1.5 bg-white border border-rose-200 hover:bg-rose-50 hover:border-rose-300 disabled:opacity-40 text-rose-600 text-[12px] font-bold rounded-lg press">
             <Trash2 className="w-3.5 h-3.5" /> Delete
           </button>
         </div>
@@ -671,20 +671,20 @@ export function JobBookSection({ setActiveTab }) {
                     </td>
                     <td className="px-3 py-2.5">
                       <button onClick={() => patchJob(j, { job_done: !j.job_done }, "the done tick")}
-                        title={j.job_done ? "Mark as not done" : "Mark as done"} aria-pressed={!!j.job_done} className="p-1 -m-1">
+                        title={j.job_done ? "Mark as not done" : "Mark as done"} aria-pressed={!!j.job_done} className="press p-1 -m-1">
                         <div className={`w-4 h-4 rounded border-2 flex items-center justify-center transition-colors ${j.job_done ? "bg-[#1cc1a5] border-[#1cc1a5]" : "border-[#dce4ec] hover:border-[#1cc1a5]"}`}>
-                          {j.job_done && <Check className="w-2.5 h-2.5 text-white" />}
+                          {j.job_done && <Check className="settle-in w-2.5 h-2.5 text-white" />}
                         </div>
                       </button>
                     </td>
                     <td className="px-3 py-2.5">
                       <div className="flex items-center gap-2">
                         <button onClick={() => { setEditJob(j); setShowModal(true); }} title="Edit job" aria-label={`Edit ${j._code || j.job_number}`}
-                          className="p-1.5 hover:bg-slate-200 rounded-lg text-slate-400 hover:text-[#122027] transition-colors">
+                          className="press p-1.5 hover:bg-slate-200 rounded-lg text-slate-400 hover:text-[#122027]">
                           <Pencil className="w-3.5 h-3.5" />
                         </button>
                         <button onClick={() => deleteJob(j)} title="Delete job" aria-label={`Delete ${j._code || j.job_number}`}
-                          className="p-1.5 hover:bg-rose-100 rounded-lg text-slate-400 hover:text-rose-600 transition-colors">
+                          className="press p-1.5 hover:bg-rose-100 rounded-lg text-slate-400 hover:text-rose-600">
                           <Trash2 className="w-3.5 h-3.5" />
                         </button>
                       </div>

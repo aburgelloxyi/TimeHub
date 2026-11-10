@@ -10,19 +10,19 @@ import { X, AlertTriangle, CheckCircle2 } from "lucide-react";
 // run a read-only plan on open, show what WOULD change, then write only on an
 // explicit "Apply" click. This shell provides the frame; each flow supplies the
 // preview body and the apply handler.
-export function WrikeApplyShell({ title, subtitle, accent = "#12a0e1", onClose, children }) {
+export function WrikeApplyShell({ title, subtitle, accent = "#1cc1a5", eyebrow = "Wrike · nothing changes until you confirm", onClose, children }) {
   return (
-    <div className="fixed inset-0 z-[9999] bg-[#122027]/60 backdrop-blur-sm flex items-center justify-center p-4"
+    <div className="fade-in-fast fixed inset-0 z-[9999] bg-[#122027]/60 backdrop-blur-sm flex items-center justify-center p-4"
       onMouseDown={onClose}>
-      <div className="bg-white rounded-3xl shadow-2xl w-full max-w-lg max-h-[92vh] flex flex-col overflow-hidden border border-[#dce4ec]"
+      <div className="rise-in bg-white rounded-3xl shadow-2xl w-full max-w-lg max-h-[92vh] flex flex-col overflow-hidden border border-[#dce4ec]"
         onMouseDown={(e) => e.stopPropagation()}>
         <div className="px-6 pt-5 pb-4 border-b border-[#dce4ec] flex items-center justify-between shrink-0">
           <div>
-            <p className="text-[9px] font-black uppercase tracking-widest mb-0.5" style={{ color: accent }}>Wrike · dry run</p>
+            <p className="text-[9px] font-black uppercase tracking-widest mb-0.5" style={{ color: accent }}>{eyebrow}</p>
             <h2 className="text-xl font-black text-[#122027]">{title}</h2>
             {subtitle && <p className="text-xs text-[#768994] mt-0.5">{subtitle}</p>}
           </div>
-          <button onClick={onClose} className="p-2 hover:bg-slate-100 rounded-xl text-slate-400 hover:text-slate-600 transition-colors">
+          <button onClick={onClose} className="press p-2 hover:bg-slate-100 rounded-xl text-slate-400 hover:text-slate-600">
             <X className="w-4 h-4" />
           </button>
         </div>

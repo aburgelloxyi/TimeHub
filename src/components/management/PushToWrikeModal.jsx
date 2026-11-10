@@ -1,38 +1,42 @@
-// Push to Wrike and Re-tag: copy a studio's template into a film's
-// Wrike project and set the Job Number on its folders and tasks.
+// Send to Wrike: copy a studio's template into a film's Wrike project (when the
+// project has none of its folders yet) and put each job's number on its folder
+// and tasks. Also "update job numbers", the same without the copy.
 //
 // Part of Administration. Split out of components/Management.jsx, which is
 // still the entry point and re-exports what other screens import.
 import { useState, useEffect, useMemo, useRef } from "react";
-import { AlertTriangle, CheckCircle2, Loader2, UploadCloud } from "lucide-react";
+import { AlertTriangle, CheckCircle2, Loader2, UploadCloud, X } from "lucide-react";
 import { supabase } from "../../lib/supabaseClient";
 import { notify } from "../../lib/toast";
 import { discoverJobNumberField, fetchAllFolders, findStudioFolder, findMasterTemplateFolder, fetchFolderProjects, collectSubtreeIds, planPropagate, applyPropagate, copyTemplateDeep, mapSlotFoldersUnder, pickSlotFolder, slotSuffix, renameFolder, setFolderJobNumber, triggerFieldCascade } from "../../lib/wrikeCampaign";
+import { pickProject } from "../../lib/jobSetup";
+import { plainWrikeError } from "../../lib/wrikeErrors";
 import { StrictSelect } from "./fields";
 import { CheckRow, WrikeApplyShell } from "./WrikeApplyShell";
 
-// Reqs 5 + 1 — duplicate the studio template into the film's Wrike project, then
-// set the Job Number custom field on every task/subtask beneath each activated
-// slot's folder. The preview validates every precondition against LIVE Wrike
-// data on open (template found? film project found? field found?) and refuses to
-// write unless they all hold — the safety net for shipping without local Wrike
-// auth to test against.
-// mode "push"  — duplicate template into the film project, then tag (reqs 5+1).
-// mode "retag" — skip the copy; re-tag the film project's existing job folders,
-//                topping up items added/renamed since (reqs 2 + 4).
-export function PushToWrikeModal({ studio, filmTitle, jobs, mode = "push", onClose }) {
+const typeName = (label) => (label || "").replace(/^(JOBNUMBER|XY\d+)_?/i, "").replace(/_/g, " ").trim() || "General";
+
+// Every check is made against Wrike as it is when this opens (template found?
+// film project found? Job Number field found?), and nothing is written unless
+// they all hold.
+//
+// `studio` names the template ("Universal"); `studioFolderTitle` is the folder
+// the film sits in, which for a regional film differs ("Universal UK").
+// mode "push"  copies the template in if the project has none of it, then numbers.
+// mode "retag" never copies: it re-applies numbers to folders already there, for
+//              tasks added since.
+export function PushToWrikeModal({ studio, studioFolderTitle, preferredProjectId, filmTitle, jobs, mode = "push", onClose }) {
   const isRetag = mode === "retag";
   const [plan, setPlan] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [applying, setApplying] = useState(false);
   const [progress, setProgress] = useState(null); // { step, done, total }
-  const [result, setResult] = useState(null);      // { propagated, failed, skipped }
-  const [targetId, setTargetId] = useState("");    // chosen Wrike project id (film picker)
+  const [result, setResult] = useState(null);     // { outcomes, droppedTaskFolders }
+  const [targetId, setTargetId] = useState("");   // chosen Wrike project id
 
-  // Activated jobs, with the code we'll write as the field value. Identified by
-  // job id, not slot label: the same slot can hold several jobs (two launches off
-  // one template folder), and keying by label would merge them into one row.
+  // Identified by job id, not job type: one type can hold several jobs (two
+  // launches off one template folder), and keying by type would merge them.
   const slots = useMemo(() => jobs.map((j) => ({
     id: j.id,
     label: j.template_slot,
@@ -40,8 +44,8 @@ export function PushToWrikeModal({ studio, filmTitle, jobs, mode = "push", onClo
     code: (j.job_number?.match(/XY\d+/) || [])[0] || j.job_number,
   })), [jobs]);
 
-  // Which activated jobs to actually tag — all by default; unchecking one in the
-  // preview drops it from this push (its Job Book row is untouched).
+  // All by default; unticking one leaves it out of this send (its Job Book row
+  // is untouched).
   const [excluded, setExcluded] = useState(() => new Set());
   const selectedSlots = useMemo(() => slots.filter((s) => !excluded.has(s.id)), [slots, excluded]);
   const toggleSlot = (id) => setExcluded((prev) => {
@@ -56,50 +60,34 @@ export function PushToWrikeModal({ studio, filmTitle, jobs, mode = "push", onClo
       try {
         const [field, byId] = await Promise.all([discoverJobNumberField(), fetchAllFolders()]);
         const template = findMasterTemplateFolder(byId, studio);
-        const studioFolder = findStudioFolder(byId, studio);
+        const studioFolder = findStudioFolder(byId, studioFolderTitle || studio);
         const projects = studioFolder ? await fetchFolderProjects(studioFolder.childIds) : [];
-        // Auto-pick the best match so the common case is one glance. Compare
-        // underscore/space-insensitively, since the DB film title is spaced but
-        // the Wrike project name is underscored (Angry_Birds_3_Movie).
-        const norm = (s) => (s || "").toLowerCase().replace(/[_\s]+/g, " ").trim();
-        const wanted = norm(filmTitle);
-        const exact = projects.find((p) => norm(p.title) === wanted);
-        const close = exact || projects.find((p) => {
-          const t = norm(p.title);
-          return wanted && (t.includes(wanted) || wanted.includes(t));
-        });
-        // Guard set: every folder id inside the master template. We refuse to
-        // copy into it or write a field on anything within it.
+        // Every folder inside the master template: never copied into, never
+        // written to.
         const templateIds = template ? collectSubtreeIds(byId, template.id) : new Set();
         if (alive) {
           setPlan({ field, template, studioFolder, projects, templateIds, byId });
-          setTargetId(close?.id || "");
+          setTargetId(pickProject(projects, filmTitle, preferredProjectId)?.id || "");
         }
       } catch (e) {
-        if (alive) setError(e.message);
+        if (alive) setError(plainWrikeError(e));
       } finally {
         if (alive) setLoading(false);
       }
     })();
     return () => { alive = false; };
-  }, [studio, filmTitle]);
+  }, [studio, studioFolderTitle, preferredProjectId, filmTitle]);
 
-  // The chosen target project (picker selection resolved against the plan).
   const filmProject = useMemo(
     () => plan?.projects?.find((p) => p.id === targetId) || null,
     [plan, targetId]
   );
-  const canApply = plan && plan.field && filmProject && (isRetag || plan.template) && !applying;
+  const canApply = plan && plan.field && filmProject && (isRetag || plan.template) && selectedSlots.length > 0 && !applying;
 
-  // Slots already done — a live Wrike folder is already named with THIS job's
-  // code (read straight from plan.byId, so it's accurate even for old pushes).
-  // These are pre-unchecked so re-pushing only touches genuinely new slots.
-  //
-  // Collects every folder sharing a suffix, not just one. When two jobs sit on
-  // the same slot, keeping a single title per suffix meant one job's folder
-  // decided both jobs' status: whichever title survived, the other job either
-  // read as done when nothing had been written for it, or read as pending while
-  // its folder existed. A job is done only if a folder carries its own code.
+  // Jobs already done: a live Wrike folder already carries THIS job's code.
+  // Unticked to start with, so sending again only touches what's new. Every
+  // folder sharing a type is looked at, since two jobs can sit on one type and
+  // each is done only if a folder carries its own code.
   const doneSlots = useMemo(() => {
     const done = new Set();
     if (!plan?.byId || !filmProject) return done;
@@ -120,29 +108,25 @@ export function PushToWrikeModal({ studio, filmTitle, jobs, mode = "push", onClo
     return done;
   }, [plan, filmProject, slots]);
 
-  // Once the plan resolves, default the already-done slots to unchecked so the
-  // common re-push does nothing redundant. Runs once; the user can re-check any.
+  // Sending again skips what's done; updating numbers is about exactly those.
   const inited = useRef(false);
   useEffect(() => {
     if (inited.current || !plan || !filmProject) return;
     inited.current = true;
-    if (doneSlots.size) setExcluded(new Set(doneSlots));
-  }, [plan, filmProject, doneSlots]);
+    if (!isRetag && doneSlots.size) setExcluded(new Set(doneSlots));
+  }, [plan, filmProject, doneSlots, isRetag]);
 
   const apply = async () => {
     if (!canApply) return;
     setApplying(true);
     setError(null);
 
-    // ── Template-write guard ──────────────────────────────────────────────
-    // Hard stop: the master template must never be a write target. Any folder
-    // id inside its subtree is off-limits both as a copy destination and as a
-    // tagging target. This is defence-in-depth on top of the fact that copy is
-    // read-only on its source — it makes writing to the template physically
-    // impossible even if a lookup ever returned the wrong folder.
+    // The master template must never be written to. Copying only reads its
+    // source, but this makes a write into it impossible even if a lookup ever
+    // returned the wrong folder.
     const templateIds = plan.templateIds || new Set();
     const inTemplate = (id) => templateIds.has(id);
-    const TEMPLATE_GUARD = "Aborted to protect the master template — a target folder resolved inside it. Nothing was written.";
+    const TEMPLATE_GUARD = "Stopped to protect the studio's template: a folder to write to turned out to be inside it. Nothing was changed.";
 
     try {
       if (inTemplate(filmProject.id) || filmProject.id === plan.template?.id) {
@@ -150,23 +134,20 @@ export function PushToWrikeModal({ studio, filmTitle, jobs, mode = "push", onClo
       }
 
       let droppedTaskFolders = [];
-      // Rename-resilient map of the project's slot folders (JOBNUMBER_… or
-      // already XY#####_…), keyed by stable suffix.
+      // The project's job folders ("JOBNUMBER_…" or already "XY#####_…"), by the
+      // part of the name that survives a rename.
       setProgress({ step: "Checking the film's folders in Wrike…", done: 0, total: 1 });
       let slotFolders = await mapSlotFoldersUnder(filmProject.id);
 
-      // Only duplicate the template when the project is genuinely empty of slot
-      // folders. If it already has the structure, we rename/tag in place.
+      // Copy the template in only when the project has none of its job folders.
       if (Object.keys(slotFolders).length === 0) {
-        if (isRetag) throw new Error("This project has no template folders yet — run Push first.");
-        if (!plan.template) throw new Error(`No ${studio} master template found to copy.`);
-        // Copy the template's CHILDREN straight into the film project — never the
-        // template root as one film-named folder — so the film project doesn't end
-        // up with a redundant wrapper folder named after itself. The template's top
-        // level already IS the campaign structure (Launch/Print/…).
+        if (isRetag) throw new Error("This film has none of the studio's folders in Wrike yet. Send its jobs to Wrike first.");
+        if (!plan.template) throw new Error(`Wrike has no ${studio} template to copy.`);
+        // The template's CHILDREN go straight into the film project, so it
+        // doesn't gain a wrapper folder named after the template.
         const tpl = plan.byId[plan.template.id];
         const children = (tpl?.childIds || []).map((id) => plan.byId[id]).filter(Boolean);
-        if (!children.length) throw new Error(`The ${studio} master template has no folders to copy.`);
+        if (!children.length) throw new Error(`The ${studio} template in Wrike is empty.`);
         const report = { rootId: null, copies: 0, droppedTaskFolders: [] };
         for (const child of children) {
           await copyTemplateDeep({
@@ -178,143 +159,132 @@ export function PushToWrikeModal({ studio, filmTitle, jobs, mode = "push", onClo
             report,
           });
         }
-        if (!report.copies) throw new Error("Wrike copy created nothing.");
+        if (!report.copies) throw new Error("Wrike copied nothing from the template.");
         droppedTaskFolders = report.droppedTaskFolders || [];
-        setProgress({ step: "Re-reading the copied folders…", done: 0, total: 1 });
+        setProgress({ step: "Reading the new folders…", done: 0, total: 1 });
         slotFolders = await mapSlotFoldersUnder(filmProject.id);
       }
 
-      // Rename each activated slot's folder to its code, set the Job Number field
-      // on the folder, then let Wrike cascade that value down to every subitem.
-      //
-      // A folder is claimed by IDENTITY, not by slot name. A slot can hold
-      // several jobs on purpose, so each needs its own folder; pickSlotFolder
-      // hands out the one already bearing this job's code (making a re-push a
-      // no-op), else a free "JOBNUMBER_…" one, and NEVER one already carrying a
-      // different job's code. A job with no folder available is reported so
-      // somebody can make one — the previous version claimed by slot name and
-      // could hand a job its neighbour's folder, renaming that neighbour's
-      // allocation onto this code.
+      // A folder is claimed by identity, not by type: pickSlotFolder gives the
+      // one already carrying this job's code (so sending twice changes nothing),
+      // else a free "JOBNUMBER_…" one, and never one carrying another job's code.
       const claimedIds = new Set();
-      let renamed = 0, cascaded = 0, propagated = 0, failed = 0, skipped = 0, contended = 0;
+      const outcomes = [];
       for (let i = 0; i < selectedSlots.length; i++) {
         const s = selectedSlots[i];
         const suffix = slotSuffix(s.label);
         const available = slotFolders[suffix] || [];
         const folder = pickSlotFolder(available, s.code, claimedIds);
+        const outcome = { id: s.id, code: s.code, name: typeName(s.label), ok: false, notes: [] };
+        outcomes.push(outcome);
         if (!folder) {
-          // Tell "this slot has no folder at all" apart from "every folder it
-          // has is already spoken for" — the first needs a template push, the
-          // second needs one more folder in Wrike.
-          if (available.length) contended += 1;
-          else skipped += 1;
+          outcome.notes.push(available.length
+            ? "Every folder of this kind in Wrike already belongs to another job. Add one more in Wrike, then send again."
+            : "The film has no folder of this kind in Wrike.");
           continue;
         }
         claimedIds.add(folder.id);
-        if (inTemplate(folder.id)) throw new Error(TEMPLATE_GUARD); // never write into the template
+        if (inTemplate(folder.id)) throw new Error(TEMPLATE_GUARD);
 
         const newTitle = `${s.code}_${suffix}`;
-        setProgress({ step: `Assigning ${s.code}…`, done: i, total: slots.length });
-        if (folder.title !== newTitle) { await renameFolder(folder.id, newTitle); renamed += 1; }
+        setProgress({ step: `Numbering ${s.code}…`, done: i, total: selectedSlots.length });
+        if (folder.title !== newTitle) await renameFolder(folder.id, newTitle);
+        outcome.ok = true;
 
-        // Remember which Wrike folder this job now owns, and under what name — so
-        // the app can later tell "reverted/renamed in Wrike" from "never pushed"
-        // (a job with no folder id was never pushed) and offer to reconcile.
+        // Which Wrike folder this job owns, and under what name, so the app can
+        // later tell "renamed in Wrike" from "never sent".
         if (s.id) {
-          await supabase.from("jobs")
+          const { error: saveErr } = await supabase.from("jobs")
             .update({ wrike_folder_id: folder.id, wrike_folder_title: newTitle })
             .eq("id", s.id);
+          if (saveErr) outcome.notes.push(`The Job Book couldn't record its folder (${saveErr.message}), so it may still show as not in Wrike.`);
         }
 
-        // Fill the slot folder's own Job Number field, then turn on Wrike-native
-        // cascading so the value flows down to every current AND future subitem
-        // (nested market folders + tasks) — no per-item walk needed.
-        //
-        // THE FIELD CARRIES THE WHOLE FOLDER NAME, NOT THE BARE CODE.
-        //
-        // It used to send s.code, so a folder named
-        // "XY026179_ITM_Print_Custom_Lobby_Display" cascaded a Job Number of
-        // just "XY026179" — the code without the thing it identifies. Several
-        // folders under one film share a code prefix and differ only in the
-        // suffix, so the bare value can't say which job an item belongs to, and
-        // anyone reading the field in Wrike had to go and look at the folder
-        // title to find out.
-        //
-        // newTitle is the name the folder was just renamed to, so the two are
-        // the same string by construction rather than by two rules that agree
-        // today. Nothing downstream has to change: resolveJobNumber already
-        // pulls the bare XY code back out of a suffixed value and returns the
-        // Job Book's registered option where there is one, which is why
-        // wrikeHelpers has read "XY025953_LUG_D6" shaped values all along.
+        // The field carries the whole folder name, not the bare code: several
+        // folders under one film share a code prefix, and the name is what says
+        // which job an item belongs to. Wrike's own cascading then copies it to
+        // everything inside, including tasks added later.
         try {
           await setFolderJobNumber(folder.id, plan.field.id, newTitle);
           await triggerFieldCascade(folder.id, plan.field.id);
-          cascaded += 1;
-        } catch {
-          failed += 1; // keep going with the remaining slots; count surfaces in the summary
+        } catch (e) {
+          outcome.ok = false;
+          outcome.notes.push(`Its folder was named, but the job number couldn't be put on it (${e.message}). Send it again.`);
         }
 
-        // Belt-and-braces: also tag existing tasks directly. Redundant once cascade
-        // is confirmed live, but harmless (same value) and safe if a field's config
-        // limits cascade — remove once the cascade path is verified on the account.
-        //
-        // planPropagate skips a task whose value already equals what we're
-        // sending, so on the first run after this change every task still
-        // holding the bare code is re-stamped with the full name. That is the
-        // migration, and it only happens once.
+        // Also number the tasks already there directly, in case the field's
+        // settings limit cascading. Tasks already carrying the value are skipped.
         const p = await planPropagate(folder.id, plan.field.id, newTitle);
         const r = await applyPropagate(p.willSet, plan.field.id, newTitle,
-          (d, t) => setProgress({ step: `Tagging ${s.code} tasks…`, done: d, total: t }));
-        propagated += r.ok.length;
-        failed += r.failed.length;
+          (d, t) => setProgress({ step: `Numbering the tasks in ${s.code}…`, done: d, total: t }));
+        outcome.tasks = r.ok.length;
+        if (r.failed.length) {
+          outcome.notes.push(`${r.failed.length} task${r.failed.length === 1 ? "" : "s"} couldn't be numbered. Use “Update job numbers” on the film to try those again.`);
+        }
       }
-      setResult({ renamed, cascaded, propagated, failed, skipped, contended, droppedTaskFolders });
-      notify(`Wrike updated — ${renamed} folder${renamed === 1 ? "" : "s"} named${cascaded ? `, ${cascaded} cascaded` : ""}${propagated ? `, ${propagated} task${propagated === 1 ? "" : "s"} tagged` : ""}${failed ? `, ${failed} failed` : ""}.`,
-        failed ? "error" : "success");
+      setResult({ outcomes, droppedTaskFolders });
+      const good = outcomes.filter((o) => o.ok && !o.notes.length).length;
+      notify(
+        good === outcomes.length
+          ? `${good} job${good === 1 ? " is" : "s are"} in Wrike.`
+          : `${good} of ${outcomes.length} jobs went through cleanly. The rest are listed.`,
+        good === outcomes.length ? "success" : "error"
+      );
     } catch (e) {
-      setError(e.message);
+      // Stopped part-way: what was done stays done, and sending again carries on
+      // from there, since a folder already carrying a job's number is recognised.
+      setError(`${plainWrikeError(e)} Anything already numbered stays as it is; send again to finish the rest.`);
     } finally {
       setApplying(false);
       setProgress(null);
     }
   };
 
+  const studioLabel = plan?.studioFolder?.title || studioFolderTitle || studio;
+
   return (
-    <WrikeApplyShell title={isRetag ? "Re-tag new items in Wrike" : "Push to Wrike"}
+    <WrikeApplyShell title={isRetag ? "Update job numbers in Wrike" : "Send to Wrike"}
       subtitle={isRetag
-        ? `Top up the Job Number field on new items in “${filmTitle}”`
-        : `Name the activated job folders in “${filmTitle}” and tag their tasks`} onClose={onClose}>
+        ? `Puts each job's number on tasks added to “${filmTitle}” since it was sent`
+        : `Names each job's folder in “${filmTitle}” and numbers its tasks`}
+      onClose={() => onClose(!!result)}>
       <div className="px-6 py-5 overflow-y-auto flex-1">
         {loading ? (
           <div className="flex items-center gap-2 text-[#768994] py-8 justify-center">
             <Loader2 className="w-4 h-4 animate-spin" /> Checking Wrike…
           </div>
         ) : result ? (
-          <div className="py-4 space-y-3 text-center">
-            <CheckCircle2 className="w-10 h-10 text-[#1cc1a5] mx-auto" />
-            <p className="text-sm font-bold text-[#122027]">
-              {isRetag ? `“${filmTitle}” re-tagged in Wrike.` : `“${filmTitle}” updated in Wrike.`}
-            </p>
-            <p className="text-xs text-[#768994]">
-              {result.renamed ? `${result.renamed} folder${result.renamed === 1 ? "" : "s"} named · ` : ""}
-              {result.cascaded ? `${result.cascaded} cascaded · ` : ""}
-              {result.propagated} task{result.propagated === 1 ? "" : "s"} tagged
-              {result.failed ? ` · ${result.failed} failed` : ""}
-              {result.skipped ? ` · ${result.skipped} slot${result.skipped === 1 ? "" : "s"} had no matching folder` : ""}
-              {result.contended ? ` · ${result.contended} job${result.contended === 1 ? "" : "s"} share a slot whose folder was already claimed` : ""}.
-            </p>
+          <div className="space-y-3">
+            <ul className="rise-in border border-[#dce4ec] rounded-2xl divide-y divide-[#f0f4f8]">
+              {result.outcomes.map((o) => {
+                const clean = o.ok && !o.notes.length;
+                const Icon = clean ? CheckCircle2 : o.ok ? AlertTriangle : X;
+                return (
+                  <li key={o.id} className="flex items-start gap-2.5 px-4 py-2.5">
+                    <Icon className={`settle-in w-4 h-4 shrink-0 mt-0.5 ${clean ? "text-[#1cc1a5]" : o.ok ? "text-[#f4b740]" : "text-rose-500"}`} />
+                    <div className="min-w-0 text-xs">
+                      <p className="font-bold text-[#122027]">
+                        <span className="font-mono">{o.code}</span> · {o.name}
+                        {clean && <span className="font-medium text-[#768994]"> · in Wrike{o.tasks ? `, ${o.tasks} task${o.tasks === 1 ? "" : "s"} numbered` : ""}</span>}
+                      </p>
+                      {o.notes.map((n, i) => <p key={i} className="text-[11px] text-[#8a6d1a] mt-0.5">{n}</p>)}
+                    </div>
+                  </li>
+                );
+              })}
+            </ul>
             {result.droppedTaskFolders?.length > 0 && (
-              <div className="text-left mt-2 px-3 py-2 bg-[#f4b740]/10 border border-[#f4b740]/30 rounded-xl">
+              <div className="px-3 py-2 bg-[#f4b740]/10 border border-[#f4b740]/30 rounded-xl">
                 <p className="flex items-center gap-1.5 text-[11px] font-bold text-[#8a6d1a] mb-1">
-                  <AlertTriangle className="w-3.5 h-3.5" /> Some container folders were too big to copy whole
+                  <AlertTriangle className="w-3.5 h-3.5" /> Some folders were too big for Wrike to copy in one go
                 </p>
                 <p className="text-[11px] text-[#8a6d1a] leading-snug">
-                  Their subfolders (and all tasks inside those) came across fine, but tasks pinned directly to
-                  these folders were not copied — add them by hand if needed:
+                  The folders inside them came across with all their tasks, but tasks sitting directly in these
+                  ones did not. Add them by hand if they&rsquo;re needed:
                 </p>
                 <ul className="mt-1 text-[11px] text-[#8a6d1a] list-disc pl-4">
                   {result.droppedTaskFolders.map((d) => (
-                    <li key={d.title}>{d.title} — {d.count} direct task{d.count === 1 ? "" : "s"}</li>
+                    <li key={d.title}>{d.title}: {d.count} task{d.count === 1 ? "" : "s"}</li>
                   ))}
                 </ul>
               </div>
@@ -322,30 +292,27 @@ export function PushToWrikeModal({ studio, filmTitle, jobs, mode = "push", onClo
           </div>
         ) : (
           <>
-            <p className="text-[10px] font-black uppercase tracking-widest text-[#768994] mb-1">Preconditions</p>
+            <p className="text-[10px] font-black uppercase tracking-widest text-[#768994] mb-1">Before anything is sent</p>
             <div className="border border-[#dce4ec] rounded-2xl px-4 py-2 mb-4">
-              <CheckRow ok={!!plan?.field} label="Job Number custom field"
-                value={plan?.field ? `“${plan.field.title}”` : "Not found in Wrike — can't tag tasks"} />
+              <CheckRow ok={!!plan?.field} label="Wrike has a Job Number field"
+                value={plan?.field ? `“${plan.field.title}”` : "Not found, so there is nowhere to put the number"} />
               {!isRetag && (
-                <CheckRow ok={!!plan?.template} label="Studio master template"
-                  value={plan?.template ? `${plan.template.title} · ${plan.template.jobCount} job folders` : `No “${studio}” master template found`} />
+                <CheckRow ok={!!plan?.template} label={`${studio}'s standard folders`}
+                  value={plan?.template ? `${plan.template.title}, ${plan.template.jobCount} kinds of job` : `Wrike has no ${studio} template`} />
               )}
-              <CheckRow ok={!!filmProject} label="Target film project in Wrike"
+              <CheckRow ok={!!filmProject} label="This film's project in Wrike"
                 warn={!filmProject && (plan?.projects?.length > 0)}
                 value={filmProject
-                  ? `${filmProject.title} (in ${plan.studioFolder?.title || studio})`
+                  ? `${filmProject.title}, in ${studioLabel}`
                   : plan?.projects?.length
-                    ? "Pick the matching project below"
-                    : `No projects under ${studio} — sync films first`} />
+                    ? `Nothing in ${studioLabel} is called exactly “${filmTitle}”. Choose it below.`
+                    : `${studioLabel} has no film projects in Wrike. Create this film's project there first; its jobs stay in the Job Book and can be sent later.`} />
             </div>
 
-            {/* Film picker — auto-selects the closest match, but you can override
-                it (handy when the Wrike project name differs slightly from the
-                local film title). This is the folder the template copies into. */}
             {!!plan?.projects?.length && (
               <div className="mb-4">
                 <label className="block text-[10px] font-black uppercase tracking-widest text-[#768994] mb-1.5">
-                  Target project · {studio}
+                  Film project in Wrike · {studioLabel}
                 </label>
                 <StrictSelect
                   value={filmProject?.title || ""}
@@ -354,37 +321,34 @@ export function PushToWrikeModal({ studio, filmTitle, jobs, mode = "push", onClo
                     setTargetId(p?.id || "");
                   }}
                   options={plan.projects.map((p) => p.title)}
-                  placeholder={`Search ${studio} projects…`} />
+                  placeholder={`Find the project in ${studioLabel}…`} />
                 <p className="text-[10px] text-[#768994] mt-1">
-                  Closest match to “{filmTitle}” is pre-selected — change it if the Wrike name differs.
+                  {isRetag ? "The jobs' folders are looked for inside this project." : "The studio's folders are copied into this project if it doesn't have them yet."}
                 </p>
               </div>
             )}
 
             <p className="text-[10px] font-black uppercase tracking-widest text-[#768994] mb-2">
-              {selectedSlots.length} of {slots.length} activated job{slots.length === 1 ? "" : "s"} to tag
-              {doneSlots.size > 0 && <span className="text-[#1cc1a5] normal-case font-bold"> · {doneSlots.size} already tagged</span>}
+              {selectedSlots.length} of {slots.length} job{slots.length === 1 ? "" : "s"} to {isRetag ? "update" : "send"}
+              {!isRetag && doneSlots.size > 0 && <span className="text-[#0f766e] normal-case font-bold"> · {doneSlots.size} already in Wrike</span>}
             </p>
             {slots.length === 0 ? (
-              <p className="text-xs text-[#768994] italic mb-2">
-                No slots activated yet — the template will still be duplicated, but no tasks will be tagged.
-                Activate slots first to tag their tasks with a Job Number.
-              </p>
+              <p className="text-xs text-[#768994] italic mb-2">There are no jobs to send.</p>
             ) : (
-              <div className="border border-[#dce4ec] rounded-2xl divide-y divide-[#f0f4f8] max-h-[200px] overflow-y-auto scrollbar-thin scrollbar-inset mb-2">
+              <div className="border border-[#dce4ec] rounded-2xl divide-y divide-[#f0f4f8] max-h-[220px] overflow-y-auto scrollbar-thin scrollbar-inset mb-2">
                 {slots.map((s) => {
                   const on = !excluded.has(s.id);
                   const done = doneSlots.has(s.id);
                   return (
                     <label key={s.id}
-                      className={`flex items-center justify-between gap-2 px-4 py-2 text-[11px] cursor-pointer transition-opacity ${on ? "" : "opacity-45"}`}>
+                      className={`flex items-center justify-between gap-2 px-4 py-2 text-xs cursor-pointer transition-opacity ${on ? "" : "opacity-50"}`}>
                       <span className="flex items-center gap-2 min-w-0">
                         <input type="checkbox" checked={on} onChange={() => toggleSlot(s.id)}
-                          className="accent-[#12a0e1] w-3.5 h-3.5 shrink-0" />
-                        <span className="text-[#122027] truncate">{s.label.replace(/^JOBNUMBER_?/i, "").replace(/_/g, " ")}</span>
-                        {done && <span className="text-[9px] font-black uppercase tracking-wider text-[#1cc1a5] bg-[#1cc1a5]/10 px-1.5 py-0.5 rounded-full shrink-0">Tagged</span>}
+                          className="accent-[#1cc1a5] w-3.5 h-3.5 shrink-0" />
+                        <span className="text-[#122027] truncate">{typeName(s.label)}</span>
+                        {done && <span className="text-[10px] font-black text-[#0f766e] bg-[#1cc1a5]/15 px-1.5 py-0.5 rounded-full shrink-0">In Wrike</span>}
                       </span>
-                      <span className={`font-mono font-bold shrink-0 ${on ? "text-[#12a0e1]" : "text-[#768994] line-through"}`}>{s.code}</span>
+                      <span className={`font-mono font-bold shrink-0 ${on ? "text-[#0f766e]" : "text-[#768994] line-through"}`}>{s.code}</span>
                     </label>
                   );
                 })}
@@ -393,28 +357,28 @@ export function PushToWrikeModal({ studio, filmTitle, jobs, mode = "push", onClo
 
             {progress && (
               <div className="mt-3">
-                <p className="text-xs font-bold text-[#12a0e1] mb-1.5">{progress.step}</p>
+                <p className="text-xs font-bold text-[#0f766e] mb-1.5">{progress.step}</p>
                 <div className="h-1.5 bg-slate-100 rounded-full overflow-hidden">
-                  <div className="h-full w-full bg-[#12a0e1] origin-left transition-[transform] ease-[cubic-bezier(0.16,1,0.3,1)]"
+                  <div className="h-full w-full bg-[#1cc1a5] origin-left transition-[transform] ease-[cubic-bezier(0.16,1,0.3,1)]"
                     style={{ transform: `scaleX(${progress.total ? progress.done / progress.total : 1})` }} />
                 </div>
               </div>
             )}
-            {error && <p className="text-xs font-bold text-rose-500 mt-3">{error}</p>}
+            {error && <p className="text-xs font-bold text-rose-600 mt-3">{error}</p>}
           </>
         )}
       </div>
       <div className="px-6 py-4 border-t border-[#dce4ec] flex items-center justify-end gap-2 shrink-0">
-        <button onClick={onClose}
-          className="px-5 py-2.5 text-sm font-bold text-[#768994] hover:text-[#122027] bg-white border border-[#dce4ec] rounded-xl transition-[color] ease-[cubic-bezier(0.16,1,0.3,1)]">
-          {result ? "Close" : "Cancel"}
+        <button onClick={() => onClose(!!result)}
+          className="px-5 py-2.5 text-sm font-bold text-[#768994] hover:text-[#122027] bg-white border border-[#dce4ec] rounded-xl press">
+          {result ? "Done" : "Not now"}
         </button>
         {!result && (
           <button onClick={apply} disabled={!canApply}
-            title={!canApply && !applying ? "All preconditions above must pass first" : ""}
-            className="flex items-center gap-2 px-6 py-2.5 bg-[#12a0e1] hover:bg-[#0d8bc4] text-white text-sm font-bold rounded-xl transition-[background-color] ease-[cubic-bezier(0.16,1,0.3,1)] disabled:opacity-40">
+            title={!canApply && !applying ? "Everything in the list above has to be in place first" : ""}
+            className="flex items-center gap-2 px-6 py-2.5 bg-[#1cc1a5] hover:bg-[#17a892] text-white text-sm font-bold rounded-xl press disabled:opacity-40">
             {applying ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <UploadCloud className="w-3.5 h-3.5" />}
-            Apply to Wrike
+            {isRetag ? "Update in Wrike" : "Send to Wrike"}
           </button>
         )}
       </div>

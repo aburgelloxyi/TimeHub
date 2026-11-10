@@ -5,8 +5,9 @@
 // still the entry point and re-exports what other screens import.
 import { useState, useEffect, useCallback, useMemo } from "react";
 import { Plus, Pencil, Trash2, X, Check, Search, RefreshCw, ChevronLeft, ChevronRight, ArrowUpAZ, ArrowDownAZ, Download } from "lucide-react";
-import { supabase } from "../../lib/supabaseClient";
+import { supabase, selectAll } from "../../lib/supabaseClient";
 import { confirmAction } from "../../lib/confirm";
+import { notify } from "../../lib/toast";
 import { SEED_CLIENTS, SEED_PROJECT_DESCRIPTIONS } from "../../data/seedData";
 import { CATEGORIES } from "../../constants";
 import { FilmSyncModal } from "./FilmSyncModal";
@@ -39,7 +40,10 @@ const letterPalette = (l) => {
 // twice on the page. It's handed the item and a patch function that updates
 // this component's copy, so the control reflects its own edits without a
 // refetch. Flat mode only; grouped rows are too tight for it.
-export function SimpleListSection({ table, labelField = "name", label, placeholder, isLong = false, quickFilters = [], quickFilterLabel = "Quick filters", groups = [], wrikeFilmSync = false, onItemClick, renderRowExtra }) {
+// `onRenamed(oldText, newText)` runs after a rename is saved, and
+// `deleteWarning(text)` may return a sentence to add to the delete
+// confirmation: Films uses both to look after the jobs filed under a film.
+export function SimpleListSection({ table, labelField = "name", label, placeholder, isLong = false, quickFilters = [], quickFilterLabel = "Quick filters", groups = [], wrikeFilmSync = false, onItemClick, renderRowExtra, onRenamed, deleteWarning, itemClickHint }) {
   const [items, setItems]               = useState([]);
   const [showFilmSync, setShowFilmSync] = useState(false);
   const [loading, setLoading]           = useState(true);
@@ -88,12 +92,27 @@ export function SimpleListSection({ table, labelField = "name", label, placehold
   const [groupShowCount, setGroupShowCount] = useState({});
   const toggleGroup = (label) => setExpandedGroups(prev => ({ ...prev, [label]: !prev[label] }));
 
+  // selectAll: a plain read stops at 1000 rows without saying so, and Clients
+  // and Job Descriptions are both long lists.
   const load = useCallback(async () => {
     setLoading(true);
-    const { data } = await supabase.from(table).select("*").order(labelField);
-    setItems(data || []);
+    try {
+      setItems(await selectAll(table, "*", undefined, labelField));
+    } catch (e) {
+      notify(`Couldn't load ${label.toLowerCase()}: ${e.message || e}`, "error");
+    }
     setLoading(false);
-  }, [table, labelField]);
+  }, [table, labelField, label]);
+
+  // supabase-js resolves rather than throws when the database refuses a write,
+  // so each one is checked: a duplicate used to close the form and add nothing.
+  const refused = (error, doing) => {
+    if (!error) return false;
+    notify(error.code === "23505"
+      ? `That's already in the ${label.toLowerCase()} list.`
+      : `Couldn't ${doing}: ${error.message}`, "error");
+    return true;
+  };
 
   useEffect(() => { load(); }, [load]);
   useEffect(() => { setPage(0); }, [search, activeLetter, sort, activeQuickFilter]);
@@ -101,38 +120,47 @@ export function SimpleListSection({ table, labelField = "name", label, placehold
   const add = async () => {
     if (!newVal.trim()) return;
     setSaving(true);
-    await supabase.from(table).insert({ [labelField]: newVal.trim() });
+    const { error } = await supabase.from(table).insert({ [labelField]: newVal.trim() });
+    setSaving(false);
+    if (refused(error, "add it")) return;
     setNewVal(""); setAdding(false);
     await load();
-    setSaving(false);
   };
 
   const saveEdit = async (id) => {
     if (!editVal.trim()) return;
+    const before = items.find((it) => it.id === id)?.[labelField] || "";
+    const after = editVal.trim();
+    if (after === before) { setEditId(null); return; }
     setSaving(true);
-    await supabase.from(table).update({ [labelField]: editVal.trim() }).eq("id", id);
+    const { error } = await supabase.from(table).update({ [labelField]: after }).eq("id", id);
+    setSaving(false);
+    if (refused(error, "rename it")) return;
     setEditId(null);
     await load();
-    setSaving(false);
+    await onRenamed?.(before, after);
   };
 
   const remove = async (id) => {
+    const text = items.find((it) => it.id === id)?.[labelField] || "this";
+    const extra = await deleteWarning?.(text);
     const ok = await confirmAction({
-      title: "Delete this item?",
-      message: `It will be removed from the ${label.toLowerCase()} list for everyone.`,
+      title: `Delete “${text}”?`,
+      message: `It will be removed from the ${label.toLowerCase()} list for everyone.${extra ? ` ${extra}` : ""}`,
       confirmLabel: "Delete",
       danger: true,
     });
     if (!ok) return;
-    await supabase.from(table).delete().eq("id", id);
+    const { error } = await supabase.from(table).delete().eq("id", id);
+    if (refused(error, "delete it")) return;
     await load();
   };
 
   const seedData = async (seedArr) => {
     const ok = await confirmAction({
-      title: `Seed ${seedArr.length} items?`,
-      message: `The starter ${label.toLowerCase()} list will be inserted. Existing entries are left untouched.`,
-      confirmLabel: "Seed list",
+      title: `Add the starter list of ${seedArr.length}?`,
+      message: `The usual ${label.toLowerCase()} are added. Anything already in the list is left as it is.`,
+      confirmLabel: "Add them",
     });
     if (!ok) return;
     setSaving(true);
@@ -220,16 +248,16 @@ export function SimpleListSection({ table, labelField = "name", label, placehold
           <button onClick={() => seedData(seedArr)} disabled={saving}
             className="flex items-center gap-1.5 px-3.5 py-2.5 bg-amber-500 hover:bg-amber-600 text-white text-xs font-bold rounded-xl transition-[background-color] ease-[cubic-bezier(0.16,1,0.3,1)] shrink-0 disabled:opacity-50">
             <RefreshCw className={`w-3.5 h-3.5 ${saving ? "animate-spin" : ""}`} />
-            Seed ({seedArr.length})
+            Add the starter list ({seedArr.length})
           </button>
         )}
 
         {/* Sync from Wrike (films only) — pull Project items from a studio folder */}
         {wrikeFilmSync && (
           <button onClick={() => setShowFilmSync(true)}
-            title="Pull film projects from a studio folder in Wrike into this list"
-            className="flex items-center gap-1.5 px-3.5 py-2.5 bg-[#1cc1a5] hover:bg-[#17a892] text-white text-xs font-bold rounded-xl transition-[background-color] ease-[cubic-bezier(0.16,1,0.3,1)] shrink-0">
-            <Download className="w-3.5 h-3.5" /> Sync from Wrike
+            title="Find films in Wrike that aren't in this list yet"
+            className="press flex items-center gap-1.5 px-3.5 py-2.5 bg-[#1cc1a5] hover:bg-[#17a892] text-white text-xs font-bold rounded-xl shrink-0">
+            <Download className="w-3.5 h-3.5" /> Bring in from Wrike
           </button>
         )}
 
@@ -529,7 +557,7 @@ export function SimpleListSection({ table, labelField = "name", label, placehold
                     {onItemClick ? (
                       <button
                         onClick={() => onItemClick(text)}
-                        title={`Open “${text}”`}
+                        title={itemClickHint || `Open “${text}”`}
                         className={`flex-1 min-w-0 text-left text-[15px] font-semibold text-[#122027] hover:text-[#12a0e1] transition-colors ${isLong ? "leading-snug" : "truncate"}`}
                       >
                         {text}

@@ -6,6 +6,9 @@ import StudioAnalytics from "./StudioAnalytics";
 import { isManager } from "../lib/access";
 import { AdminHub } from "./management/AdminHub";
 import { FilmCampaignModal } from "./management/FilmCampaignModal";
+import { jobsForFilm, renameFilmOnJobs } from "./management/filmEdits";
+import { confirmAction } from "../lib/confirm";
+import { notify } from "../lib/toast";
 import { FeedbackSection } from "./management/FeedbackSection";
 import { FilmStudioPicker } from "./management/FilmStudioPicker";
 import { JobsFeedSection } from "./management/JobsFeedSection";
@@ -144,6 +147,32 @@ export default function Management({ wrikeUserId, department, wrikeData = [] }) 
   const [navDirection, setNavDirection] = useState(1);
 
   const toggleGroup = (id) => setExpandedGroup((g) => (g === id ? null : id));
+
+  // A job belongs to its film by title, so a film renamed only in the Films
+  // list would leave its jobs behind. Asked rather than done: the jobs' labels
+  // change with it, and those are what timesheets show.
+  const renameFilmJobs = async (oldTitle, newTitle) => {
+    const jobs = await jobsForFilm(oldTitle);
+    if (!jobs.length) return;
+    const n = jobs.length;
+    const ok = await confirmAction({
+      title: `Rename it on ${n} job${n === 1 ? "" : "s"} too?`,
+      message: `${n} job${n === 1 ? " is" : "s are"} filed under “${oldTitle}”. Renaming ${n === 1 ? "it" : "them"} to “${newTitle}” keeps ${n === 1 ? "it" : "them"} with this film. Otherwise ${n === 1 ? "it stays" : "they stay"} under the old name and won't show as this film's jobs.`,
+      confirmLabel: `Rename ${n} job${n === 1 ? "" : "s"}`,
+    });
+    if (!ok) return;
+    const { renamed, failed } = await renameFilmOnJobs(jobs, newTitle);
+    notify(
+      failed ? `${renamed} job${renamed === 1 ? "" : "s"} renamed, ${failed} couldn't be.` : `${renamed} job${renamed === 1 ? "" : "s"} renamed.`,
+      failed ? "error" : "success"
+    );
+  };
+  const filmDeleteWarning = async (title) => {
+    const n = (await jobsForFilm(title)).length;
+    return n
+      ? `${n} job${n === 1 ? " is" : "s are"} filed under it. ${n === 1 ? "It stays" : "They stay"} in the Job Book, but won't belong to a film in this list.`
+      : null;
+  };
 
   // The open item lives in the hash's second segment (`#management/films`), so
   // it's a history entry of its own: back leaves an item for the hub instead of
@@ -330,7 +359,8 @@ export default function Management({ wrikeUserId, department, wrikeData = [] }) 
                   {activeTab === "people"     && <PeopleSection />}
                   {activeTab === "films"      && (
                     <SimpleListSection table="films" labelField="title" label="Films" placeholder="Film title…"
-                      wrikeFilmSync onItemClick={setCampaignFilm}
+                      wrikeFilmSync onItemClick={setCampaignFilm} itemClickHint="See this film's jobs"
+                      onRenamed={renameFilmJobs} deleteWarning={filmDeleteWarning}
                       renderRowExtra={(item, patchItem) => <FilmStudioPicker item={item} patchItem={patchItem} />} />
                   )}
                   {activeTab === "clients"    && <ClientsSection quickFilters={STUDIO_GROUPS} />}

@@ -283,6 +283,21 @@ const regionOf = (studioTitle, studioKw) => {
   };
 };
 
+// The client and description the scan gives a job under this studio folder,
+// for filing a job before its Wrike folder exists: filed any other way, the
+// scan would later report the job as not matching Wrike.
+export function studioFolderNaming(studioFolderTitle) {
+  const kw = STUDIO_KEYWORDS.find((k) => new RegExp(`\\b${k}\\b`, "i").test(studioFolderTitle || ""));
+  if (!kw) return { client: "", describe: (d) => d };
+  const region = regionOf(studioFolderTitle, kw);
+  const base = STUDIO_CLIENT[kw.toLowerCase()] || kw;
+  return {
+    client: region ? `${base} ${region.name}` : base,
+    describe: (d) =>
+      region && d && !new RegExp(`^${region.short}\\b`, "i").test(d) ? `${region.short} - ${d}` : d,
+  };
+}
+
 // Scan the whole visible folder tree and return one candidate Job Book row per
 // XY code.
 //
@@ -707,13 +722,16 @@ export async function planFilmSync(studioName, existingTitles) {
   }
   // Wrike project names use underscores; show them as spaced film titles.
   const clean = (t) => (t || "").replace(/_/g, " ").replace(/\s+/g, " ").trim();
-  const have = new Set([...existingTitles].map((t) => clean(t).toLowerCase()));
+  // Punctuation aside: "Cocomelon: The Movie" in Wrike is the "Cocomelon The
+  // Movie" already in the list.
+  const key = (t) => clean(t).toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+  const have = new Set([...existingTitles].map(key));
   const projects = await fetchFolderProjects([...new Set(studioFolders.flatMap((f) => f.childIds || []))]);
   const toAdd = projects
     .map((p) => clean(p.title))
-    .filter((t) => t && !have.has(t.toLowerCase()))
-    // de-dupe titles that differ only by case/spacing within Wrike itself
-    .filter((t, i, arr) => arr.findIndex((x) => x.toLowerCase() === t.toLowerCase()) === i)
+    .filter((t) => t && !have.has(key(t)))
+    // the same film in two of the studio's folders, or twice in Wrike
+    .filter((t, i, arr) => arr.findIndex((x) => key(x) === key(t)) === i)
     .sort((a, b) => a.localeCompare(b));
   return {
     error: null,

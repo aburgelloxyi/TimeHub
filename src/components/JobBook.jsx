@@ -16,7 +16,7 @@ gsap.registerPlugin(useGSAP);
 // (e.g. Jobs Setup's "View in Job Book") work unchanged via setTab.
 const TABS = [
   { id: "jobsSetup", label: "Jobs Setup", desc: "Create new job numbers", icon: FolderPlus },
-  { id: "jobs",      label: "Job Book",   desc: "Live budgets & tracking", icon: Briefcase },
+  { id: "jobs",      label: "Job Book",   desc: "Every job, its client & costs", icon: Briefcase },
   { id: "feed",      label: "Project/Time", desc: "Every logged hour by job", icon: Activity },
 ];
 

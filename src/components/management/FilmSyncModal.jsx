@@ -7,7 +7,7 @@ import { Film, CheckCircle2, FolderOpen, Loader2, Download } from "lucide-react"
 import { supabase } from "../../lib/supabaseClient";
 import { notify } from "../../lib/toast";
 import { planFilmSync } from "../../lib/wrikeCampaign";
-import { STUDIO_OPTIONS } from "./constants";
+import { STUDIOS } from "../../lib/studios";
 import { WrikeApplyShell } from "./WrikeApplyShell";
 
 // Req 6 — preview + apply the Film DB sync from Wrike's studio-folder projects.
@@ -43,12 +43,12 @@ export function FilmSyncModal({ studio: initialStudio = "Paramount", existingFil
 
   return (
     <WrikeApplyShell title="Sync films from Wrike" accent="#1cc1a5"
-      subtitle={`Projects inside the ${studio} folder → Films`} onClose={onClose}>
+      subtitle={`Films in ${studio}'s Wrike folders that aren't in your Films list yet`} onClose={onClose}>
       <div className="px-6 py-5 overflow-y-auto flex-1">
         {/* Which studio folder to pull film projects from. */}
-        <div className="flex items-center gap-2 mb-4">
+        <div className="flex flex-wrap items-center gap-2 mb-4">
           <span className="text-[10px] font-black uppercase tracking-widest text-[#768994] mr-1">Studio</span>
-          {STUDIO_OPTIONS.map((s) => (
+          {STUDIOS.map((x) => x.studio).map((s) => (
             <button key={s} onClick={() => setStudio(s)}
               className={`px-3 py-1.5 rounded-xl text-xs font-bold border transition-[background-color,border-color,color] ease-[cubic-bezier(0.16,1,0.3,1)] ${
                 studio === s
@@ -61,7 +61,7 @@ export function FilmSyncModal({ studio: initialStudio = "Paramount", existingFil
         </div>
         {loading ? (
           <div className="flex items-center gap-2 text-[#768994] py-8 justify-center">
-            <Loader2 className="w-4 h-4 animate-spin" /> Reading {studio} projects from Wrike…
+            <Loader2 className="w-4 h-4 animate-spin" /> Reading {studio}&rsquo;s films from Wrike…
           </div>
         ) : plan?.error ? (
           <div className="text-sm font-bold text-rose-500 py-6 text-center">{plan.error}</div>
@@ -69,12 +69,14 @@ export function FilmSyncModal({ studio: initialStudio = "Paramount", existingFil
           <>
             <div className="flex items-center gap-2 text-xs text-[#768994] mb-4">
               <FolderOpen className="w-4 h-4 text-[#f4b740]" />
-              Found <span className="font-bold text-[#122027]">{plan.studioFolder?.title}</span> ·
-              {" "}{plan.projectCount} project{plan.projectCount === 1 ? "" : "s"} in Wrike
+              <span>
+                {plan.projectCount} film{plan.projectCount === 1 ? "" : "s"} in Wrike under{" "}
+                <span className="font-bold text-[#122027]">{plan.studioFolders.map((f) => f.title).join(", ")}</span>
+              </span>
             </div>
             {plan.toAdd.length === 0 ? (
               <div className="flex items-center gap-2 text-sm font-bold text-[#1cc1a5] py-6 justify-center">
-                <CheckCircle2 className="w-4 h-4" /> Films are already in sync — nothing to add.
+                <CheckCircle2 className="w-4 h-4" /> Every {studio} film in Wrike is already in your Films list.
               </div>
             ) : (
               <>
@@ -84,7 +86,7 @@ export function FilmSyncModal({ studio: initialStudio = "Paramount", existingFil
                 <div className="border border-[#dce4ec] rounded-2xl divide-y divide-[#f0f4f8] max-h-[320px] overflow-y-auto scrollbar-thin scrollbar-inset">
                   {plan.toAdd.map((t) => (
                     <div key={t} className="flex items-center gap-2 px-4 py-2 text-sm text-[#122027]">
-                      <Film className="w-3.5 h-3.5 text-[#12a0e1] shrink-0" /> {t}
+                      <Film className="w-3.5 h-3.5 text-[#1cc1a5] shrink-0" /> {t}
                     </div>
                   ))}
                 </div>

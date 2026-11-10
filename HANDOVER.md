@@ -272,8 +272,8 @@ what keeps the orders themselves private; the Control Centre follows it too.
   versions come separately and need reading, particularly React, Vite, Tiptap
   and Supabase.
 - **When the studio changes how it organises Wrike** (new studio, new kind of
-  folder, new naming habit), check the Job Book scan's "disagrees with Wrike"
-  list afterwards. A sudden jump there means a folder convention changed. New
+  folder, new naming habit), check the Job Book's "don't match Wrike" list
+  afterwards. A sudden jump there means a folder convention changed. New
   studios go in `src/lib/studios.js`.
 - **When the company timesheet site changes**, check the bookmarklet still
   works. It depends on functions that site defines.

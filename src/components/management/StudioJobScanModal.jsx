@@ -1,5 +1,6 @@
-// The Studio Scan: read Wrike's folder tree and reconcile the Job
-// Book with it. Writes only to the Job Book, never to Wrike.
+// The Studio Scan's screen: what Wrike has that the Job Book doesn't, and
+// where the two disagree. Writes only to the Job Book and the Films list,
+// never to Wrike. The matching rules are in lib/jobSync.js.
 //
 // Part of Administration. Split out of components/Management.jsx, which is
 // still the entry point and re-exports what other screens import.
@@ -7,189 +8,124 @@ import { useState, useEffect, useCallback, useMemo } from "react";
 import { Plus, X, Search, RefreshCw, CheckCircle2 } from "lucide-react";
 import { supabase, selectAll } from "../../lib/supabaseClient";
 import { confirmAction } from "../../lib/confirm";
-import { scanStudioJobNumbers, descriptionsAgree } from "../../lib/wrikeCampaign";
-import { clientsAgree } from "../../lib/studios";
+import { scanStudioJobNumbers, fetchFoldersNow } from "../../lib/wrikeCampaign";
+import { changedSinceCopy, copyHealth, correctionPatch, filmsToAdd, reconcile } from "../../lib/jobSync";
+import { timeAgo } from "../../lib/systemStatus";
+import { loadKeptCodes, scanSavedTree } from "../../hooks/useWrikeJobCheck";
 
-// ── Studio Job-Number Scanner ──────────────────────────────────────────────────
-// Walks every visible Wrike folder for canonical "Film : CODE, Desc" job folders
-// and backfills the Job Book with any codes it doesn't already have. Read-only
-// against Wrike; the only write is the confirmed bulk insert into `jobs`, and it
-// never touches an existing row (codes already in the book are shown but locked).
-const scanCodeOf = (s) => {
-  const m = (s || "").match(/XY\d{5,6}/i);
-  return m ? m[0].toUpperCase() : (s || "").trim().toUpperCase();
-};
-// The "film" of a job label: the part before " : ". A bare year/number (e.g.
-// "2026") or a letterless token isn't a real film — those are what the scan's
-// year-folder fix now resolves to a real parent film.
-const scanFilmOf = (s) => ((s || "").includes(" : ") ? (s || "").split(" : ")[0] : "").trim();
-const scanIsPseudoFilm = (film) => !film || /^\d{2,4}$/.test(film.trim()) || !/[a-z]/i.test(film);
-// A book row that is nothing but the bare code — the stub `ensureJob` writes
-// the first time a job is seen in use, before anyone files it properly.
-const scanIsBareCode = (s) => /^\s*XY\d{5,6}\s*$/i.test(s || "");
-// The description a book row currently carries: everything after the first
-// comma in its job number.
-//
-// Read off job_number rather than the project_description column on purpose.
-// The rows this exists to catch were written by ensureJob, which only ever
-// sets job_number/film_title/client — so their project_description is still
-// null while the description itself sits inside the job number string.
-const scanDescOf = (s) => {
-  const i = (s || "").indexOf(",");
-  return i === -1 ? "" : s.slice(i + 1).trim();
-};
-// How complete a book row is, used to pick which row wins when the same code
-// appears more than once. `jobs.job_number` is unique, so "XY025091" and
-// "The History of Sound : XY025091, NM Packshots FinalWindow" coexist happily
-// as separate rows for one job — the constraint only stops two rows sharing
-// the *same string*. Canonical "Film : CODE, Description" beats "Film : CODE"
-// beats a bare stub.
-const scanRowRank = (s) =>
-  scanIsBareCode(s) ? 0 : (s || "").includes(" : ") ? ((s || "").includes(",") ? 2 : 1) : 0;
-export function StudioJobScanModal({ onClose, onApplied }) {
+const plural = (n, one, many = one + "s") => `${n} ${n === 1 ? one : many}`;
+
+// Each reason a book row disagrees with Wrike, as a PM would say it.
+const reasonText = (reason, cur) => ({
+  film: "filed under a different film",
+  label: "folder name left in the job number",
+  description: "different description",
+  duplicate: "the book already has the right copy",
+  client: cur?.client ? "another studio's client" : "no client",
+}[reason]);
+
+function KeepButtons({ kept, onKeep, onUndo }) {
+  return kept ? (
+    <>
+      <span className="text-[10px] font-black uppercase tracking-wider text-emerald-700 bg-emerald-50 border border-emerald-200 px-1.5 py-0.5 rounded">Left as it is</span>
+      <button onClick={onUndo} className="px-2 py-1 text-[11px] font-bold rounded-lg bg-slate-100 text-slate-600 hover:bg-slate-200 transition-colors">Undo</button>
+    </>
+  ) : (
+    <button onClick={onKeep} title="Leave the Job Book as it is and stop raising this job"
+      className="px-2.5 py-1 text-[11px] font-bold rounded-lg border border-slate-300 text-slate-600 hover:border-slate-400 hover:text-[#122027] transition-colors">
+      Keep ours
+    </button>
+  );
+}
+
+export function StudioJobScanModal({ onClose, onApplied, startFrom = "saved" }) {
   const [phase, setPhase] = useState("scanning"); // scanning | review | saving | done
+  // "saved": the folder list TimeHub keeps. "live": downloaded from Wrike now.
+  const [source, setSource] = useState("saved");
+  const [treeAt, setTreeAt] = useState(null);
+  const [health, setHealth] = useState("ok");
   const [error, setError] = useState("");
+  const [notice, setNotice] = useState("");
   const [candidates, setCandidates] = useState([]);
-  const [totalFolders, setTotalFolders] = useState(0);
-  const [existingCodes, setExistingCodes] = useState(new Set());
-  const [existingByCode, setExistingByCode] = useState({}); // code -> best book row
-  const [existingExtras, setExistingExtras] = useState({}); // code -> that code's other book rows
-  const [fixedCount, setFixedCount] = useState(0);
+  const [bookRows, setBookRows] = useState([]);
+  const [filmTitles, setFilmTitles] = useState([]);
+  const [keptCodes, setKeptCodes] = useState(new Set());
   const [selected, setSelected] = useState({});   // code -> bool
-  const [savedCount, setSavedCount] = useState(0);
+  const [done, setDone] = useState(null);         // { jobs, films, undated }
+  const [changed, setChanged] = useState(false);  // the book was written to
   const [search, setSearch] = useState("");
-  const [activeOnly, setActiveOnly] = useState(true);
-  const [showCorrections, setShowCorrections] = useState(false);
-  const [keptCodes, setKeptCodes] = useState(new Set()); // codes "kept" in Review → job_sync_kept
+  const [showArchived, setShowArchived] = useState(false);
+  const [showMismatches, setShowMismatches] = useState(false);
 
-  const loadScan = useCallback(async () => {
-    setPhase("scanning");
-    try {
-      // Whole table — a truncated read would make jobs already in the book look
-      // new and invite duplicate inserts.
-      const [found, existing, kept] = await Promise.all([
-        scanStudioJobNumbers(),
-        selectAll("jobs", "id, job_number, film_title, client"),
-        // Ordered by `code` — this table is keyed on it and has no `id`, and
-        // selectAll's default ORDER BY id made every read of it 400 silently.
-        selectAll("job_sync_kept", "code", undefined, "code"),
-      ]);
-      // One code can own several book rows (a bare stub plus the properly filed
-      // row, or two spellings of the same description). Keep the most complete
-      // row as the one a correction is measured against and applied to, and
-      // hang on to the rest — blindly overwriting the map, as this used to,
-      // could leave a stub as the "current" row and then try to rewrite it to a
-      // string its own sibling already holds, which is what tripped
-      // jobs_job_number_key.
-      const byCode = {};
-      const extrasByCode = {};
-      existing.forEach((j) => {
-        const code = scanCodeOf(j.job_number);
-        const prev = byCode[code];
-        if (!prev) { byCode[code] = j; return; }
-        const keep = scanRowRank(j.job_number) > scanRowRank(prev.job_number) ? j : prev;
-        byCode[code] = keep;
-        (extrasByCode[code] = extrasByCode[code] || []).push(keep === j ? prev : j);
-      });
-      const have = new Set(Object.keys(byCode));
-      const sel = {};
-      found.forEach((c) => { if (!have.has(c.code)) sel[c.code] = true; });
-      setExistingCodes(have);
-      setExistingByCode(byCode);
-      setExistingExtras(extrasByCode);
-      setCandidates(found);
-      setTotalFolders(found.totalFolders || 0);
-      setSelected(sel);
-      setKeptCodes(new Set(kept.map((k) => k.code)));
-      setPhase("review");
-    } catch (e) {
-      setError(e.message || String(e));
-      setPhase("review");
-    }
+  // The whole jobs table: a truncated read would make jobs already in the book
+  // look new and invite duplicates.
+  const loadBook = useCallback(async () => {
+    const [rows, kept, films] = await Promise.all([
+      selectAll("jobs", "id, job_number, film_title, client"),
+      loadKeptCodes(),
+      selectAll("films", "id, title"),
+    ]);
+    setBookRows(rows);
+    setKeptCodes(kept);
+    setFilmTitles(films.map((f) => f.title));
+    return rows;
   }, []);
 
-  useEffect(() => { let alive = true; if (alive) loadScan(); return () => { alive = false; }; }, [loadScan]);
+  const load = useCallback(async (from, why = "") => {
+    setPhase("scanning");
+    setError("");
+    setNotice(why);
+    try {
+      let found, usedSource = from;
+      if (from === "saved") {
+        try {
+          const saved = await scanSavedTree();
+          found = saved.candidates;
+          setTreeAt(saved.treeAt);
+          setHealth(copyHealth(saved));
+        } catch {
+          usedSource = "live"; // no saved copy to read: fall through to Wrike itself
+        }
+      }
+      if (usedSource === "live") found = await scanStudioJobNumbers();
+      const rows = await loadBook();
+      const have = new Set(Object.keys(reconcile(found, rows).byCode));
+      const sel = {};
+      found.forEach((c) => { if (!have.has(c.code)) sel[c.code] = true; });
+      setSource(usedSource);
+      setCandidates(found);
+      setSelected(sel);
+    } catch (e) {
+      setError(e.message || String(e));
+    }
+    setPhase("review");
+  }, [loadBook]);
 
-  // Existing book rows that disagree with Wrike. These kinds:
-  //   • a pseudo-film ("2026") the re-derived scan now resolves to a real film;
-  //   • a row filed under the WRONG film, or carrying a malformed code
-  //     ("XY026089_SKY_VIP" instead of "XY026089");
-  //   • a row whose DESCRIPTION describes something else entirely;
-  //   • a row with no client, or another studio's (clientsAgree).
-  // The second kind is why "0 new" can coexist with jobs you can't find: the
-  // code IS in the book, so the scan skips it as a duplicate, but it's filed
-  // under someone else's film and no film search will ever surface it. Wrike's
-  // folder tree is the source of truth. Nothing is written without a confirm.
-  //
-  // "Active only" governs this list too. It used to filter the NEW rows and
-  // nothing else, so ticking it hid 2,532 archived codes from the table while
-  // leaving every archived row's correction sitting in the banner above it —
-  // 59 of them, almost all from _Old, i.e. finished campaigns nobody is going
-  // to refile. The tick means "show me work that's live", and a correction is
-  // work.
-  const allCorrections = candidates.filter((c) => {
-    const cur = existingByCode[c.code];
-    if (!cur) return false;
-    if (!c.filmTitle || scanIsPseudoFilm(c.filmTitle)) return false; // scan has nothing better
-    const curFilm = scanFilmOf(cur.job_number) || cur.film_title || "";
-    const norm = (s) => (s || "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
-    const filmWrong = norm(curFilm) !== norm(c.filmTitle);
-    // Canonical code position is the bare code — a suffix means the folder name
-    // leaked into it.
-    const codeMalformed = !new RegExp(`(^|\\s:\\s)${c.code}\\s*,`, "i").test(cur.job_number || "");
-    // A description that isn't this job's at all. The signature case is a row
-    // built from a TASK name back when the pull paths did that — the book says
-    // "ODY_Print_Teaser1SHT_Birds_CMYK_KR" where the folder says "French Canada
-    // Assets". Such a row has the right film and a well-formed code, so both
-    // tests above pass it and nothing ever offered to repair it.
-    //
-    // descriptionsAgree is loose on purpose (wording, punctuation, and the
-    // region prefix the scan adds are all treated as agreement) so this only
-    // fires when the two are describing different work. An empty description on
-    // either side counts as agreement, so a row nobody has a better answer for
-    // is left alone rather than churned.
-    const descWrong = !descriptionsAgree(scanDescOf(cur.job_number), c.projectDescription);
-    // Another row for this code already IS what the scan would write, and this
-    // one isn't — typically the region twin, where the book holds both
-    // "…, Titles" and "…, INT - Titles" and the canonical one is the sibling.
-    // Routed through corrections rather than deleted here so that fixMisfilmed's
-    // existing twin handling does the work: it drops this row and lets the
-    // canonical sibling stand, which is precisely the wanted outcome.
-    const supersededByTwin =
-      (cur.job_number || "") !== c.jobNumber &&
-      (existingExtras[c.code] || []).some((r) => (r.job_number || "") === c.jobNumber);
-    const clientWrong = !clientsAgree(cur.client, c.client);
-    return filmWrong || codeMalformed || descWrong || supersededByTwin || clientWrong;
-  });
-  // A row whose only fault is its client: the fix sets the client and nothing
-  // else, so a description someone wrote by hand isn't swapped for the scan's.
-  const onlyClientWrong = (c) => {
-    const cur = existingByCode[c.code];
-    return Boolean(cur) && !clientsAgree(cur.client, c.client) && (cur.job_number || "") === c.jobNumber;
-  };
+  useEffect(() => { load(startFrom); }, [load, startFrom]);
 
-  const corrections = allCorrections.filter((c) => !activeOnly || !c.archived);
-  const correctionsHidden = activeOnly
-    ? allCorrections.length - corrections.length
-    : 0;
+  const result = useMemo(() => reconcile(candidates, bookRows), [candidates, bookRows]);
+  const live = (c) => showArchived || !c.archived;
 
-  const allNew  = candidates.filter((c) => !existingCodes.has(c.code));
-  const newOnes = allNew.filter((c) => !activeOnly || !c.archived);
-  const archivedHidden = activeOnly ? allNew.filter((c) => c.archived).length : 0;
-  const dupes   = candidates.filter((c) => existingCodes.has(c.code));
+  const newOnes = result.newJobs.filter(live);
+  const archivedNew = result.newJobs.length - result.newJobs.filter((c) => !c.archived).length;
+  const corrections = result.corrections.filter((x) => live(x.cand));
+  const archivedCorrections = result.corrections.length - result.corrections.filter((x) => !x.cand.archived).length;
+  const redundant = result.redundant;
+  const openCorrections = corrections.filter((x) => !keptCodes.has(x.code));
+  const openRedundant = redundant.filter((x) => !keptCodes.has(x.code));
+  const mismatchCount = corrections.length + redundant.length;
+  const openCount = openCorrections.length + openRedundant.length;
+
   const shown = newOnes.filter((c) => {
     if (!search) return true;
     const q = search.toLowerCase();
-    return (
-      c.code.toLowerCase().includes(q) ||
-      (c.filmTitle || "").toLowerCase().includes(q) ||
-      (c.client || "").toLowerCase().includes(q) ||
-      // Region too, so a backfill can be done one territory at a time ("uk").
-      (c.region || "").toLowerCase().includes(q)
-    );
+    return [c.code, c.filmTitle, c.client, c.region, c.projectDescription]
+      .some((v) => (v || "").toLowerCase().includes(q));
   });
-  const selectedCount = newOnes.filter((c) => selected[c.code]).length;
+  const chosen = newOnes.filter((c) => selected[c.code]);
   const allShownSelected = shown.length > 0 && shown.every((c) => selected[c.code]);
+  const newFilms = filmsToAdd(chosen, filmTitles);
+  const anyDates = newOnes.some((c) => c.createdDate);
 
   const toggle = (code) => setSelected((p) => ({ ...p, [code]: !p[code] }));
   const toggleAllShown = () =>
@@ -199,196 +135,158 @@ export function StudioJobScanModal({ onClose, onApplied }) {
       return next;
     });
 
-  const apply = async () => {
-    const rows = newOnes
-      .filter((c) => selected[c.code])
-      .map((c) => ({
-        job_number: c.jobNumber,
-        film_title: c.filmTitle || null,
-        client: c.client || null,
-        project_description: c.projectDescription || null,
-        start_date: c.createdDate || null, // Wrike folder creation date
-      }));
-    if (!rows.length) return;
+  // The saved copy is patched as Wrike reports changes, and a patch that fails
+  // isn't retried. So before anything is written from it, Wrike is asked about
+  // just the folders involved: one call per hundred. If one has been renamed or
+  // binned since, the whole of Wrike is read again and nothing is written.
+  // Returns what Wrike said (it carries the creation dates too), or null when
+  // the write should stop. With no Wrike connection there is nothing to compare
+  // against, and the write goes ahead on the copy.
+  const askWrikeFirst = async (cands) => {
+    if (source !== "saved") return {};
+    const { byId } = await fetchFoldersNow(cands.map((c) => c.folderId));
+    const moved = changedSinceCopy(cands, byId);
+    if (!moved.length) return byId;
+    await load("live", `Wrike had changed since TimeHub's copy was taken (${moved.slice(0, 3).join(", ")}${moved.length > 3 ? " and others" : ""}), so it has been read again and nothing was saved. Check the list and go again.`);
+    return null;
+  };
+
+  const addJobs = async () => {
+    if (!chosen.length) return;
     setPhase("saving");
-    // Chunked insert so a large backfill doesn't hit request limits.
+    const now = await askWrikeFirst(chosen);
+    if (!now) return;
+    const rows = chosen.map((c) => ({
+      job_number: c.jobNumber,
+      film_title: c.filmTitle || null,
+      client: c.client || null,
+      project_description: c.projectDescription || null,
+      start_date: c.createdDate || now[c.folderId]?.createdDate || null,
+    }));
     let saved = 0;
     for (let i = 0; i < rows.length; i += 200) {
       const chunk = rows.slice(i, i + 200);
       const { error: err } = await supabase.from("jobs").insert(chunk);
-      if (err) { setError(err.message); setPhase("review"); return; }
+      if (err) { setError(`Stopped after ${saved} of ${rows.length}: ${err.message}`); setChanged(saved > 0); await loadBook(); setPhase("review"); return; }
       saved += chunk.length;
     }
-    setSavedCount(saved);
+    // Films follow their jobs. ignoreDuplicates: someone may have added one by
+    // hand since this screen opened.
+    let filmsAdded = 0;
+    if (newFilms.length) {
+      const { error: filmErr } = await supabase.from("films").upsert(newFilms, { onConflict: "title", ignoreDuplicates: true });
+      if (!filmErr) filmsAdded = newFilms.length;
+    }
+    setChanged(true);
+    setDone({ jobs: saved, films: filmsAdded, undated: rows.filter((r) => !r.start_date).length });
     setPhase("done");
   };
 
-  // The scan's own candidate for a code, so the rules below can defer to what
-  // it would write rather than encoding a house style of their own.
-  const candByCode = useMemo(() => {
-    const m = {};
-    candidates.forEach((c) => { m[c.code] = c; });
-    return m;
-  }, [candidates]);
-
-  // Extra rows for a code that carry nothing the kept row doesn't. Two shapes:
-  //
-  //   • a bare "XY025091" stub sitting beside a properly filed row — what
-  //     ensureJob writes the first time a job is seen in use;
-  //   • a REGION TWIN: the same film and the same description, differing only
-  //     in the region prefix the scan writes ("Shrek 5 : XY023362, Titles"
-  //     beside "Shrek 5 : XY023362, INT - Titles"). jobs.job_number is unique
-  //     on the whole string, so both rows are legal and both show up in every
-  //     job picker, with useJobLookup silently preferring whichever has the
-  //     lower id.
-  //
-  // Only ever removes the extra when the KEPT row is the one the scan itself
-  // would write. When it's the other way round — the kept row is the scruffy
-  // one and an extra is canonical — nothing is deleted here; `supersededByTwin`
-  // routes that through corrections instead, where the existing twin handling
-  // drops the kept row and lets the canonical sibling stand.
-  //
-  // The film must match too. "Universal House Job : XY018540, Digital
-  // Housekeeping" and "XYi Internal Use : XY018540, Digital Housekeeping" have
-  // identical descriptions and are NOT duplicates — they are the same code
-  // filed under two different owners, which is a judgement call for a human and
-  // is already surfaced by filmWrong.
-  const redundantRows = Object.entries(existingExtras).flatMap(([code, rows]) => {
-    const kept = existingByCode[code];
-    if (!kept || scanIsBareCode(kept.job_number)) return [];
-    const cand = candByCode[code];
-    const keptIsCanonical = !!cand && kept.job_number === cand.jobNumber;
-    const keptFilm = scanFilmOf(kept.job_number).toLowerCase();
-    return rows.filter((r) => {
-      if (scanIsBareCode(r.job_number)) return true;
-      if (!keptIsCanonical) return false;
-      if ((r.job_number || "") === kept.job_number) return false;
-      return (
-        scanFilmOf(r.job_number).toLowerCase() === keptFilm &&
-        descriptionsAgree(scanDescOf(r.job_number), scanDescOf(kept.job_number))
-      );
-    });
-  });
-
-  // Codes the user has told the scan to stop asking about — "Keep" in Review.
-  // Kept rows stay visible (greyed, undoable) but are excluded from the fix run
-  // and from the Fix button's count.
-  const keptCorrections = corrections.filter((c) => keptCodes.has(c.code));
-  const fixableCorrections = corrections.filter((c) => !keptCodes.has(c.code));
-  const keptRedundant = redundantRows.filter((r) => keptCodes.has(scanCodeOf(r.job_number)));
-  const fixableRedundant = redundantRows.filter((r) => !keptCodes.has(scanCodeOf(r.job_number)));
-  const keptTotal = keptCorrections.length + keptRedundant.length;
-
-  // Record (or retract) a "keep" in job_sync_kept, mirroring it into local state
-  // so the open Review reflects it immediately. Write failures surface in the
-  // header banner and leave the row untouched.
   const keepCode = async (code) => {
-    const { error } = await supabase.from("job_sync_kept").upsert({ code }, { onConflict: "code" });
-    if (error) { setError(`Couldn't keep ${code}: ${error.message}`); return; }
+    const { error: err } = await supabase.from("job_sync_kept").upsert({ code }, { onConflict: "code" });
+    if (err) { setError(`Couldn't save that for ${code}: ${err.message}`); return; }
     setKeptCodes((prev) => new Set(prev).add(code));
   };
   const unkeepCode = async (code) => {
-    const { error } = await supabase.from("job_sync_kept").delete().eq("code", code);
-    if (error) { setError(`Couldn't undo keep for ${code}: ${error.message}`); return; }
+    const { error: err } = await supabase.from("job_sync_kept").delete().eq("code", code);
+    if (err) { setError(`Couldn't undo that for ${code}: ${err.message}`); return; }
     setKeptCodes((prev) => { const next = new Set(prev); next.delete(code); return next; });
   };
 
-  // Correct existing book rows whose film was a pseudo-film ("2026") to the
-  // real film the re-derived scan found — updates film, client, job number and
-  // description in place. Only touches the `fixableCorrections` set; rows the
-  // user kept in Review are left alone.
-  const fixMisfilmed = async () => {
-    if (!fixableCorrections.length && !fixableRedundant.length) return;
-    const total = fixableCorrections.length + fixableRedundant.length;
-    const ok = await confirmAction({
-      title: `Fix ${total} book ${total === 1 ? "entry" : "entries"}?`,
-      message:
-        (fixableCorrections.length
-          ? `${fixableCorrections.length} ${fixableCorrections.length === 1 ? "entry disagrees" : "entries disagree"} with Wrike's folder tree — wrong film, a year/placeholder film, or the folder name left inside the job number. This rewrites their film, client, description and job number to match Wrike. `
-          : "") +
-        (fixableRedundant.length
-          ? `${fixableRedundant.length} duplicate ${fixableRedundant.length === 1 ? "entry says" : "entries say"} nothing the properly filed row for the same job doesn't — a bare code, or the same description without its region prefix — and will be deleted. `
-          : "") +
-        (keptTotal > 0
-          ? `${keptTotal} ${keptTotal === 1 ? "entry is" : "entries are"} kept as-is and left alone. `
-          : "") +
-        "Use Review first to see every before → after.",
-      confirmLabel: `Fix ${total}`,
-    });
-    if (!ok) return;
+  // Make book rows say what Wrike says. A row whose correct twin is already in
+  // the book is removed instead of rewritten: rewriting it would collide with
+  // the twin's label, and two identical rows aren't wanted anyway.
+  const matchWrike = async (fixes, spares) => {
     setPhase("saving");
-    let fixed = 0;
-    let merged = 0;
+    if (!(await askWrikeFirst(fixes.map((x) => x.cand)))) return;
     const failures = [];
-    for (const c of fixableCorrections) {
-      const cur = existingByCode[c.code];
-      // Another row for this code already *is* what Wrike says this one should
-      // become. Rewriting would violate jobs_job_number_key, and the right
-      // outcome isn't two identical rows anyway — drop this one and let the
-      // already-correct sibling stand.
-      const twin = (existingExtras[c.code] || []).find(
-        (r) => (r.job_number || "") === c.jobNumber
-      );
-      if (twin) {
-        const { error: delErr } = await supabase.from("jobs").delete().eq("id", cur.id);
-        if (delErr) failures.push(`${c.code}: ${delErr.message}`);
-        else merged += 1;
-        continue;
-      }
-      const { error: err } = await supabase.from("jobs").update(onlyClientWrong(c) ? { client: c.client } : {
-        job_number: c.jobNumber,
-        film_title: c.filmTitle || null,
-        client: c.client || null,
-        project_description: c.projectDescription || null,
-      }).eq("id", cur.id);
-      // One bad row used to abort the whole run, leaving every later correction
-      // unapplied and no record of which one failed. Keep going and report.
-      if (err) failures.push(`${c.code}: ${err.message}`);
-      else fixed += 1;
+    for (const { code, cand, cur } of fixes) {
+      const twin = (result.extras[code] || []).some((r) => (r.job_number || "") === cand.jobNumber);
+      const { error: err } = twin
+        ? await supabase.from("jobs").delete().eq("id", cur.id)
+        : await supabase.from("jobs").update(correctionPatch(cur, cand)).eq("id", cur.id);
+      if (err) failures.push(`${code}: ${err.message}`);
     }
-
-    if (fixableRedundant.length) {
-      const ids = fixableRedundant.map((r) => r.id);
-      for (let i = 0; i < ids.length; i += 200) {
-        const { error: delErr } = await supabase
-          .from("jobs").delete().in("id", ids.slice(i, i + 200));
-        if (delErr) failures.push(`duplicate cleanup: ${delErr.message}`);
-        else merged += Math.min(200, ids.length - i);
-      }
+    const ids = spares.map((x) => x.row.id);
+    for (let i = 0; i < ids.length; i += 200) {
+      const { error: err } = await supabase.from("jobs").delete().in("id", ids.slice(i, i + 200));
+      if (err) failures.push(`spare copies: ${err.message}`);
     }
-
-    setFixedCount(fixed + merged);
-    setError(
-      failures.length
-        ? `${failures.length} of ${fixableCorrections.length} couldn't be fixed — ${failures.slice(0, 3).join("; ")}${failures.length > 3 ? "…" : ""}`
-        : ""
-    );
-    await loadScan(); // re-derive so corrected rows drop out of the list
+    setError(failures.length
+      ? `${plural(failures.length, "change")} didn't go through: ${failures.slice(0, 3).join("; ")}${failures.length > 3 ? "…" : ""}`
+      : "");
+    setChanged(true);
+    await loadBook();
+    setPhase("review");
   };
 
+  const matchWrikeForAll = async () => {
+    const ok = await confirmAction({
+      title: `Use Wrike's details for ${plural(openCount, "job")}?`,
+      message:
+        (openCorrections.length ? `${plural(openCorrections.length, "job")} in the Job Book will be changed to match Wrike. ` : "") +
+        (openRedundant.length ? `${plural(openRedundant.length, "spare copy", "spare copies")} will be removed. ` : "") +
+        "Jobs you chose to keep are left alone.",
+      confirmLabel: `Change ${openCount}`,
+    });
+    if (ok) await matchWrike(openCorrections, openRedundant);
+  };
+
+  const close = () => (changed ? onApplied() : onClose());
+  const contested = candidates.contestedCodes || [];
+  const unplaced = candidates.truncatedCodes || [];
+  const rowBtn = "px-2.5 py-1 text-[11px] font-bold rounded-lg transition-colors disabled:opacity-50";
+
   return (
-    <div className="fixed inset-0 z-[9999] bg-black/40 flex items-center justify-center p-4" onMouseDown={onClose}>
+    <div className="fixed inset-0 z-[9999] bg-black/40 flex items-center justify-center p-4" onMouseDown={close}>
       <div
         className="bg-white rounded-3xl w-full max-w-6xl max-h-[92vh] flex flex-col shadow-2xl overflow-hidden"
         onMouseDown={(e) => e.stopPropagation()}
       >
-        <div className="flex items-center justify-between px-6 py-4 border-b border-slate-100">
-          <h2 className="text-lg font-black text-[#122027]">Scan Wrike for job numbers</h2>
-          <button onClick={onClose} className="text-slate-400 hover:text-slate-700"><X className="w-5 h-5" /></button>
+        <div className="flex items-start justify-between gap-4 px-6 py-4 border-b border-slate-100">
+          <div>
+            <h2 className="text-lg font-black text-[#122027]">Jobs in Wrike</h2>
+            {phase !== "scanning" && (
+              <p className="text-xs text-[#768994] mt-0.5">
+                {source === "saved"
+                  ? <>Compared with the copy of Wrike&rsquo;s folders TimeHub keeps{treeAt ? ` (fully refreshed ${timeAgo(treeAt, new Date())})` : ""}. </>
+                  : <>Read straight from Wrike just now. </>}
+                {source === "saved" && (
+                  <button onClick={() => load("live")} disabled={phase === "saving"}
+                    className="font-bold text-[#0f766e] hover:underline disabled:opacity-50">
+                    Read Wrike again now
+                  </button>
+                )}
+                {source === "saved" && health !== "ok" && (
+                  <span className="block text-amber-800 font-bold mt-0.5">
+                    That copy may be behind ({health === "old" ? "it hasn't been refreshed for over a day" : "Wrike has stopped sending live updates"}), so read Wrike again before changing anything.
+                  </span>
+                )}
+              </p>
+            )}
+          </div>
+          <button onClick={close} aria-label="Close" className="text-slate-400 hover:text-slate-700"><X className="w-5 h-5" /></button>
         </div>
 
         {phase === "scanning" && (
           <div className="flex-1 flex flex-col items-center justify-center py-20 gap-3 text-[#768994]">
             <RefreshCw className="w-6 h-6 animate-spin text-[#1cc1a5]" />
-            <p className="font-bold text-sm">Reading the Wrike folder tree…</p>
+            <p className="font-bold text-sm">{notice ? "Reading Wrike again…" : "Comparing the Job Book with Wrike…"}</p>
           </div>
         )}
 
         {phase === "done" && (
-          <div className="flex-1 flex flex-col items-center justify-center py-20 gap-3">
-            <CheckCircle2 className="w-10 h-10 text-emerald-500" />
-            <p className="font-black text-[#122027]">Added {savedCount} {savedCount === 1 ? "job" : "jobs"} to the Job Book.</p>
-            <button onClick={onApplied} className="mt-2 px-5 py-2 bg-[#1cc1a5] hover:bg-[#17a892] text-white text-sm font-bold rounded-xl">
+          <div className="flex-1 flex flex-col items-center justify-center py-20 gap-2 text-center px-8">
+            <CheckCircle2 className="w-10 h-10 text-emerald-500 mb-1" />
+            <p className="font-black text-[#122027]">
+              Added {plural(done.jobs, "job")} to the Job Book{done.films ? ` and ${plural(done.films, "film")} to the Films list` : ""}.
+            </p>
+            {done.undated > 0 && (
+              <p className="text-xs text-[#768994] max-w-md">
+                {done.undated === done.jobs ? "They have" : `${done.undated} of them have`} no start date, because Wrike couldn&rsquo;t be asked for one. You&rsquo;ll find them under &ldquo;No date&rdquo;.
+              </p>
+            )}
+            <button onClick={onApplied} className="mt-3 px-5 py-2 bg-[#1cc1a5] hover:bg-[#17a892] text-white text-sm font-bold rounded-xl">
               Done
             </button>
           </div>
@@ -396,212 +294,169 @@ export function StudioJobScanModal({ onClose, onApplied }) {
 
         {(phase === "review" || phase === "saving") && (
           <>
-            <div className="px-6 py-3 border-b border-slate-100 flex flex-wrap items-center gap-3 text-[11px] font-bold">
-              <span className="text-emerald-600">{newOnes.length} new</span>
-              <span className="text-[#768994]">{dupes.length} already in book</span>
-              {/* Both hidden counts sit on this line, next to the tick that
-                  controls them — the corrections one as well, so a review that
-                  has gone quiet because everything in it was archived still
-                  says so rather than just showing nothing. */}
-              {archivedHidden + correctionsHidden > 0 && (
-                <span className="text-slate-400">
-                  {archivedHidden + correctionsHidden} archived hidden
-                  {correctionsHidden > 0 && archivedHidden > 0 && ` (${correctionsHidden} of them corrections)`}
+            <div className="px-6 py-3 border-b border-slate-100 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs">
+              <span className="font-bold text-[#122027]">
+                {newOnes.length ? `${plural(newOnes.length, "job")} in Wrike ${newOnes.length === 1 ? "isn't" : "aren't"} in the Job Book yet` : "Every Wrike job is in the Job Book"}
+                {mismatchCount > 0 && ` · ${mismatchCount} in the book ${mismatchCount === 1 ? "doesn't" : "don't"} match Wrike`}
+              </span>
+              <label className="ml-auto flex items-center gap-1.5 font-bold text-[#122027] cursor-pointer">
+                <input type="checkbox" checked={showArchived} onChange={(e) => setShowArchived(e.target.checked)} className="accent-[#1cc1a5]" />
+                Include archived jobs
+                {!showArchived && archivedNew + archivedCorrections > 0 && (
+                  <span className="font-medium text-[#768994]">({archivedNew + archivedCorrections} hidden)</span>
+                )}
+              </label>
+              {error && <span className="w-full font-bold text-rose-600">{error}</span>}
+              {notice && !error && <span className="w-full font-bold text-amber-800">{notice}</span>}
+              {contested.length > 0 && (
+                <details className="w-full text-[#768994]">
+                  <summary className="cursor-pointer font-bold">
+                    {plural(contested.length, "job number")} {contested.length === 1 ? "is" : "are"} on more than one Wrike folder, so one had to be picked
+                  </summary>
+                  <ul className="mt-1 space-y-0.5 max-h-28 overflow-y-auto">
+                    {contested.map((c) => (
+                      <li key={c.code} className="truncate" title={`Also: ${c.over.join(" | ")}`}>
+                        <span className="font-mono font-bold text-[#122027]">{c.code}</span> — used {c.chose}; also at {c.over.join("; ")}
+                      </li>
+                    ))}
+                  </ul>
+                </details>
+              )}
+              {unplaced.length > 0 && (
+                <span className="w-full text-[#768994]" title={unplaced.join(", ")}>
+                  Couldn&rsquo;t work out the film or client for {plural(unplaced.length, "job")}; check {unplaced.length === 1 ? "it" : "them"} before adding.
                 </span>
               )}
-              <span className="text-[#122027]">{candidates.length} job codes / {totalFolders} folders</span>
-              <label className="ml-auto flex items-center gap-1.5 text-[#122027] cursor-pointer">
-                <input type="checkbox" checked={activeOnly} onChange={(e) => setActiveOnly(e.target.checked)} className="accent-[#1cc1a5]" />
-                Active only
-              </label>
-              {/* The fix result was previously computed and never shown, so a
-                  partial run looked identical to a clean one. */}
-              {fixedCount > 0 && !error && (
-                <span className="text-emerald-600">✓ Fixed {fixedCount}</span>
-              )}
-              {error && <span className="text-rose-500">⚠ {error}</span>}
             </div>
 
-            {(corrections.length > 0 || redundantRows.length > 0) && (
+            {mismatchCount > 0 && (
               <div className="border-b border-amber-100 bg-amber-50/60">
                 <div className="px-6 py-2.5 flex items-center gap-3">
-                  <span className="text-[11px] font-bold text-amber-700">
-                    {corrections.length > 0 && (
-                      <>
-                        {corrections.length} existing {corrections.length === 1 ? "entry disagrees" : "entries disagree"} with Wrike — filed under the wrong film, describing different work, with no client or another studio's, or with the folder name stuck in the job number. These are in the book already, which is why they don’t show as new.
-                      </>
-                    )}
-                    {redundantRows.length > 0 && (
-                      <>
-                        {corrections.length > 0 ? " " : ""}
-                        {redundantRows.length} duplicate {redundantRows.length === 1 ? "entry says" : "entries say"} nothing the properly filed row doesn’t — a bare code, or the same description minus its region prefix — so fixing removes {redundantRows.length === 1 ? "it" : "them"}.
-                      </>
-                    )}
-                    {keptTotal > 0 && (
-                      <> · {keptTotal} {keptTotal === 1 ? "entry is" : "entries are"} kept — undo in Review</>
-                    )}
-                    {/* Never silently: hiding a correction is a decision, so
-                        say how many and what turns them back on. */}
-                    {correctionsHidden > 0 && (
-                      <> · {correctionsHidden} more {correctionsHidden === 1 ? "is" : "are"} archived or in _Old — untick Active only to see {correctionsHidden === 1 ? "it" : "them"}</>
-                    )}
+                  <span className="text-xs font-bold text-amber-800">
+                    {plural(mismatchCount, "job")} in the book {mismatchCount === 1 ? "says" : "say"} something different from Wrike
+                    {openCount < mismatchCount && ` · ${mismatchCount - openCount} left as ${mismatchCount - openCount === 1 ? "it is" : "they are"}`}
                   </span>
-                  <button onClick={() => setShowCorrections(v => !v)}
-                    className="ml-auto shrink-0 px-3 py-1.5 bg-white border border-amber-300 hover:border-amber-400 text-amber-700 text-[11px] font-bold rounded-lg transition-colors">
-                    {showCorrections ? "Hide" : "Review"}
+                  <button onClick={() => setShowMismatches((v) => !v)}
+                    className="ml-auto shrink-0 px-3 py-1.5 bg-white border border-amber-300 hover:border-amber-400 text-amber-800 text-[11px] font-bold rounded-lg transition-colors">
+                    {showMismatches ? "Hide" : "Show them"}
                   </button>
-                  {/* Fix is gated behind Review so nobody can accidentally fix
-                      everything at once — you have to see the rows (and can Keep
-                      some) before it unlocks. */}
-                  <button onClick={fixMisfilmed} disabled={phase === "saving" || !showCorrections || fixableCorrections.length + fixableRedundant.length === 0}
-                    className="shrink-0 flex items-center gap-1.5 px-3 py-1.5 bg-amber-500 hover:bg-amber-600 disabled:opacity-50 text-white text-[11px] font-bold rounded-lg transition-colors">
-                    Fix {fixableCorrections.length + fixableRedundant.length}
-                  </button>
+                  {/* Only once the list is open, so nobody changes rows they haven't seen. */}
+                  {showMismatches && openCount > 0 && (
+                    <button onClick={matchWrikeForAll} disabled={phase === "saving"}
+                      className="shrink-0 px-3 py-1.5 bg-amber-500 hover:bg-amber-600 disabled:opacity-50 text-white text-[11px] font-bold rounded-lg transition-colors">
+                      Use Wrike&rsquo;s for all {openCount}
+                    </button>
+                  )}
                 </div>
-                {showCorrections && (
-                  <div className="max-h-[50vh] overflow-y-auto border-t border-amber-100 px-6 py-2">
-                    <table className="w-full text-[11px]">
-                      <tbody>
-                        {corrections.map((c) => {
-                          const kept = keptCodes.has(c.code);
-                          return (
-                            <tr key={c.code} className={`align-top ${kept ? "opacity-50" : ""}`}>
-                              <td className="py-1 pr-3 font-mono font-black text-amber-700 whitespace-nowrap">{c.code}</td>
-                              <td className="py-1 pr-2 text-slate-400 line-through truncate max-w-[420px]"
-                                  title={existingByCode[c.code]?.job_number}>
-                                {existingByCode[c.code]?.job_number || "—"}
-                              </td>
-                              <td className="py-1 max-w-[420px]">
-                                <div className="text-[#122027] truncate" title={c.jobNumber}>→ {c.jobNumber}</div>
-                                {!clientsAgree(existingByCode[c.code]?.client, c.client) && (
-                                  <div className="text-[#122027] truncate">
-                                    Client: <span className="text-slate-400 line-through">{existingByCode[c.code]?.client || "none"}</span> → {c.client}
-                                  </div>
-                                )}
-                                {c.folderPath && (
-                                  <div className="text-[10px] text-slate-400 truncate" title={c.folderPath}>
-                                    Wrike: {c.folderPath}
-                                  </div>
-                                )}
-                              </td>
-                              <td className="py-1 pl-2 text-right whitespace-nowrap">
-                                {kept ? (
-                                  <>
-                                    <span className="mr-1.5 text-[9px] font-black uppercase tracking-wider text-emerald-600 bg-emerald-50 border border-emerald-200 px-1.5 py-0.5 rounded">Kept</span>
-                                    <button onClick={() => unkeepCode(c.code)}
-                                      className="px-2 py-0.5 text-[10px] font-black rounded-md bg-slate-100 text-slate-500 hover:bg-slate-200 transition-colors">
-                                      Undo
-                                    </button>
-                                  </>
-                                ) : (
-                                  <button onClick={() => keepCode(c.code)}
-                                    className="px-2 py-0.5 text-[10px] font-black rounded-md border border-slate-300 text-slate-500 hover:border-amber-400 hover:text-amber-700 transition-colors">
-                                    Keep
-                                  </button>
-                                )}
-                              </td>
-                            </tr>
-                          );
-                        })}
-                        {/* Duplicate stubs aren't rewritten, they're removed —
-                            show them here too so Review really is every change. */}
-                        {redundantRows.map((r) => {
-                          const rCode = scanCodeOf(r.job_number);
-                          const kept = keptCodes.has(rCode);
-                          return (
-                            <tr key={`stub-${r.id}`} className={`align-top ${kept ? "opacity-50" : ""}`}>
-                              <td className="py-1 pr-3 font-mono font-black text-amber-700 whitespace-nowrap">
-                                {rCode}
-                              </td>
-                              <td className="py-1 pr-2 text-slate-400 line-through truncate max-w-[420px]"
-                                  title={r.job_number}>
-                                {r.job_number}
-                              </td>
-                              <td className="py-1 max-w-[420px]">
-                                <div className="text-slate-500 italic truncate" title={existingByCode[rCode]?.job_number}>
-                                  → duplicate, removed (kept: {existingByCode[rCode]?.job_number})
-                                </div>
-                                {candByCode[rCode]?.folderPath && (
-                                  <div className="text-[10px] text-slate-400 truncate" title={candByCode[rCode].folderPath}>
-                                    Wrike: {candByCode[rCode].folderPath}
-                                  </div>
-                                )}
-                              </td>
-                              <td className="py-1 pl-2 text-right whitespace-nowrap">
-                                {kept ? (
-                                  <>
-                                    <span className="mr-1.5 text-[9px] font-black uppercase tracking-wider text-emerald-600 bg-emerald-50 border border-emerald-200 px-1.5 py-0.5 rounded">Kept</span>
-                                    <button onClick={() => unkeepCode(rCode)}
-                                      className="px-2 py-0.5 text-[10px] font-black rounded-md bg-slate-100 text-slate-500 hover:bg-slate-200 transition-colors">
-                                      Undo
-                                    </button>
-                                  </>
-                                ) : (
-                                  <button onClick={() => keepCode(rCode)}
-                                    className="px-2 py-0.5 text-[10px] font-black rounded-md border border-slate-300 text-slate-500 hover:border-amber-400 hover:text-amber-700 transition-colors">
-                                    Keep
-                                  </button>
-                                )}
-                              </td>
-                            </tr>
-                          );
-                        })}
-                      </tbody>
-                    </table>
-                  </div>
+                {showMismatches && (
+                  <ul className="max-h-[45vh] overflow-y-auto border-t border-amber-100 divide-y divide-amber-100/70">
+                    {corrections.map((x) => {
+                      const kept = keptCodes.has(x.code);
+                      return (
+                        <li key={x.code} className={`px-6 py-2.5 flex items-start gap-4 ${kept ? "opacity-60" : ""}`}>
+                          <span className="font-mono font-black text-xs text-amber-800 w-[78px] shrink-0 pt-0.5">{x.code}</span>
+                          <div className="min-w-0 flex-1 text-xs space-y-0.5">
+                            <p className="truncate" title={x.cur.job_number}>
+                              <span className="font-bold text-[#768994]">Job Book</span>{" "}
+                              <span className="text-slate-500">{x.cur.job_number || "—"}{x.reasons.includes("client") && ` · ${x.cur.client || "no client"}`}</span>
+                            </p>
+                            <p className="truncate" title={x.cand.jobNumber}>
+                              <span className="font-bold text-[#0f766e]">Wrike</span>{" "}
+                              <span className="text-[#122027] font-medium">{x.cand.jobNumber}{x.reasons.includes("client") && ` · ${x.cand.client}`}</span>
+                            </p>
+                            <p className="text-[11px] text-[#768994] truncate" title={x.cand.folderPath}>
+                              {x.reasons.map((r) => reasonText(r, x.cur)).join(", ")}
+                              {x.cand.folderPath && ` · in Wrike at ${x.cand.folderPath}`}
+                            </p>
+                          </div>
+                          <div className="flex items-center gap-2 shrink-0">
+                            {!kept && (
+                              <button onClick={() => matchWrike([x], [])} disabled={phase === "saving"}
+                                className={`${rowBtn} bg-[#1cc1a5] hover:bg-[#17a892] text-white`}>
+                                Use Wrike&rsquo;s
+                              </button>
+                            )}
+                            <KeepButtons kept={kept} onKeep={() => keepCode(x.code)} onUndo={() => unkeepCode(x.code)} />
+                          </div>
+                        </li>
+                      );
+                    })}
+                    {redundant.map((x) => {
+                      const kept = keptCodes.has(x.code);
+                      return (
+                        <li key={`spare-${x.row.id}`} className={`px-6 py-2.5 flex items-start gap-4 ${kept ? "opacity-60" : ""}`}>
+                          <span className="font-mono font-black text-xs text-amber-800 w-[78px] shrink-0 pt-0.5">{x.code}</span>
+                          <div className="min-w-0 flex-1 text-xs space-y-0.5">
+                            <p className="truncate" title={x.row.job_number}>
+                              <span className="font-bold text-[#768994]">Spare copy</span>{" "}
+                              <span className="text-slate-500">{x.row.job_number}</span>
+                            </p>
+                            <p className="text-[11px] text-[#768994] truncate" title={x.kept.job_number}>
+                              the book also has {x.kept.job_number}, which says everything this one does
+                            </p>
+                          </div>
+                          <div className="flex items-center gap-2 shrink-0">
+                            {!kept && (
+                              <button onClick={() => matchWrike([], [x])} disabled={phase === "saving"}
+                                className={`${rowBtn} bg-[#1cc1a5] hover:bg-[#17a892] text-white`}>
+                                Remove copy
+                              </button>
+                            )}
+                            <KeepButtons kept={kept} onKeep={() => keepCode(x.code)} onUndo={() => unkeepCode(x.code)} />
+                          </div>
+                        </li>
+                      );
+                    })}
+                  </ul>
                 )}
               </div>
             )}
 
             {newOnes.length === 0 ? (
-              <div className="flex-1 flex items-center justify-center py-16 text-center text-[#768994] italic text-sm px-8">
+              <div className="flex-1 flex items-center justify-center py-16 text-center text-[#768994] text-sm px-8">
                 {error
-                  ? "Scan failed — see above."
-                  : totalFolders === 0
-                  ? "Wrike returned no folders — the connection isn’t authorised in this environment."
+                  ? "The check didn't finish. The message above says why."
                   : candidates.length === 0
-                  ? `Walked ${totalFolders} folders but found no XY job codes.`
-                  : "No new job numbers found. The Job Book is already up to date."}
+                  ? "No job folders were found in Wrike. If that can't be right, your Wrike connection may have dropped: reconnect from your profile and try again."
+                  : "Nothing new in Wrike. Every job there is already in the Job Book."}
               </div>
             ) : (
               <>
                 <div className="px-6 py-2.5 flex items-center gap-3 border-b border-slate-100">
                   <label className="flex items-center gap-2 text-[11px] font-black text-[#768994] cursor-pointer shrink-0">
                     <input type="checkbox" checked={allShownSelected} onChange={toggleAllShown} className="accent-[#1cc1a5]" />
-                    Select shown
+                    Tick all shown
                   </label>
                   <div className="relative flex-1">
                     <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-[#768994]" />
-                    <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Filter…"
+                    <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Find a film, client, region or job number…"
                       className="w-full pl-8 pr-3 py-1.5 text-[12px] border border-slate-200 rounded-lg outline-none focus:border-[#1cc1a5]" />
                   </div>
                 </div>
                 <div className="flex-1 overflow-y-auto">
                   <table className="w-full text-[12px]">
                     <thead className="sticky top-0 bg-slate-50 z-10">
-                      <tr className="text-left text-[9px] font-black uppercase tracking-widest text-[#768994]">
+                      <tr className="text-left text-[10px] font-black uppercase tracking-widest text-[#768994]">
                         <th className="px-4 py-2 w-8"></th>
-                        <th className="px-2 py-2">Code</th>
+                        <th className="px-2 py-2">Job</th>
                         <th className="px-2 py-2">Film</th>
                         <th className="px-2 py-2">Region</th>
                         <th className="px-2 py-2">Client</th>
                         <th className="px-2 py-2">Description</th>
-                        <th className="px-2 py-2">Created</th>
+                        {anyDates && <th className="px-2 py-2">Created</th>}
                       </tr>
                     </thead>
                     <tbody>
                       {shown.map((c) => (
                         <tr key={c.code} className="border-b border-slate-50 hover:bg-slate-50/60 cursor-pointer" onClick={() => toggle(c.code)}>
-                          <td className="px-4 py-2 align-top"><input type="checkbox" checked={!!selected[c.code]} onChange={() => toggle(c.code)} className="accent-[#1cc1a5]" onClick={(e) => e.stopPropagation()} /></td>
-                          {/* Where in Wrike this came from. The scan has always
-                              computed folderPath — the corrections list shows it
-                              under each row — but a NEW row showed only what was
-                              derived, so a code with no film, region or client
-                              was three dashes and no way to tell whether that
-                              meant "house job", "filed outside any studio" or
-                              "the walk gave up". The breadcrumb answers all
-                              three at a glance. */}
-                          <td className="px-2 py-2 font-black font-mono text-[#1cc1a5] align-top">
+                          <td className="px-4 py-2 align-top">
+                            <input type="checkbox" checked={!!selected[c.code]} onChange={() => toggle(c.code)}
+                              aria-label={`Add ${c.code}`} className="accent-[#1cc1a5]" onClick={(e) => e.stopPropagation()} />
+                          </td>
+                          {/* Where the folder sits in Wrike: it tells a house job
+                              from one filed outside any studio when the film or
+                              client came out blank. */}
+                          <td className="px-2 py-2 font-black font-mono text-[#0f766e] align-top">
                             {c.code}
                             {c.folderPath && (
                               <div className="font-sans font-medium text-[10px] text-slate-400 truncate max-w-[280px]" title={c.folderPath}>
@@ -610,33 +465,33 @@ export function StudioJobScanModal({ onClose, onApplied }) {
                             )}
                           </td>
                           <td className="px-2 py-2 font-bold text-[#122027] truncate max-w-[260px] align-top" title={c.jobNumber}>
-                            {c.filmTitle || (
-                              // A truncated walk yields no film for a reason
-                              // that isn't "there isn't one", and the two used
-                              // to look identical.
-                              <span className="text-slate-300">
-                                {c.ancestryTruncated ? "couldn't establish" : "—"}
-                              </span>
-                            )}
+                            {c.filmTitle || <span className="font-medium text-slate-400">{c.ancestryTruncated ? "couldn't work it out" : "—"}</span>}
                           </td>
                           <td className="px-2 py-2 align-top">
                             {c.region
-                              ? <span className="text-[10px] font-black px-1.5 py-0.5 rounded bg-[#12a0e1]/10 text-[#12a0e1]">{c.region}</span>
-                              : <span className="text-slate-300">—</span>}
+                              ? <span className="text-[10px] font-black px-1.5 py-0.5 rounded bg-[#1cc1a5]/15 text-[#0f766e]">{c.region}</span>
+                              : <span className="text-slate-400">—</span>}
                           </td>
-                          <td className="px-2 py-2 text-slate-600 align-top">{c.client || <span className="text-slate-300">—</span>}</td>
+                          <td className="px-2 py-2 text-slate-600 align-top">{c.client || <span className="text-slate-400">—</span>}</td>
                           <td className="px-2 py-2 text-slate-500 truncate max-w-[320px] align-top" title={c.projectDescription}>{c.projectDescription || "—"}</td>
-                          <td className="px-2 py-2 text-slate-400 whitespace-nowrap tabular-nums align-top">{c.createdDate || "—"}</td>
+                          {anyDates && <td className="px-2 py-2 text-slate-400 whitespace-nowrap tabular-nums align-top">{c.createdDate || "—"}</td>}
                         </tr>
                       ))}
                     </tbody>
                   </table>
                 </div>
-                <div className="px-6 py-3 border-t border-slate-100 flex items-center justify-between">
-                  <p className="text-[11px] text-[#768994] font-medium">Taken from the folder title, prefixed with the region its studio folder sits under — existing rows are never touched.</p>
-                  <button onClick={apply} disabled={selectedCount === 0 || phase === "saving"}
-                    className="flex items-center gap-1.5 px-5 py-2 bg-[#1cc1a5] hover:bg-[#17a892] disabled:bg-slate-200 disabled:text-slate-400 text-white text-sm font-bold rounded-xl transition-[background-color] ease-[cubic-bezier(0.16,1,0.3,1)]">
-                    {phase === "saving" ? <><RefreshCw className="w-4 h-4 animate-spin" /> Saving…</> : <><Plus className="w-4 h-4" /> Add {selectedCount} to Job Book</>}
+                <div className="px-6 py-3 border-t border-slate-100 flex items-center justify-between gap-4">
+                  <p className="text-[11px] text-[#768994] font-medium min-w-0">
+                    Nothing already in the Job Book is changed.
+                    {newFilms.length > 0 && (
+                      <span title={newFilms.map((f) => f.title).join(", ")}>
+                        {" "}Also adds {plural(newFilms.length, "film")} to the Films list: {newFilms.slice(0, 3).map((f) => f.title).join(", ")}{newFilms.length > 3 ? ` and ${newFilms.length - 3} more` : ""}.
+                      </span>
+                    )}
+                  </p>
+                  <button onClick={addJobs} disabled={chosen.length === 0 || phase === "saving"}
+                    className="shrink-0 flex items-center gap-1.5 px-5 py-2 bg-[#1cc1a5] hover:bg-[#17a892] disabled:bg-slate-200 disabled:text-slate-400 text-white text-sm font-bold rounded-xl transition-[background-color] ease-[cubic-bezier(0.16,1,0.3,1)]">
+                    {phase === "saving" ? <><RefreshCw className="w-4 h-4 animate-spin" /> Saving…</> : <><Plus className="w-4 h-4" /> Add {plural(chosen.length, "job")} to the Job Book</>}
                   </button>
                 </div>
               </>

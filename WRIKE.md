@@ -294,8 +294,10 @@ writes to Wrike, to set up a new film's job folders.
 
 **Films.** TimeHub keeps its own list of films (the `films` table). Film sync
 ("Sync from Wrike" on the Films list, or "sync them from Wrike" in Jobs setup
-when a studio has no films yet) looks inside one studio's Wrike folder, lists
-every film project that isn't in TimeHub yet (underscores become spaces, so
+when a studio has no films yet) looks inside a studio's Wrike folders, the
+regional ones included (Universal UK, Universal Australia, Universal - New
+Media) but not its archives or house-keeping folders, lists every film project
+that isn't in TimeHub yet (underscores become spaces, so
 `Angry_Birds_3_Movie` becomes "Angry Birds 3 Movie"), and adds the ones you
 confirm. It only ever adds films, never deletes, so a film someone added by
 hand is never lost. It runs only when someone presses it.
@@ -318,13 +320,18 @@ least automatic:
    second is given the next one.
 3. *The Studio Scan*, for catching up with Wrike. See below.
 4. *By hand*, adding or editing a job in the Job Book, including editing one
-   field across many jobs at once.
+   field across many jobs at once. A job's label ("Film : CODE, Description")
+   repeats its film and description, so changing either there rebuilds the
+   label to match (`relabelJob` in `src/lib/jobBook.js`).
 5. *The jobs feed CSV import*, which also creates bare rows for any codes it
    hasn't seen.
 
-**The Studio Scan** ("Scan Wrike for job numbers", in the Job Book) runs only
-when a PM clicks it. It reads Wrike's whole folder tree, about 9,700 folders,
-and finds every folder whose name starts with an XY code. For each it works
+**The Studio Scan** ("Jobs in Wrike", in the Job Book) runs by itself each
+time the Job Book opens, and the strip at the top of the page says what it
+found. It reads the saved copy of Wrike's folder tree (see "The three ways
+data comes in"), so it makes no Wrike calls; "Read Wrike again now" on its
+screen downloads the whole tree, about 9,900 folders, for when the saved copy
+is in doubt. It finds every folder whose name starts with an XY code. For each it works
 out the job code and description from the folder name
 (`XY025563_Germany_Launch_Assets` becomes "Germany Launch Assets"), the client
 by climbing up to the studio folder and adding the region where there is one
@@ -334,13 +341,32 @@ Print/Digital folders are skipped on the way, and a live folder wins over an
 archived copy of the same job.
 
 It then shows two lists: jobs in Wrike that aren't in the Job Book yet, and
-jobs in the book that disagree with Wrike (filed under the wrong film, a
-different description, or a bare code still waiting for one). You tick what to
-accept. "Keep" tells the scan to stop raising a job you've decided is right as
-it stands. If two live folders share a job code, it shows you the clash instead
-of guessing. The scan writes only to the Job Book, never to Wrike. The code is
-`scanStudioJobNumbers` in `src/lib/wrikeCampaign.js`; before changing it, run
-the regression check described in HANDOVER.md.
+jobs in the book that don't match Wrike (filed under the wrong film, a
+different description, no client, or a bare code still waiting to be filed).
+Nothing is added or changed until a PM clicks: new jobs come ticked and go in
+with one button, and each mismatch has "Use Wrike's" and "Keep ours". "Keep
+ours" tells the scan to stop raising a job you've decided is right as it
+stands. Adding jobs also adds any film they name that the Films list lacks,
+which is how a film that sits under a year folder, or isn't a Wrike project,
+reaches the list. If
+two live folders share a job code, the screen lists the clash and which folder
+it used. A job added from the saved copy asks Wrike for the folder's creation
+date at that moment; without a Wrike connection it goes in undated.
+
+The saved copy is good for suggesting and not for writing unasked. A webhook
+patch that fails isn't retried, so a rename or a move can be missed until the
+next daily read puts it right. Two things cover that. The strip warns when the
+copy hasn't been read in full for a day and a half, or when Wrike has sent no
+live update for an hour in working hours (`copyHealth`). And before anything
+is written from the copy, the screen asks Wrike about just the folders
+involved; if one has been renamed or binned since, it reads all of Wrike again
+and writes nothing (`changedSinceCopy`). This is also why the scan doesn't add
+jobs by itself on a timer.
+
+The scan writes only to the Job Book and the Films list, never to Wrike. The scanner is
+`scanStudioJobNumbers` in `src/lib/wrikeCampaign.js` (before changing it, run
+the regression check described in HANDOVER.md); the comparison with the book
+is `src/lib/jobSync.js`.
 
 **Push to Wrike** is the only part that writes to Wrike. Once a film's jobs are
 set up in the Job Book, it creates the matching folders:
@@ -441,7 +467,7 @@ say when and how.
   detection all depend on folder names and nesting. A new kind of organisational
   folder without a leading underscore, or a studio folder named in a new way,
   will produce wrong films or clients. The Studio Scan is the best early
-  warning, because its "disagrees with Wrike" list will suddenly grow.
+  warning, because its "don't match Wrike" list will suddenly grow.
 - **Rate limits.** The whole account shares one budget. A burst of heavy use,
   such as several people opening big screens at once or a full scan, can make
   other requests slow down or fail and retry.

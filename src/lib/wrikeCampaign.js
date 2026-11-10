@@ -6,7 +6,7 @@
 // The UI shows the plan and writes only after an explicit confirm.
 
 import { fetchRetrying } from "./fetchPool";
-import { STUDIO_KEYWORDS_FLAT, STUDIO_CLIENT } from "./studios";
+import { STUDIO_KEYWORDS_FLAT, STUDIO_CLIENT, studioNameOf } from "./studios";
 
 const WRIKE = "/api/wrike";
 
@@ -208,6 +208,29 @@ export function findStudioFolder(byId, studioName) {
   return matches[0];
 }
 
+// Every top-level folder where a studio's current films live: "Universal",
+// "Universal UK" and "Universal - New Media" are all Universal. Left out:
+// underscore folders (templates), archives ("Sony_Archive"), house-keeping
+// folders, and anything with a studio folder above it, which is something
+// inside a studio rather than a studio.
+export function findStudioFolders(byId, studioName) {
+  const parentsOf = {};
+  Object.values(byId).forEach((f) =>
+    (f.childIds || []).forEach((c) => { (parentsOf[c] || (parentsOf[c] = [])).push(f.id); })
+  );
+  const isStudio = (f) => !!f && !/^_/.test((f.title || "").trim()) && !!studioNameOf(f.title);
+  const holdsCurrentFilms = (f) => !/archive|house[\s_]*(keeping|jobs?)/i.test(f.title || "");
+  const underAStudio = (id, seen = new Set()) =>
+    (parentsOf[id] || []).some((pid) => {
+      if (seen.has(pid)) return false;
+      seen.add(pid);
+      return isStudio(byId[pid]) || underAStudio(pid, seen);
+    });
+  return Object.values(byId)
+    .filter((f) => isStudio(f) && holdsCurrentFilms(f) && studioNameOf(f.title) === studioName && !underAStudio(f.id))
+    .sort((a, b) => (a.title || "").localeCompare(b.title || ""));
+}
+
 // Every folder id under rootId, inclusive. The template-write guard never writes
 // into these.
 export function collectSubtreeIds(byId, rootId, seen = new Set()) {
@@ -268,9 +291,13 @@ const regionOf = (studioTitle, studioKw) => {
 // from the studio found by climbing, and the film from the folder between studio
 // and job. Titles already in "Film : CODE, Desc" form are taken as they are.
 // `totalFolders` tells an empty result apart from a failed fetch.
-export async function scanStudioJobNumbers({ studioKeywords } = {}) {
+//
+// Pass `byId` to scan a folder tree already in hand (the saved copy in
+// wrike_sync_meta) instead of downloading Wrike's, and `createdDates: false` to
+// skip the one part that always needs Wrike.
+export async function scanStudioJobNumbers({ studioKeywords, byId: givenTree, createdDates = true } = {}) {
   const KEYWORDS = studioKeywords || STUDIO_KEYWORDS;
-  const byId = await fetchAllFolders();
+  const byId = givenTree || await fetchAllFolders();
   const totalFolders = Object.keys(byId).length;
 
   // Upward map with ALL parents: Wrike shares one folder into several places
@@ -457,25 +484,13 @@ export async function scanStudioJobNumbers({ studioKeywords } = {}) {
     }
 
     out.push({ code, jobNumber, filmTitle, projectDescription, client, archived,
-               region: region ? region.short : null, folderId: f.id, folderPath,
-               ancestryTruncated });
+               region: region ? region.short : null, folderId: f.id, folderTitle: title,
+               folderPath, ancestryTruncated });
   });
 
-  // Each job folder's createdDate (the by-id endpoint has it, the tree doesn't),
-  // 100 at a time. Optional: a failure here must not throw away the whole scan.
-  const ids = out.map((o) => o.folderId).filter(Boolean);
-  const createdById = {};
-  let createdDateBatchesFailed = 0;
-  for (let i = 0; i < ids.length; i += 100) {
-    const batch = ids.slice(i, i + 100);
-    try {
-      const rows = await wrikeGet(`/folders/${batch.join(",")}`);
-      rows.forEach((f) => { if (f.createdDate) createdById[f.id] = f.createdDate.slice(0, 10); });
-    } catch (e) {
-      createdDateBatchesFailed++;
-      console.warn(`[wrikeCampaign] createdDate batch failed; those jobs stage without a date`, e);
-    }
-  }
+  const { createdById, failedBatches: createdDateBatchesFailed } = createdDates
+    ? await fetchFolderCreatedDates(out.map((o) => o.folderId))
+    : { createdById: {}, failedBatches: 0 };
   out.forEach((o) => { o.createdDate = createdById[o.folderId] || null; });
 
   out.sort((a, b) => a.code.localeCompare(b.code));
@@ -486,6 +501,41 @@ export async function scanStudioJobNumbers({ studioKeywords } = {}) {
   out.truncatedCodes = out.filter((o) => o.ancestryTruncated).map((o) => o.code);
   out.createdDateBatchesFailed = createdDateBatchesFailed;
   return out;
+}
+
+// These folders as Wrike has them this minute: { title, createdDate, gone },
+// 100 ids a call. `gone` is a folder in the recycle bin. A batch Wrike doesn't
+// answer is counted and its folders left out, never thrown: callers treat a
+// missing folder as "couldn't ask", not as deleted.
+export async function fetchFoldersNow(folderIds) {
+  const ids = [...new Set((folderIds || []).filter(Boolean))];
+  const byId = {};
+  let failedBatches = 0;
+  for (let i = 0; i < ids.length; i += 100) {
+    const batch = ids.slice(i, i + 100);
+    try {
+      const rows = await wrikeGet(`/folders/${batch.join(",")}`);
+      rows.forEach((f) => {
+        byId[f.id] = {
+          title: (f.title || "").trim(),
+          createdDate: f.createdDate ? f.createdDate.slice(0, 10) : null,
+          gone: /^Rb/i.test(f.scope || ""),
+        };
+      });
+    } catch (e) {
+      failedBatches++;
+      console.warn("[wrikeCampaign] folder batch failed; those folders go unchecked and undated", e);
+    }
+  }
+  return { byId, failedBatches };
+}
+
+// Each folder's createdDate: the by-id endpoint has it, the tree doesn't.
+export async function fetchFolderCreatedDates(folderIds) {
+  const { byId, failedBatches } = await fetchFoldersNow(folderIds);
+  const createdById = {};
+  Object.entries(byId).forEach(([id, f]) => { if (f.createdDate) createdById[id] = f.createdDate; });
+  return { createdById, failedBatches };
 }
 
 // Do two job descriptions describe the same job? Used by the Job Book
@@ -651,14 +701,14 @@ export function buildFilmView(byId, filmTitle, studioFolderId) {
 // only: films that exist only locally are never deleted.
 export async function planFilmSync(studioName, existingTitles) {
   const byId = await fetchAllFolders();
-  const studioFolder = findStudioFolder(byId, studioName);
-  if (!studioFolder) {
-    return { error: `No “${studioName}” folder found in Wrike.`, studioFolder: null, toAdd: [] };
+  const studioFolders = findStudioFolders(byId, studioName);
+  if (!studioFolders.length) {
+    return { error: `There's no ${studioName} folder in Wrike.`, studioFolders: [], toAdd: [] };
   }
   // Wrike project names use underscores; show them as spaced film titles.
   const clean = (t) => (t || "").replace(/_/g, " ").replace(/\s+/g, " ").trim();
   const have = new Set([...existingTitles].map((t) => clean(t).toLowerCase()));
-  const projects = await fetchFolderProjects(studioFolder.childIds);
+  const projects = await fetchFolderProjects([...new Set(studioFolders.flatMap((f) => f.childIds || []))]);
   const toAdd = projects
     .map((p) => clean(p.title))
     .filter((t) => t && !have.has(t.toLowerCase()))
@@ -667,7 +717,7 @@ export async function planFilmSync(studioName, existingTitles) {
     .sort((a, b) => a.localeCompare(b));
   return {
     error: null,
-    studioFolder: { id: studioFolder.id, title: studioFolder.title },
+    studioFolders: studioFolders.map((f) => ({ id: f.id, title: f.title })),
     projectCount: projects.length,
     toAdd,
   };

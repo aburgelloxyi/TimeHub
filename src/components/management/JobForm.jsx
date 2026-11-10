@@ -6,12 +6,13 @@
 import { useState, useEffect, useMemo } from "react";
 import { Check, RefreshCw, ChevronRight, X } from "lucide-react";
 import { selectAll } from "../../lib/supabaseClient";
+import { PRINT_DIGITAL, buildJobLabel, parseJobLabel } from "../../lib/jobBook";
+import { isoToday } from "../../utils/dates";
 import DateField from "../shared/DateField";
 import { JOB_STATUSES } from "./constants";
 import { ComboField, FieldLabel, MODAL_INPUT, PillField } from "./fields";
 
 const OFFICES = ["LDN", "LA"];
-const PRINT_DIGITAL = ["Digital", "Print", "Both"];
 // ── Combobox grouping helpers ─────────────────────────────────────────────────
 // Filtering used to live in loud gradient chips above each field, which clashed
 // with the form. Instead we fold it into the dropdown: options group under
@@ -51,7 +52,7 @@ const CLIENT_PIN_RANK = (name) => {
 };
 const DESC_GROUP_ORDER = ["AUS", "UK", "DOM", "INT", "IRE", "XYi"];
 const PD_COLOR_MAP = { Digital: "bg-cyan-600 border-cyan-600", Print: "bg-orange-500 border-orange-500", Both: "bg-violet-600 border-violet-600" };
-const STATUS_COLOR_MAP = { Inactive: "bg-slate-400 border-slate-400", Active: "bg-[#12a0e1] border-[#12a0e1]", Closed: "bg-[#1cc1a5] border-[#1cc1a5]" };
+const STATUS_COLOR_MAP = { Inactive: "bg-slate-400 border-slate-400", Active: "bg-[#1cc1a5] border-[#1cc1a5]", Closed: "bg-[#122027] border-[#122027]" };
 // Allocate the next sequential XY code. selectAll is essential here, not just
 // tidier: this scans for the HIGHEST code in use, and a truncated read returns a
 // max that's thousands too low — every allocation then collides with an existing
@@ -100,14 +101,18 @@ export function JobForm({ job, clients, films, workCategories, descs, onSave, on
     nextJobCode().then(setNextCode);
   }, [isEdit, presetCode]);
 
+  // A row filed from a timesheet can hold its film and description only inside
+  // the label, so the fields fall back to what the label says.
+  const labelParts = useMemo(() => parseJobLabel(job?.job_number), [job?.job_number]);
   const [form, setForm] = useState({
     job_number: job?.job_number || "",
-    start_date: job?.start_date ? job.start_date.slice(0, 10) : new Date().toISOString().slice(0, 10),
+    // An undated job stays undated until someone picks a date.
+    start_date: job?.start_date ? job.start_date.slice(0, 10) : (isEdit ? "" : isoToday()),
     client: job?.client || "",
-    film_title: job?.film_title || "",
+    film_title: job?.film_title || labelParts.film || "",
     office: job?.office || "LDN",
     print_digital: job?.print_digital || "Digital",
-    project_description: job?.project_description || "",
+    project_description: job?.project_description || labelParts.description || "",
     job_work_category: job?.job_work_category || "",
     ordered_by: job?.ordered_by || "",
     billed_to: job?.billed_to || "",
@@ -140,11 +145,22 @@ export function JobForm({ job, clients, films, workCategories, descs, onSave, on
     return s;
   }, [nextCode, form.film_title, form.project_description]);
 
+  // Editing: the label follows the film and description, as it does on
+  // creation, so the three can't disagree. Typing it by hand is the way out for
+  // a free-text job with no XY code, or a code that was filed wrong.
+  const editCode = isEdit ? labelParts.code : null;
+  const [byHand, setByHand] = useState(false);
+  const builtLabel = editCode && !byHand
+    ? buildJobLabel({ film: form.film_title, code: editCode, description: form.project_description })
+    : null;
+  const editLabel = builtLabel ?? form.job_number;
+  const shownCode = isEdit ? editCode : nextCode;
+
   const canSave = isEdit
-    ? form.job_number.trim() && form.client && form.start_date
+    ? editLabel.trim() && form.client
     : nextCode && form.client && form.start_date;
 
-  const handleSave = () => onSave(isEdit ? form : { ...form, job_number: livePreview });
+  const handleSave = () => onSave({ ...form, job_number: isEdit ? editLabel : livePreview });
 
   return (
     <>
@@ -153,10 +169,18 @@ export function JobForm({ job, clients, films, workCategories, descs, onSave, on
             produce, so it leads instead of sitting muted at the top. */}
         <div>
           <FieldLabel text="Job Number" required />
-          {isEdit ? (
-            <input value={form.job_number} onChange={e => set("job_number", e.target.value)}
-              placeholder="e.g. The Odyssey : XY025999, Finishing"
-              className={`${MODAL_INPUT} font-mono`} />
+          {isEdit && !builtLabel ? (
+            <>
+              <input value={form.job_number} onChange={e => set("job_number", e.target.value)}
+                placeholder="e.g. The Odyssey : XY025999, Finishing"
+                className={`${MODAL_INPUT} font-mono`} />
+              {editCode && (
+                <button type="button" onClick={() => setByHand(false)}
+                  className="text-[10px] font-bold text-[#0f766e] hover:underline mt-1.5">
+                  Build it from the film and description instead
+                </button>
+              )}
+            </>
           ) : (
             <>
               <div className="bg-[#f4faf8] border border-[#d5ebe4] rounded-2xl px-4 py-3.5 min-h-[54px] flex items-center flex-wrap gap-x-1.5 gap-y-1 leading-snug">
@@ -165,16 +189,25 @@ export function JobForm({ job, clients, films, workCategories, descs, onSave, on
                 </span>
                 <span className="text-[#b0bec5] font-bold">:</span>
                 <span className="font-mono text-sm font-bold text-[#0f766e] bg-[#dcf3ec] px-2 py-0.5 rounded-md">
-                  {nextCode || "XY…"}
+                  {shownCode || "XY…"}
                 </span>
                 <span className="text-[#b0bec5] font-bold">,</span>
                 <span className={`text-sm font-medium ${form.project_description.trim() ? "text-[#33454f]" : "text-[#b0bec5]"}`}>
                   {form.project_description.trim() || "project description"}
                 </span>
               </div>
-              <p className="text-[10px] text-[#768994] mt-1.5">
-                Auto-allocated — the label builds itself from the film and project description below.
-              </p>
+              {isEdit ? (
+                <p className="text-[10px] text-[#768994] mt-1.5">
+                  Built from the film and project description below.{" "}
+                  {builtLabel !== job.job_number && <span className="text-amber-700">Was “{job.job_number}”. </span>}
+                  <button type="button" onClick={() => { set("job_number", builtLabel); setByHand(true); }}
+                    className="font-bold text-[#0f766e] hover:underline">Type it by hand</button>
+                </p>
+              ) : (
+                <p className="text-[10px] text-[#768994] mt-1.5">
+                  Auto-allocated — the label builds itself from the film and project description below.
+                </p>
+              )}
             </>
           )}
         </div>
@@ -205,7 +238,7 @@ export function JobForm({ job, clients, films, workCategories, descs, onSave, on
             options={workCategories} placeholder="Search job work categories…"
             groupBy={descGroup} formatOption={descLabel} groupOrder={DESC_GROUP_ORDER} />
           <div>
-            <FieldLabel text="Start Date" required />
+            <FieldLabel text="Start Date" required={!isEdit} />
             <DateField value={form.start_date} onChange={v => set("start_date", v)} allowClear={false} placeholder="Pick a start date…" />
           </div>
         </div>
@@ -325,7 +358,7 @@ export function JobForm({ job, clients, films, workCategories, descs, onSave, on
         )}
         <button onClick={handleSave} disabled={saving || !canSave}
           className={`flex items-center gap-2 px-6 py-2.5 text-white text-sm font-bold rounded-xl transition-[background-color] ease-[cubic-bezier(0.16,1,0.3,1)] disabled:opacity-50 shadow-sm ${
-            isEdit ? "bg-[#12a0e1] hover:bg-[#0d8bc4]" : "bg-[#10b981] hover:bg-[#0d9488]"
+            isEdit ? "bg-[#1cc1a5] hover:bg-[#17a892]" : "bg-[#10b981] hover:bg-[#0d9488]"
           }`}>
           {saving ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Check className="w-3.5 h-3.5" />}
           {submitLabel || (isEdit ? "Save Changes" : "Create Job")}
@@ -346,8 +379,8 @@ export function JobModal({ job, clients, films, workCategories, descs, onSave, o
 
         <div className="px-6 pt-5 pb-4 border-b border-[#dce4ec] flex items-center justify-between shrink-0">
           <div>
-            <p className="text-[9px] font-black uppercase tracking-widest text-[#12a0e1] mb-0.5">Job Book</p>
-            <h2 className="text-xl font-black text-[#122027]">Edit {job?.job_number}</h2>
+            <p className="text-[9px] font-black uppercase tracking-widest text-[#1cc1a5] mb-0.5">Job Book</p>
+            <h2 className="text-xl font-black text-[#122027] truncate" title={job?.job_number}>Edit {parseJobLabel(job?.job_number).code || job?.job_number}</h2>
           </div>
           <button onClick={onClose} className="p-2 hover:bg-slate-100 rounded-xl text-slate-400 hover:text-slate-600 transition-colors">
             <X className="w-4 h-4" />

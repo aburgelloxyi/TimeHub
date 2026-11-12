@@ -1710,7 +1710,7 @@ const PANEL_PREFERRED_DEPARTMENT = "Motion";
 // button still reads afresh. When the database can't answer, the last answer
 // is served however old, rather than an error.
 const PANEL_CACHE_MS = 2 * 60 * 1000;
-const PANEL_BUILD = "2026-11-03-films-2";
+const PANEL_BUILD = "2026-11-12-status-changes";
 const panelJobsCache = new Map(); // member, lowercased -> { at, jobs }
 
 function panelCors(extra = {}) {
@@ -1969,6 +1969,41 @@ async function handlePanelComment(request, url, env) {
   const body = { task, count: comments.length, comment: shaped[0] || null, recent: shaped, motionSince };
   panelCommentCache.set(cacheKey, { at: Date.now(), body });
   return json(body, { headers: panelCors({ "Cache-Control": "no-store" }) });
+}
+
+// The panel's tasks given any status change the webhook recorded after the cache
+// last copied them (task_data.updatedDate). One read for all of them, the newest
+// change per task; the task_data objects are changed in place. A failed read
+// leaves the cached statuses, as before. Never throws.
+async function panelApplyStatusChanges(env, byId) {
+  try {
+    const ids = [...byId.keys()].slice(0, 400);
+    if (!ids.length) return;
+    const since = new Date(Date.now() - 7 * 86400000).toISOString();
+    const list = ids.map((i) => `"${i}"`).join(",");
+    const res = await sbFetch(
+      env,
+      `/wrike_task_activity?select=task_id,status,custom_status_id,occurred_at&event_type=eq.TaskStatusChanged` +
+        `&task_id=in.(${list})&occurred_at=gt.${encodeURIComponent(since)}&order=occurred_at.desc&limit=1000`,
+      { timeoutMs: 4000 }
+    );
+    if (!res.ok) return;
+    const seen = new Set();
+    for (const change of (await res.json()) || []) {
+      const id = String(change?.task_id || "");
+      if (!id || seen.has(id) || !change.custom_status_id) continue;
+      seen.add(id); // newest first, so the first per task is its latest
+      const t = byId.get(id);
+      const at = Date.parse(change.occurred_at);
+      const copied = Date.parse(t?.updatedDate || "");
+      if (!t || isNaN(at) || (!isNaN(copied) && at <= copied)) continue;
+      t.customStatusId = change.custom_status_id;
+      if (change.status) t.customStatusName = change.status;
+      t.updatedDate = new Date(at).toISOString().replace(/\.\d{3}Z$/, "Z");
+    }
+  } catch (_) {
+    // the cached statuses stand
+  }
 }
 
 // The first time a task's status became one named Motion, from the status
@@ -2289,6 +2324,12 @@ async function handlePanelJobs(request, url, env) {
   for (const row of [...(rows || []), ...(subRows || [])]) {
     if (row?.id && row?.task_data) byId.set(String(row.id), row.task_data);
   }
+  // A status changed in Wrike since the cache last copied the task: the cache is
+  // only written by an open TimeHub tab, so with none open a change waited for
+  // someone to open the site (12 Nov 2026: Prep for delivery at 15:49, in the
+  // feed at 16:09). The webhook keeps every status change in wrike_task_activity,
+  // so the newest one wins here. Not on a refresh: its rows are already live.
+  if (!liveUsed) await panelApplyStatusChanges(env, byId);
 
   // ?debug=1: counts at each filter stage, key-gated, titles only.
   if (url.searchParams.get("debug")) {

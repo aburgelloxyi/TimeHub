@@ -11,6 +11,7 @@ import { confirmAction } from "../lib/confirm";
 import { notify } from "../lib/toast";
 import { FeedbackSection } from "./management/FeedbackSection";
 import { FilmStudioPicker } from "./management/FilmStudioPicker";
+import { FilmAliases } from "./management/FilmAliases";
 import { JobsFeedSection } from "./management/JobsFeedSection";
 import { findNavItem, sectionFromHash } from "./management/nav";
 import { PeopleSection } from "./management/PeopleSection";
@@ -361,7 +362,10 @@ export default function Management({ wrikeUserId, department, wrikeData = [] }) 
                     <SimpleListSection table="films" labelField="title" label="Films" placeholder="Film title…"
                       wrikeFilmSync onItemClick={setCampaignFilm} itemClickHint="See this film's jobs"
                       onRenamed={renameFilmJobs} deleteWarning={filmDeleteWarning}
-                      renderRowExtra={(item, patchItem) => <FilmStudioPicker item={item} patchItem={patchItem} />} />
+                      renderRowExtra={(item, patchItem) => (<>
+                        <FilmAliases item={item} patchItem={patchItem} />
+                        <FilmStudioPicker item={item} patchItem={patchItem} />
+                      </>)} />
                   )}
                   {activeTab === "clients"    && <ClientsSection quickFilters={STUDIO_GROUPS} />}
                   {activeTab === "rate-roles" && <SimpleListSection table="rate_roles" labelField="name" label="Rate Card Positions" placeholder="e.g. Senior Designer…" />}

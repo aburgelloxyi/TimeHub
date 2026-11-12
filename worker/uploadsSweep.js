@@ -25,6 +25,17 @@ export function makeUploadsSweep({ sbFetch, wrikeRowFor, googleRowFor, filmCodes
   // Who the sweep runs as: the one current person whose full name, or else
   // first name, is UPLOADS_RUN_AS. Two people answering to it is refused
   // rather than guessed between.
+  // The films that go by other names (films.aliases), for findUploadsFolder.
+  // None if they can't be read: a film is then found by its own name only.
+  async function filmAliases(env) {
+    try {
+      const res = await sbFetch(env, "/films?select=title,aliases&aliases=neq.%7B%7D");
+      return res.ok ? (await res.json()) || [] : [];
+    } catch {
+      return [];
+    }
+  }
+
   async function runsAs(env) {
     const wanted = norm(env.UPLOADS_RUN_AS);
     if (!wanted) return { reason: "UPLOADS_RUN_AS isn't set" };
@@ -90,7 +101,8 @@ export function makeUploadsSweep({ sbFetch, wrikeRowFor, googleRowFor, filmCodes
 
     const get = await run.wrike();
     const view = await run.view();
-    const places = new Map(films.map((film) => [film, findUploadsFolder(view.byId, film)]));
+    const aliased = await run.aliases();
+    const places = new Map(films.map((film) => [film, findUploadsFolder(view.byId, film, aliased)]));
     const folders = [...new Map([...places.values()].filter((p) => p.ok).map((p) => [p.folder.id, p.folder])).values()];
     const tasks = await Promise.all(folders.map((f) =>
       everyPage(get, `/folders/${f.id}/tasks?fields=${encodeURIComponent("[customFields]")}&subTasks=true&pageSize=1000`)));
@@ -149,10 +161,12 @@ export function makeUploadsSweep({ sbFetch, wrikeRowFor, googleRowFor, filmCodes
     let wrikeGet = null;
     let view = null;
     let codes = null;
+    let aliases = null;
     const run = {
       person,
       google: googleRow,
       codes: async () => (codes ||= await filmCodes(env)),
+      aliases: async () => (aliases ||= await filmAliases(env)),
       wrike: async () => {
         if (wrikeGet) return wrikeGet;
         const row = await wrikeRowFor(env, person.id);

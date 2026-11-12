@@ -101,9 +101,10 @@ export const taskKey = (title) => tidyTaskName(title).toLowerCase();
 const UPLOADS_FOLDER = /_Enterprise_Daily_Uploads$/i;
 
 // A film's uploads folder in the Wrike tree. { ok, film, folder, jobNumber,
-// jobCode } or { ok: false, reason } when there isn't exactly one.
-export function findUploadsFolder(byId, filmTitle) {
-  const location = findFilm(byId, filmTitle);
+// jobCode } or { ok: false, reason } when there isn't exactly one. `films` are
+// the films with aliases (findFilm).
+export function findUploadsFolder(byId, filmTitle, films = []) {
+  const location = findFilm(byId, filmTitle, films);
   if (!location) return { ok: false, reason: `No film called "${filmTitle}" was found in Wrike.` };
   const film = location.filmProject;
   const found = [...collectSubtreeIds(byId, film.id)].map((id) => byId[id]).filter((f) => f && UPLOADS_FOLDER.test(String(f.title || "").trim()));

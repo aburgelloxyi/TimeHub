@@ -1,4 +1,5 @@
 import { planMarketFolder } from "../src/lib/orderForms/wrikeMarketFolder.js";
+import { aliasClash } from "../src/lib/orderForms/wrikeFilm.js";
 import { TERRITORY_FLAGS } from "../src/constants.js";
 
 const tree = (extra = {}) => {
@@ -38,3 +39,20 @@ check("two markets folders: refuses instead of picking",
 check("a film punctuated differently in Wrike is still found",
   planMarketFolder(tree({ film: { id: "film", title: "Focker In-Law", childIds: ["digital", "print"] } }), { filmTitle: "Focker In Law", kind: "motion", marketName: "Slovakia (SVK)" }).film,
   "Focker In-Law");
+
+// A sheet that names the film by one of its aliases (films.aliases).
+const birds = tree({ film: { id: "film", title: "Angry_Birds_3_Movie", childIds: ["digital", "print"] } });
+const aliased = [{ title: "Angry Birds 3 Movie", aliases: ["Angry Birds 3"] }];
+check("a film named by an alias is found under its own title",
+  planMarketFolder(birds, { filmTitle: "Angry Birds 3", kind: "motion", marketName: "Peru (PER)", films: aliased }).film, "Angry_Birds_3_Movie");
+check("an alias matches whatever its punctuation",
+  planMarketFolder(birds, { filmTitle: "ANGRY BIRDS-3", kind: "motion", marketName: "Peru (PER)", films: aliased }).ok, true);
+check("without the alias, not found",
+  planMarketFolder(birds, { filmTitle: "Angry Birds 3", kind: "motion", marketName: "Peru (PER)" }).ok, false);
+
+// One name leads to one film.
+const list = [{ id: 1, title: "Angry Birds 3 Movie", aliases: ["Angry Birds 3"] }, { id: 2, title: "Shrek 5", aliases: [] }];
+check("an alias is refused when it is the film's own name, another film's name or alias, or blank", [
+  aliasClash(list, 1, "angry birds 3 movie"), aliasClash(list, 2, "Angry-Birds 3"), aliasClash(list, 1, "Shrek 5"), aliasClash(list, 2, " - "),
+], ['"angry birds 3 movie" is already this film\'s name.', '"Angry-Birds 3" already names Angry Birds 3 Movie.', '"Shrek 5" already names Shrek 5.', "An alias needs at least one letter or digit."]);
+check("a new name is fine", aliasClash(list, 2, "Shrek Forever"), "");

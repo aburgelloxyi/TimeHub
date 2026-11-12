@@ -8,6 +8,7 @@ import {
   fetchAllFolders, fetchTasksUnderFolder, discoverCustomStatus, createTaskIn, fetchCustomFields, fetchFolderPermalink,
 } from "../wrikeCampaign";
 import { savedFolders } from "./wrikeMarketFolder";
+import { filmAliases } from "../filmAliases";
 import { resolveFields, fieldUse } from "./wrikeFields";
 import { UPLOAD_FIELDS, UPLOAD_SHEETS, findUploadsFolder, planUploads, readUploads, taskKey, codeOf, uploadFields } from "./enterpriseUploads";
 
@@ -54,8 +55,8 @@ export async function readUploadsSheet(sheetId, codes, film) {
   const read = { ...all, uploads: uploadsOfFilm(all.uploads, codes, film) };
 
   const films = [...new Set(read.uploads.map((u) => codes[codeOf(u.name)]).filter(Boolean))];
-  const placesFrom = (byId) => new Map(films.map((film) => [film, findUploadsFolder(byId, film)]));
-  const saved = await savedFolders();
+  const [saved, aliased] = await Promise.all([savedFolders(), filmAliases()]);
+  const placesFrom = (byId) => new Map(films.map((film) => [film, findUploadsFolder(byId, film, aliased)]));
   let places = saved ? placesFrom(saved) : null;
   if (!places || [...places.values()].some((p) => !p.ok)) places = placesFrom(await fetchAllFolders());
 

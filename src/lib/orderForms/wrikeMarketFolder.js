@@ -12,6 +12,7 @@ import {
 import { marketFlag } from "../../components/orderForms/format";
 import { supabase } from "../supabaseClient";
 import { findFilm } from "./wrikeFilm";
+import { filmAliases } from "../filmAliases";
 
 const norm = (s) => String(s || "").toLowerCase().replace(/[^\p{L}\p{N}]+/gu, " ").trim();
 const bareName = (market) => String(market || "").replace(/\s*\([^)]*\)\s*$/, "").trim();
@@ -23,9 +24,10 @@ const MARKETS_FOLDER = { motion: /_INTL_DIGITAL_Outdoor_Campaign_Markets$/i, pri
 // Pure. `byId` is the Wrike folder tree (fetchAllFolders). Returns
 // { ok: false, reason } when the place for the folder can't be pinned down to
 // exactly one, and otherwise where it goes, what it would be called, and the
-// folder already there for this market if there is one.
-export function planMarketFolder(byId, { filmTitle, kind, marketName }) {
-  const location = findFilm(byId, filmTitle);
+// folder already there for this market if there is one. `films` are the films
+// with aliases (findFilm).
+export function planMarketFolder(byId, { filmTitle, kind, marketName, films = [] }) {
+  const location = findFilm(byId, filmTitle, films);
   if (!location) return { ok: false, reason: `No film called "${filmTitle}" was found in Wrike.` };
 
   const wanted = MARKETS_FOLDER[kind] || MARKETS_FOLDER.motion;
@@ -87,8 +89,8 @@ export function savedFolders() {
 // shouldn't claim either. It never writes, and "missing" is checked against
 // Wrike itself before anything is created.
 export async function checkMarketFolder(request) {
-  const saved = await savedFolders();
-  const plan = saved ? planMarketFolder(saved, request) : null;
+  const [saved, films] = await Promise.all([savedFolders(), filmAliases()]);
+  const plan = saved ? planMarketFolder(saved, { ...request, films }) : null;
   if (!plan?.ok) return { state: "unknown" };
   if (!plan.existing) return { state: "missing" };
   const permalink = await fetchFolderPermalink(plan.existing.id).catch(() => "");
@@ -102,8 +104,9 @@ export async function checkMarketFolder(request) {
 // every folder from Wrike takes several. Wrike itself is asked only when the
 // saved tree doesn't show the market's folder, so a folder made moments ago is
 // still found and never made twice.
-export async function planMarketFolderLive(request) {
-  const [saved, field] = await Promise.all([savedFolders(), discoverDriveLinkField().catch(() => null)]);
+export async function planMarketFolderLive(given) {
+  const [saved, field, films] = await Promise.all([savedFolders(), discoverDriveLinkField().catch(() => null), filmAliases()]);
+  const request = { ...given, films };
   let plan = saved ? planMarketFolder(saved, request) : null;
   if (!plan?.ok || !plan.existing) plan = planMarketFolder(await fetchAllFolders(), request);
   if (plan.ok && plan.existing) plan.existing.permalink = await fetchFolderPermalink(plan.existing.id).catch(() => "");

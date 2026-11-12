@@ -6,7 +6,8 @@
 const norm = (s) => String(s || "").toLowerCase().replace(/[^a-z0-9]/g, "");
 
 // Each field, and where its value comes from. `context.jobNumber` is the
-// film's Markets folder title, which is what the job number field holds.
+// title of the market's job folder (Markets or Bespoke), which is what the
+// job number field holds.
 // `batch` puts it on the batch task too: true for the same value, "earliest"
 // for the soonest of its orders' dates, the one the batch has to meet.
 export const BRIEF_FIELDS = [

@@ -108,7 +108,7 @@ export async function readMarketForBriefing(request) {
     existingTitles: tasks.map((t) => t.title),
     status,
     fields: resolveFields(accountFields, fieldUse(tasks)),
-    // The job number field holds the film's Markets folder title.
+    // The job number field holds the job folder's title (Markets or Bespoke).
     jobNumber: place.parent?.title || "",
   };
 }

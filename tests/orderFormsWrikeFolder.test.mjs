@@ -56,3 +56,34 @@ check("an alias is refused when it is the film's own name, another film's name o
   aliasClash(list, 1, "angry birds 3 movie"), aliasClash(list, 2, "Angry-Birds 3"), aliasClash(list, 1, "Shrek 5"), aliasClash(list, 2, " - "),
 ], ['"angry birds 3 movie" is already this film\'s name.', '"Angry-Birds 3" already names Angry Birds 3 Movie.', '"Shrek 5" already names Shrek 5.', "An alias needs at least one letter or digit."]);
 check("a new name is fine", aliasClash(list, 2, "Shrek Forever"), "");
+
+// The Bespoke job folder beside the Markets one, in the film's INTL folder.
+// Print's is named without PRINT; Digital's with DIGITAL.
+const intl = (extra = {}) => ({
+  studio: { id: "studio", title: "Paramount", childIds: ["film"] },
+  film: { id: "film", title: "Angry_Birds_3_Movie", childIds: ["intl"] },
+  intl: { id: "intl", title: "INTL", childIds: ["dm", "db", "pm", "pb"] },
+  dm: { id: "dm", title: "XY025915_INTL_DIGITAL_Outdoor_Campaign_Markets", childIds: [] },
+  db: { id: "db", title: "XY025916_INTL_DIGITAL_Outdoor_Campaign_Bespoke", childIds: [] },
+  pm: { id: "pm", title: "XY025921_INTL_PRINT_Outdoor_Campaign_Markets", childIds: ["se1"] },
+  pb: { id: "pb", title: "XY025922_INTL_Outdoor_Campaign_Bespoke", childIds: ["pe", "se2"] },
+  pe: { id: "pe", title: `Peru ${TERRITORY_FLAGS.Peru}`, childIds: [] },
+  se1: { id: "se1", title: `Sweden ${TERRITORY_FLAGS.Sweden}`, childIds: [] },
+  se2: { id: "se2", title: `Sweden ${TERRITORY_FLAGS.Sweden}`, childIds: [] },
+  ...extra,
+});
+const at = (request, byId = intl()) => planMarketFolder(byId, { filmTitle: "Angry Birds 3 Movie", kind: "print", ...request });
+
+const peru = at({ marketName: "Peru (PER)", home: "bespoke" });
+check("print's Bespoke folder is the one without DIGITAL, and the market is found there", [peru.ok, peru.parent.id, peru.existing?.id], [true, "pb", "pe"]);
+check("Peru isn't in Markets, and the plan says where it is", [at({ marketName: "Peru (PER)" }).existing, at({ marketName: "Peru (PER)" }).homes.bespoke.existing?.id], [null, "pe"]);
+check("digital's Bespoke folder is the one with DIGITAL", at({ marketName: "Peru (PER)", kind: "motion", home: "bespoke" }).parent.id, "db");
+check("a market in both has both", Object.values(at({ marketName: "Sweden (SE)" }).homes).map((h) => h.existing?.id), ["se1", "se2"]);
+check("a new market in Bespoke is named as in Markets", at({ marketName: "Malaysia (MY)", home: "bespoke" }).title, `Malaysia ${TERRITORY_FLAGS.Malaysia}`);
+check("no Bespoke folder: none offered, and adding there is refused", (() => {
+  const plain = at({ marketName: "Peru (PER)" }, intl({ intl: { id: "intl", title: "INTL", childIds: ["dm", "pm"] } }));
+  const refused = at({ marketName: "Peru (PER)", home: "bespoke" }, intl({ intl: { id: "intl", title: "INTL", childIds: ["dm", "pm"] } }));
+  return [plain.homes.bespoke, refused.ok];
+})(), [null, false]);
+check("two print Bespoke folders: refuses instead of picking",
+  at({ marketName: "Peru (PER)", home: "bespoke" }, intl({ intl: { id: "intl", title: "INTL", childIds: ["dm", "db", "pm", "pb", "pb2"] }, pb2: { id: "pb2", title: "XY1_INTL_PRINT_Outdoor_Campaign_Bespokes", childIds: [] } })).ok, false);

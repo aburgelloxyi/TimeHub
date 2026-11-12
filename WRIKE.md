@@ -468,10 +468,12 @@ can actually damage data in Wrike:
 - copying a template folder, creating folders and renaming folders (Push to
   Wrike)
 - creating a market's country folder inside a film's
-  `…_Outdoor_Campaign_Markets` folder, and setting its "Order Form" custom
-  field to the market's Google Drive folder when the account has that field
-  (Client Orders, "Add folder to Wrike";
-  `src/lib/orderForms/wrikeMarketFolder.js`)
+  `…_Outdoor_Campaign_Markets` folder, or the `…_Outdoor_Campaign_Bespoke`
+  one beside it, setting its Job Number field to that job folder's title, and
+  its "Order Form" custom field to the market's Google Drive folder when the
+  account has that field (Client Orders, "Add folder to Wrike";
+  `src/lib/orderForms/wrikeMarketFolder.js`). A market can have a folder in
+  both; briefing asks which one a batch goes in.
 - creating a batch task in a market's folder with a subtask for each order
   ticked, as Milestones with a due date, starting in the Studio workflow's
   Backlog status, unassigned (Client Orders, "Brief into Wrike";

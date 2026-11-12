@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import { ArrowLeft, Check, ChevronRight, Copy, ExternalLink, EyeOff, FileSpreadsheet, Link2, Loader2, Package, PackagePlus, PencilLine, Send } from "lucide-react";
 import { useContextMenu } from "../shared/ContextMenu";
 import { AnimatePresence, motion } from "framer-motion";
-import { checkMarketFolder } from "../../lib/orderForms/wrikeMarketFolder";
+import { checkMarketFolder, HOME_LABEL } from "../../lib/orderForms/wrikeMarketFolder";
 import { fetchTasksUnderFolder } from "../../lib/wrikeCampaign";
 import { makeMatcher } from "../../lib/orderForms/wrikeMatch";
 import { marketSummary, orderUrgency, changeKeys, changesNote } from "../../lib/orderForms/status";
@@ -210,7 +210,12 @@ export default function MarketView({ market, kind, filmTitle, clientId, filmKey,
     setFolderTasks(null);
     if (wrikeFolder?.state !== "exists") return;
     let live = true;
-    fetchTasksUnderFolder(wrikeFolder.folder.id).then((tasks) => { if (live) setFolderTasks(tasks); }).catch(() => {});
+    // Every one of the market's folders, Markets and Bespoke, or a briefed
+    // order in the other would look deleted.
+    const folders = wrikeFolder.folders?.length ? wrikeFolder.folders : [wrikeFolder.folder];
+    Promise.all(folders.map((f) => fetchTasksUnderFolder(f.id).catch(() => [])))
+      .then((lists) => { if (live) setFolderTasks(lists.flat()); })
+      .catch(() => {});
     return () => { live = false; };
   }, [wrikeFolder]);
   const folderMatcher = useMemo(() => (folderTasks?.length ? makeMatcher(folderTasks) : null), [folderTasks]);
@@ -441,15 +446,16 @@ export default function MarketView({ market, kind, filmTitle, clientId, filmKey,
 
   // `only` is the orders to tick (a row's "Brief just this order", or a batch's rows); otherwise
   // everything ready to brief starts ticked, which is usually the batch. A batch brings its own name and date.
-  const startBriefing = async (only, batch = null) => {
+  // `home` is which of the market's folders the batch goes in: the one it has, Markets if it has both.
+  const startBriefing = async (only, batch = null, home = wrikeFolder?.folder?.home || "markets") => {
     const fresh = new Set((Array.isArray(only) ? only : orders.map((_, i) => i)).filter(briefable));
     setTicked(fresh);
     setExpanded(null);
     setBriefing({ loading: true });
     try {
       const [found, template] = await Promise.all([
-        readMarketForBriefing({ filmTitle, kind, marketName: market.name }),
-        batch ? readBriefTemplate({ filmTitle, kind, marketName: market.name }).catch(() => null) : null,
+        readMarketForBriefing({ filmTitle, kind, marketName: market.name, home }),
+        batch ? readBriefTemplate({ filmTitle, kind, marketName: market.name, home }).catch(() => null) : null,
       ]);
       const read = template?.ok ? readTemplate(template.html) : null;
       const description = read ? batchDescription(read, suggestFolder(read, template.marketsJob, template.marketFolder), batch.brief || {}) : "";
@@ -459,6 +465,8 @@ export default function MarketView({ market, kind, filmTitle, clientId, filmKey,
         name: batch?.name || suggestBatchName(found.existingTitles, mine.length ? mine : orders, marketCode),
         due: batch?.due || suggestDue(mine),
         batchId: batch?.id || null,
+        batch,
+        home,
         description,
       } : found);
     } catch (err) {
@@ -941,7 +949,11 @@ export default function MarketView({ market, kind, filmTitle, clientId, filmKey,
                 marketName={market.name}
                 driveUrl={market.folderUrl}
                 known={wrikeFolder}
-                onMade={(folder) => setWrikeFolder({ state: "exists", folder })}
+                onMade={(folder) => setWrikeFolder((prev) => {
+                  const folders = [...(prev?.folders || []).filter((f) => f.home !== folder.home), folder]
+                    .sort((a, b) => (a.home === "markets" ? -1 : b.home === "markets" ? 1 : 0));
+                  return { ...prev, state: "exists", folder: folders[0], folders };
+                })}
               />
               {orders.length > 0 && (toBrief === 0 && waitingForArtwork > 0 ? (
                 <span title="Choose their artwork in the sheet, or with Edit, to brief them" className="px-3 py-1.5 text-sm font-bold text-[#768994]">
@@ -1129,8 +1141,24 @@ export default function MarketView({ market, kind, filmTitle, clientId, filmKey,
                   {waitingForArtwork} {waitingForArtwork === 1 ? "order has" : "orders have"} no artwork selected, so {waitingForArtwork === 1 ? "it can't" : "they can't"} be briefed yet. Choose the artwork in the sheet (or with Edit), then brief {waitingForArtwork === 1 ? "it" : "them"}.
                 </p>
               )}
+              {wrikeFolder?.folders?.length > 1 && (
+                <div className="mt-3 flex items-center gap-2">
+                  <span className="text-[10px] font-black uppercase tracking-widest text-[#768994]">Goes in</span>
+                  <div className="inline-flex rounded-full bg-slate-100 p-0.5">
+                    {wrikeFolder.folders.map((f) => (
+                      <button key={f.home}
+                        onClick={() => f.home !== briefing.home && startBriefing([...ticked], briefing.batch, f.home)}
+                        className={`px-3 py-1 rounded-full text-xs font-bold transition-colors ${
+                          f.home === briefing.home ? "bg-gradient-to-r from-indigo-600 to-violet-600 text-white shadow-sm" : "text-[#768994] hover:text-[#122027]"
+                        }`}>
+                        {HOME_LABEL[f.home]}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
               <p className="mt-2 text-[11px] text-[#768994]">
-                Into <span className="font-bold text-[#122027]">{briefing.folder.title}</span>, named as the sheet names each order,{" "}
+                Into <span className="font-bold text-[#122027]">{briefing.parentFolder?.title} › {briefing.folder.title}</span>, named as the sheet names each order,{" "}
                 {briefing.status ? `starting as ${briefing.status.name}.` : "in Wrike's default status (no Backlog status was found in the Studio workflow)."}{" "}
                 Nothing is created until you've checked it.
               </p>

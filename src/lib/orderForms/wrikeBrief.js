@@ -18,7 +18,7 @@ async function wrikeData(path) {
 const descriptionOf = async (folderId) => (await wrikeData(`/folders/${folderId}`))[0]?.description || "";
 
 // { ok, html, source: "market" | "template", marketsJob, marketFolder } or { ok: false, reason }.
-// `marketsJob` is the Markets job folder's title (it carries the job number),
+// `marketsJob` is the job folder's title, Markets or Bespoke (it carries the job number),
 // `marketFolder` the market's own folder's title: what the batch's Folder is worked out from.
 export async function readBriefTemplate(request) {
   const place = await planMarketFolderLive(request);

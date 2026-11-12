@@ -62,8 +62,8 @@ const newer = (a, b) => String(b.modifiedTime || "") > String(a.modifiedTime || 
 // Every film with an order sheet in at least one market folder.
 //
 // `folders` are the market folders, `sheets` the spreadsheets directly inside
-// them (each with `parents`), `names` the film codes the app knows
-// (FILM_MAPPINGS), so "FID" is listed as "Forgotten Island". A market with two
+// them (each with `parents`), `names` the film code table (filmCodeTable),
+// so "FID" is listed as "Forgotten Island". A market with two
 // sheets for one film and medium (a copy beside the original) gives the most
 // recently changed. A film spelt more than one way is titled the way most of
 // its markets spell it.

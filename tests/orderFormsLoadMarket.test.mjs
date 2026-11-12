@@ -14,6 +14,8 @@ const sheets = [
 ];
 const row = marketRowIn("f1", "Austria (AUT)", sheets, "street fighter|motion");
 check("the film's newest sheet in that folder, under the saved name", [row?.sheet.id, row?.name, row?.folderId], ["new", "Austria (AUT)", "f1"]);
+check("a sheet named by its film code takes the name the table gives the code",
+  marketRowIn("f1", "Austria (AUT)", [{ id: "x", name: "AB3_Print_Outdoor", parents: ["f1"] }], "angry birds three|print", { AB3: "Angry Birds Three" })?.sheet.id, "x");
 check("no sheet there for the film: none, so the whole tree is listed", marketRowIn("f1", "Austria (AUT)", sheets, "ebenezer|motion"), null);
 
 

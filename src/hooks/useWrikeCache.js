@@ -333,6 +333,7 @@ export function useWrikeCache() {
   const [tasks, setTasks]                       = useState([]);
   const [folderCampaigns, setFolderCampaigns]   = useState([]);
   const [filmCodeMappings, setFilmCodeMappings] = useState({});
+  const [filmCodeOverrides, setFilmCodeOverrides] = useState({});
   const [isSyncing, setIsSyncing]               = useState(false);
   const [isScanning, setIsScanning]             = useState(false);
   const [lastSynced, setLastSynced]             = useState(null);
@@ -415,13 +416,14 @@ export function useWrikeCache() {
       // if something actually needs repairing.
       const { data: meta } = await supabase
         .from("wrike_sync_meta")
-        .select("last_synced_at,film_code_mappings")
+        .select("last_synced_at,film_code_mappings,film_code_overrides")
         .eq("wrike_user_id", SHARED_META_ID)
         .maybeSingle();
       if (meta?.last_synced_at) setLastSynced(new Date(meta.last_synced_at));
       if (meta?.film_code_mappings && Object.keys(meta.film_code_mappings).length) {
         setFilmCodeMappings(meta.film_code_mappings);
       }
+      setFilmCodeOverrides(meta?.film_code_overrides || {});
       // Only the (small) film mappings are available here — the mount select
       // deliberately skips the multi-MB dictionaries. The webhook handler
       // lazily fetches them on its first event if they're still empty.
@@ -1123,8 +1125,9 @@ export function useWrikeCache() {
       .eq("wrike_user_id", SHARED_META_ID);
     if (saveError) throw new Error(saveError.message);
     setFilmCodeMappings(merged);
+    setFilmCodeOverrides(overrides);
     enrichCtxRef.current = { ...enrichCtxRef.current, filmCodeMappings: merged };
   }, []);
 
-  return { tasks, folderCampaigns, filmCodeMappings, isSyncing, isScanning, lastSynced, syncError, sync, syncNow, scanFilmMappings, editFilmCode };
+  return { tasks, folderCampaigns, filmCodeMappings, filmCodeOverrides, isSyncing, isScanning, lastSynced, syncError, sync, syncNow, scanFilmMappings, editFilmCode };
 }

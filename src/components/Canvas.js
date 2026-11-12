@@ -2715,7 +2715,7 @@ export default function CampaignCanvas(props) {
   return <CampaignCanvasForDepartment {...props} department={department} />;
 }
 
-function CampaignCanvasForDepartment({ department, wrikeData = [], folderCampaigns = [], triggerToast: _triggerToast, isLoading = false, syncNow, isSyncing = false, isAdmin = false, scanFilmMappings, isScanning = false, filmCodeMappings = {}, editFilmCode }) {
+function CampaignCanvasForDepartment({ department, wrikeData = [], folderCampaigns = [], triggerToast: _triggerToast, isLoading = false, syncNow, isSyncing = false, isAdmin = false, scanFilmMappings, isScanning = false, filmCodeMappings = {}, filmCodeOverrides = {}, editFilmCode }) {
   const triggerToast = _triggerToast ?? ((msg) => console.warn("Toast:", msg));
   const [campaigns, setCampaigns] = useState(INITIAL_CAMPAIGNS);
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -3657,7 +3657,7 @@ function CampaignCanvasForDepartment({ department, wrikeData = [], folderCampaig
       `}</style>
 
       {showMappingsPanel && (
-        <FilmCodesPanel discovered={filmCodeMappings} onEdit={editFilmCode} onClose={() => setShowMappingsPanel(false)} />
+        <FilmCodesPanel discovered={filmCodeMappings} overrides={filmCodeOverrides} onEdit={editFilmCode} onClose={() => setShowMappingsPanel(false)} />
       )}
 
       <PageHeader pageId="canvas" title="Campaign Canvas" subtitle="Visual Command Centre for active campaigns">

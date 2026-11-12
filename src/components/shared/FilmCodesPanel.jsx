@@ -1,18 +1,19 @@
 // The film-code dictionary, opened from Campaign Canvas's "Codes" button.
-// Discovered codes can be renamed, removed or added by hand; hardcoded ones
-// live in constants.js (FILM_MAPPINGS) and win over anything here.
+// Discovered codes can be renamed, removed or added by hand. Hardcoded ones
+// (constants.js) win over discovered ones and can be renamed but not removed;
+// a rename is saved as a hand edit, which wins over both (filmCodeTable).
 import { useMemo, useState } from "react";
-import { Film, X, Pencil, Trash2, Check, Plus, Search } from "lucide-react";
+import { Film, X, Pencil, Trash2, Check, Plus, Search, RotateCcw } from "lucide-react";
 import { FILM_MAPPINGS } from "../../constants.js";
 import { confirmAction } from "../../lib/confirm";
-import { isFilmCode, normalizeFilmCode } from "../../lib/filmCodes";
+import { filmCodeTable, isFilmCode, normalizeFilmCode } from "../../lib/filmCodes";
 
 const badge = "text-[10px] font-black uppercase tracking-widest px-2 py-1 rounded-full border";
 const input = "px-2 py-1 text-sm rounded-lg border border-[#dce4ec] outline-none focus:border-[#c2410d] bg-white text-[#122027]";
 
 const hardcoded = FILM_MAPPINGS || {};
 
-export default function FilmCodesPanel({ discovered = {}, onEdit, onClose }) {
+export default function FilmCodesPanel({ discovered = {}, overrides = {}, onEdit, onClose }) {
   const [query, setQuery] = useState("");
   const [editing, setEditing] = useState(null);
   const [draft, setDraft] = useState("");
@@ -21,6 +22,7 @@ export default function FilmCodesPanel({ discovered = {}, onEdit, onClose }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
 
+  const table = useMemo(() => filmCodeTable(discovered, overrides), [discovered, overrides]);
   const allCodes = useMemo(
     () => [...new Set([...Object.keys(hardcoded), ...Object.keys(discovered)])].sort(),
     [discovered]
@@ -29,8 +31,8 @@ export default function FilmCodesPanel({ discovered = {}, onEdit, onClose }) {
     const q = query.trim().toLowerCase();
     if (!q) return allCodes;
     return allCodes.filter((c) =>
-      c.toLowerCase().includes(q) || String(hardcoded[c] || discovered[c] || "").toLowerCase().includes(q));
-  }, [allCodes, query, discovered]);
+      c.toLowerCase().includes(q) || String(table[c] || "").toLowerCase().includes(q));
+  }, [allCodes, query, table]);
 
   const save = async (code, name) => {
     setBusy(true);
@@ -106,7 +108,7 @@ export default function FilmCodesPanel({ discovered = {}, onEdit, onClose }) {
           <input value={newName} onChange={(e) => setNewName(e.target.value)} placeholder="Film name"
             className={`${input} w-40`} onKeyDown={(e) => e.key === "Enter" && add()} />
           <button onClick={add} disabled={!canAdd || busy}
-            title={hardcoded[code] ? `${code} is hardcoded` : "Add a film code"}
+            title={hardcoded[code] ? `${code} is hardcoded: rename it in the list` : "Add a film code"}
             className="flex items-center gap-1 px-3 py-1.5 rounded-lg bg-[#c2410d] text-white text-xs font-bold disabled:opacity-40">
             <Plus className="w-3.5 h-3.5" /> Add
           </button>
@@ -126,7 +128,8 @@ export default function FilmCodesPanel({ discovered = {}, onEdit, onClose }) {
             <tbody>
               {shown.map((c) => {
                 const isHardcoded = !!hardcoded[c];
-                const name = hardcoded[c] || discovered[c];
+                const isEdited = isHardcoded && table[c] !== hardcoded[c];
+                const name = table[c];
                 return (
                   <tr key={c} className="group border-b border-[#dce4ec]">
                     <td className="px-5 py-3">
@@ -146,15 +149,25 @@ export default function FilmCodesPanel({ discovered = {}, onEdit, onClose }) {
                       ) : name}
                     </td>
                     <td className="px-5 py-3 text-right">
-                      {isHardcoded ? (
-                        <span title="Set in constants.js" className={`${badge} text-blue-600 bg-blue-50 border-blue-100`}>Hardcoded</span>
-                      ) : editing !== c && (
+                      {editing !== c && (
                         <span className="inline-flex items-center gap-1">
                           <button onClick={() => { setEditing(c); setDraft(name); }} title="Rename"
                             className="p-1 rounded-lg text-slate-300 group-hover:text-[#768994] hover:!text-[#122027] hover:bg-slate-100"><Pencil className="w-3 h-3" /></button>
-                          <button onClick={() => remove(c)} disabled={busy} title="Remove"
-                            className="p-1 rounded-lg text-slate-300 group-hover:text-[#768994] hover:!text-red-600 hover:bg-red-50"><Trash2 className="w-3 h-3" /></button>
-                          <span className={`${badge} text-emerald-600 bg-emerald-50 border-emerald-100`}>Discovered</span>
+                          {isEdited && (
+                            <button onClick={() => save(c, hardcoded[c])} disabled={busy} title={`Back to "${hardcoded[c]}"`}
+                              className="p-1 rounded-lg text-slate-300 group-hover:text-[#768994] hover:!text-[#122027] hover:bg-slate-100"><RotateCcw className="w-3 h-3" /></button>
+                          )}
+                          {!isHardcoded && (
+                            <button onClick={() => remove(c)} disabled={busy} title="Remove"
+                              className="p-1 rounded-lg text-slate-300 group-hover:text-[#768994] hover:!text-red-600 hover:bg-red-50"><Trash2 className="w-3 h-3" /></button>
+                          )}
+                          {isEdited ? (
+                            <span title={`Hardcoded as "${hardcoded[c]}"`} className={`${badge} text-amber-700 bg-amber-50 border-amber-100`}>Edited</span>
+                          ) : isHardcoded ? (
+                            <span title="Set in constants.js" className={`${badge} text-blue-600 bg-blue-50 border-blue-100`}>Hardcoded</span>
+                          ) : (
+                            <span className={`${badge} text-emerald-600 bg-emerald-50 border-emerald-100`}>Discovered</span>
+                          )}
                         </span>
                       )}
                     </td>
@@ -169,6 +182,9 @@ export default function FilmCodesPanel({ discovered = {}, onEdit, onClose }) {
             </div>
           )}
         </div>
+        <p className="px-5 py-2.5 border-t border-[#dce4ec] text-[11px] text-[#768994] shrink-0">
+          Client Orders names films from these codes within a minute of a change. A film already loaded there under the old name has to be loaded again.
+        </p>
       </div>
     </div>
   );

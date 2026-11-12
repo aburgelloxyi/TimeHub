@@ -3,7 +3,8 @@
 // sheet is parsed the same way a dropped workbook is.
 
 import { mapPool } from "../fetchPool";
-import { FILM_MAPPINGS } from "../../constants";
+import { supabase } from "../supabaseClient";
+import { filmCodeTable } from "../filmCodes";
 import { listFolders, listSheetsIn, downloadSheet, GoogleError, GOOGLE_SHEET } from "./googleApi";
 import { clientFor, filmsIn, isTestFolder, sameFilm } from "./driveTree";
 import { sheetsFromBuffer } from "./readXlsx";
@@ -22,12 +23,34 @@ const REASONS = {
 
 const missing = (name, reason) => ({ name, code: "", kind: null, unreadable: reason, orders: [], undated: 0 });
 
+// The film codes sheets are named with ("FID_Motion_Outdoor"), from the table
+// Canvas's Codes panel edits, read at most once a minute. If it can't be read,
+// the last copy, or the hardcoded codes.
+const CODES_FOR = 60 * 1000;
+let codes = { at: 0, table: null };
+async function filmCodes() {
+  if (codes.table && Date.now() - codes.at < CODES_FOR) return codes.table;
+  try {
+    const { data, error } = await supabase
+      .from("wrike_sync_meta")
+      .select("film_code_mappings,film_code_overrides")
+      .eq("wrike_user_id", "shared")
+      .maybeSingle();
+    if (error) throw error;
+    codes = { at: Date.now(), table: filmCodeTable(data?.film_code_mappings || {}, data?.film_code_overrides || {}) };
+    return codes.table;
+  } catch {
+    return codes.table || filmCodeTable();
+  }
+}
+
 // The films a client has order sheets for, each with its markets.
 export async function listFilms(clientId) {
   const client = clientFor(clientId);
   if (!client) return [];
-  const folders = (await listFolders(client.folderId)).filter((f) => !isTestFolder(f.name));
-  return filmsIn(folders, await listSheetsIn(folders.map((f) => f.id)), FILM_MAPPINGS);
+  const [listed, names] = await Promise.all([listFolders(client.folderId), filmCodes()]);
+  const folders = listed.filter((f) => !isTestFolder(f.name));
+  return filmsIn(folders, await listSheetsIn(folders.map((f) => f.id)), names);
 }
 
 // A saved market stands in for reading its sheet again when it is provably
@@ -72,8 +95,8 @@ export const folderIdOf = (market) => /\/folders\/([^/?#]+)/.exec(market?.folder
 
 // The film's sheet in one market folder, as filmsIn would find it in the
 // whole tree: the newest sheet there for that film. null when there is none.
-export function marketRowIn(folderId, name, sheets, filmKey) {
-  const film = filmsIn([{ id: folderId, name }], sheets, FILM_MAPPINGS).find((f) => sameFilm(f.key, filmKey));
+export function marketRowIn(folderId, name, sheets, filmKey, names = filmCodeTable()) {
+  const film = filmsIn([{ id: folderId, name }], sheets, names).find((f) => sameFilm(f.key, filmKey));
   return film?.markets[0] ? { ...film.markets[0], name } : null;
 }
 
@@ -87,7 +110,7 @@ export function marketRowIn(folderId, name, sheets, filmKey) {
 export async function loadMarketOf({ clientId, filmKey }, market, now = new Date()) {
   const name = market?.name;
   const folderId = folderIdOf(market);
-  let row = folderId ? marketRowIn(folderId, name, await listSheetsIn([folderId]), filmKey) : null;
+  let row = folderId ? marketRowIn(folderId, name, await listSheetsIn([folderId]), filmKey, await filmCodes()) : null;
   if (!row) {
     const film = (await listFilms(clientId)).find((f) => sameFilm(f.key, filmKey));
     row = film?.markets.find((m) => m.name === name) || null;

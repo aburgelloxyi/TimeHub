@@ -262,6 +262,7 @@ export default function App() {
     tasks: globalWrikeData,
     folderCampaigns,
     filmCodeMappings,
+    filmCodeOverrides,
     isSyncing,
     isScanning,
     lastSynced,
@@ -633,6 +634,7 @@ export default function App() {
                 scanFilmMappings={scanFilmMappings}
                 isScanning={isScanning}
                 filmCodeMappings={filmCodeMappings}
+                filmCodeOverrides={filmCodeOverrides}
                 editFilmCode={editFilmCode}
               />
             )}

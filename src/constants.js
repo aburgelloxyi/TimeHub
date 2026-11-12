@@ -511,6 +511,22 @@ export const MAGI_MARKET_CODES = {
   ZA: "South Africa",
 };
 
+// MAGI's three-letter file codes as their two-letter partners, in the sheet's own pairs ("DK / DEN"). The studio
+// names everything with the two-letter one (batch tasks, deliverables, the Toolbox's folders and renders), while the
+// Drive folders carry the three ("Denmark (DEN)"). Left out on purpose: UAE (MAGI pairs it with both AE-AR and AE-EN),
+// IND (its partner IN-EN is a language code), TRI (TT at the end of a name reads as Teaser Titles, countryCodes.js).
+export const MAGI_TWO_LETTER = {
+  ALB: "AL", ARG: "AR", ARM: "AM", AUS: "AU", AUT: "AT", AZE: "AZ", "BEL-FL": "BE-FL", "BEL-FR": "BE-FR",
+  BOL: "BO", BIH: "BA", BRA: "BR", BGR: "BG", KHM: "KH", CHN: "CN", CHI: "CL", COL: "CO", HRV: "HR", CYP: "CY",
+  CZE: "CZ", DEN: "DK", ECU: "EC", EGY: "EG", EST: "EE", FIN: "FI", FRA: "FR", GEO: "GE", GER: "DE", GRE: "GR",
+  HKG: "HK", HUN: "HU", ISL: "IS", IDN: "ID", IRL: "IE", ISR: "IL", ITA: "IT", JPN: "JP", KAZ: "KZ", KOR: "KR",
+  KGZ: "KG", LVA: "LV", LIB: "LB", LTU: "LT", MYS: "MY", MDV: "MV", MEX: "MX", "MENA-AR": "ME-AR", "MENA-EN": "ME-EN",
+  MDA: "MD", MNG: "MN", NPL: "NP", NED: "NL", NZL: "NZ", MKD: "MK", NOR: "NO", PAN: "PA", PAK: "PK", PAR: "PY",
+  PER: "PE", PHI: "PH", POL: "PL", POR: "PT", ROU: "RO", SRB: "RS", SIN: "SG", SVK: "SK", SVN: "SI", RSA: "ZA",
+  ESP: "ES", SWE: "SE", "SUI-FR": "CH-FR", "SUI-DE": "CH-DE", "SUI-IT": "CH-IT", TWN: "TW", THA: "TH",
+  "THA-ENG": "TH-ENG", TUR: "TR", UKR: "UA", URU: "UY", GBR: "UK", UZB: "UZ", VEN: "VE", VIE: "VN",
+};
+
 // The other half of MAGI's sheet: the name of the market FOLDER, as opposed to
 // the code that goes in a file name. Their document gives both for all 94
 // markets ("Switzerland (French)" — "CH-FR / SUI-FR"), and until now we only

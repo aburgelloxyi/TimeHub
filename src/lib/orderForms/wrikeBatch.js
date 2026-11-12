@@ -14,8 +14,11 @@ import { orderKey } from "./wrikeMatch";
 import { artworkChosen } from "./artwork";
 import { setTaskDescription } from "./wrikeBrief";
 import { tidyTaskName } from "./taskName";
+import { twoLetterCode, twoLetterName } from "./marketCode.js";
 
 const titleOf = (order) => String(order.xyi?.title || order.deliveryName || "").trim();
+// The name a subtask is given: the sheet's, tidied, with its market in MAGI's two letters (marketCode.js).
+const taskTitleOf = (order) => twoLetterName(tidyTaskName(titleOf(order)));
 
 export { tidyTaskName } from "./taskName";
 
@@ -40,8 +43,8 @@ export function batchCodes(orders) {
 // The PMs write these as "EBZR - COL - DOOH - Batch 1", so that is the shape
 // suggested: one past the highest batch number found, whichever way those were
 // punctuated. `marketCode` comes from the market itself and wins over the code
-// at the end of the order's name, which is the sheet's own spelling. Only a
-// suggestion: the PM can type over it.
+// at the end of the order's name, which is the sheet's own spelling. Either is
+// written in MAGI's two letters (DEN is DK). Only a suggestion: the PM can type over it.
 export function suggestBatchName(existingTitles, orders, marketCode = "") {
   const { film, market, placement } = batchCodes(orders);
   const numbers = (existingTitles || [])
@@ -49,7 +52,7 @@ export function suggestBatchName(existingTitles, orders, marketCode = "") {
     .filter(Boolean)
     .map(Number);
   const next = (numbers.length ? Math.max(...numbers) : 0) + 1;
-  return [film, marketCode || market, placement, `Batch ${next}`].filter(Boolean).join(" - ");
+  return [film, twoLetterCode(marketCode || market), placement, `Batch ${next}`].filter(Boolean).join(" - ");
 }
 
 // The earliest of the dates XYi works to (the sheet's End date), or failing
@@ -73,14 +76,14 @@ export function planBatch({ name, due, orders }) {
   const unnamed = orders.filter((o) => !titleOf(o));
   if (unnamed.length) problems.push(`${rowsOf(unnamed)} ${unnamed.length === 1 ? "has" : "have"} no task name in the sheet.`);
   const seen = new Map();
-  for (const o of orders) if (titleOf(o)) seen.set(tidyTaskName(titleOf(o)), [...(seen.get(tidyTaskName(titleOf(o))) || []), o.row]);
+  for (const o of orders) if (titleOf(o)) seen.set(taskTitleOf(o), [...(seen.get(taskTitleOf(o)) || []), o.row]);
   for (const [title, rows] of seen) if (rows.length > 1) problems.push(`Rows ${rows.join(" and ")} would both become "${title}".`);
   return {
     ok: problems.length === 0,
     problems,
     name: String(name || "").trim(),
     due,
-    tasks: orders.filter(titleOf).map((o) => ({ key: orderKey(o), row: o.row, title: tidyTaskName(titleOf(o)) })),
+    tasks: orders.filter(titleOf).map((o) => ({ key: orderKey(o), row: o.row, title: taskTitleOf(o) })),
   };
 }
 

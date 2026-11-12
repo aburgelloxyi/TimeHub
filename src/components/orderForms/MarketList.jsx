@@ -3,6 +3,7 @@ import { HoverLabel } from "../shared/FloatingCard";
 import { ArrowDown, ArrowUp, Check, ChevronRight } from "lucide-react";
 import { marketSummary, fileTotals, sortMarkets, changesNote, marketDelivery } from "../../lib/orderForms/status";
 import MarketFlag from "./MarketFlag";
+import { twoLetterLabel } from "../../lib/orderForms/marketCode";
 import { formatDay, undatedNote, pillClass, STATUS_CLASS, STATUS_LABEL, URGENCY_TEXT } from "./format";
 
 // The overview: every market in the file as one row, so a PM can see who has
@@ -38,7 +39,7 @@ function MarketName({ name, undated = 0, changed = "" }) {
       <MarketFlag name={name} />
       <span className="min-w-0">
         <span className="flex items-center gap-1.5 font-bold text-[#122027]">
-          <span className="truncate">{name}</span>
+          <span className="truncate">{twoLetterLabel(name)}</span>
           {changed && <span className="w-2 h-2 rounded-full bg-indigo-600 shrink-0" aria-hidden />}
         </span>
         {changed && <span className="block text-[11px] font-bold text-indigo-600 truncate">{changed}</span>}

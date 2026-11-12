@@ -10,8 +10,15 @@ check("one past the highest batch there, however it was written",
   ["EBZR - HU - DOOH - Batch 4", "EBZR - HU - DOOH - Batch 4"]);
 check("the PMs' hyphenated names count too",
   suggestBatchName(["EBZR - HU - DOOH - Batch 1", "EBZR - HU - DOOH - Batch 2"], hu), "EBZR - HU - DOOH - Batch 3");
-check("the market's own code wins over the sheet's",
-  suggestBatchName([], hu, "COL"), "EBZR - COL - DOOH - Batch 1");
+check("the market's own code wins over the sheet's, in MAGI's two letters",
+  [suggestBatchName([], hu, "COL"), suggestBatchName([], hu, "CA"), suggestBatchName([], hu, "CIS")],
+  ["EBZR - CO - DOOH - Batch 1", "EBZR - CA - DOOH - Batch 1", "EBZR - CIS - DOOH - Batch 1"]);
+check("a Drive folder's three letters become two in the batch name",
+  [suggestBatchName([], hu, "DEN"), suggestBatchName([], hu, "CHI"), suggestBatchName([], [{ ...o(4, "FIL_INTL_View_DINTH_1080x1920px_10s_GER") }])],
+  ["EBZR - DK - DOOH - Batch 1", "EBZR - CL - DOOH - Batch 1", "FIL - DE - DOOH - Batch 1"]);
+check("a subtask is named with the market in two letters",
+  planBatch({ name: "X", due: "2026-10-14", orders: [o(4, "FIL_INTL_View_DINTH_MotionPoster_1080x1920px_10s_DEN"), o(5, "EBZR_INTL__DFOH__1920x1080px_10s_BEL_FL")] }).tasks.map((t) => t.title),
+  ["FIL_INTL_View_DINTH_MotionPoster_1080x1920px_10s_DK", "EBZR_INTL_DFOH_1920x1080px_10s_BE_FL"]);
 check("an order with no placement drops that slot", suggestBatchName([], [{ ...o(4, "EBZR_A_HU"), placement: "" }]), "EBZR - HU - Batch 1");
 check("a size isn't taken for a batch number", suggestBatchName(["EBZR_INTL_B_1080x1920px_HU"], hu), "EBZR - HU - DOOH - Batch 1");
 check("due: the earliest date XYi works to", suggestDue(hu), "2026-10-09");

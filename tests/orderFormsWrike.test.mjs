@@ -127,3 +127,10 @@ check("no parent loaded", taskSummary(sub, undefined), {
   const o = (row) => ({ tab: "T", row, xyi: { title: "SF_INTL_StaticLegendary_DOOH_DigitalCityLights_1080x1920px_10s_AT" } });
   check("two orders, one live task and one deleted: the second order matches nothing", makeMatcher(tasks).match([o(4), o(5)]).map((m) => m?.task.id || null), ["live", null]);
 }
+
+// A sheet still spelling the market in three letters finds the task made in two, and the other way round.
+const danes = indexTasks([{ id: "DK", title: "FIL_INTL_View_DINTH_MotionPoster_1080x1920px_10s_DK" }, { id: "DEN", title: "FIL_INTL_View_DINTH_MotionPoster_1920x1080px_10s_DEN" }]);
+check("three letters in the sheet, two in Wrike", findTask(danes, order("FIL_INTL_View_DINTH_MotionPoster_1080x1920px_10s_DEN"))?.id, "DK");
+check("two letters in the sheet, three in Wrike", findTask(danes, order("FIL_INTL_View_DINTH_MotionPoster_1920x1080px_10s_DK"))?.id, "DEN");
+check("a task's own name wins over a two-letter twin",
+  findTask(indexTasks([{ id: "a", title: "FIL_INTL_View_DINTH_1080x1920px_10s_DK" }, { id: "b", title: "FIL_INTL_View_DINTH_1080x1920px_10s_DEN", updatedDate: "2027" }]), order("FIL_INTL_View_DINTH_1080x1920px_10s_DK"))?.id, "a");

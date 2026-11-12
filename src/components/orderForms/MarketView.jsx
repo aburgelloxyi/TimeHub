@@ -418,8 +418,7 @@ export default function MarketView({ market, kind, filmTitle, clientId, filmKey,
   const firstTicked = orders[[...ticked][0]];
   const bulkChoices = bulkField && !bulkField.type ? choicesFor(firstTicked?.cells?.[bulk.field]) : null;
 
-  // The market's own code ("Colombia (COL)") is what the PMs' batch names carry; the code in the order sheet can
-  // be the two-letter spelling.
+  // The market's own code ("Colombia (COL)") names the batch, in MAGI's two letters (suggestBatchName).
   const marketCode = /\(([A-Za-z]{2,4})\)\s*$/.exec(market.name || "")?.[1] || "";
   const suggestName = (rows) =>
     suggestBatchName([...(folderTasks || []).map((t) => t.title), ...(decide?.batches || []).map((b) => b.name)], rows.map((i) => orders[i]), marketCode);

@@ -9,6 +9,7 @@
 // The screens show "In Wrike" for a match and stay silent otherwise.
 
 import { wrikeLink } from "../wrikeLink.js";
+import { twoLetterName } from "./marketCode.js";
 
 // A PM tidies the name when making the task: the sheet leaves a doubled
 // underscore where a market gave no site name, and spaces become underscores.
@@ -27,15 +28,22 @@ const specific = (key) => key.length >= 12 && key.split("_").length >= 4;
 const newer = (a, b) => String(b.updatedDate || "") > String(a.updatedDate || "");
 
 // title key → the task, for every task with a title worth matching on. When two
-// tasks share a name, the most recently updated one is kept.
+// tasks share a name, the most recently updated one is kept. A task is also
+// filed under its name with the market in two letters, so "…_DEN" in the sheet
+// finds "…_DK" in Wrike and the other way round; a task's own name comes first.
 export function indexTasks(tasks) {
   const byKey = new Map();
+  const byTwo = new Map();
   for (const task of tasks || []) {
     const key = taskKey(task?.title);
     if (!specific(key)) continue;
     const seen = byKey.get(key);
     if (!seen || newer(seen, task)) byKey.set(key, task);
+    const two = taskKey(twoLetterName(task?.title));
+    const seenTwo = byTwo.get(two);
+    if (!seenTwo || newer(seenTwo, task)) byTwo.set(two, task);
   }
+  for (const [two, task] of byTwo) if (!byKey.has(two)) byKey.set(two, task);
   return byKey;
 }
 
@@ -45,8 +53,9 @@ export function indexTasks(tasks) {
 export function findTask(index, order) {
   if (!index?.size) return null;
   for (const name of [order.xyi?.title, order.deliveryName]) {
-    const key = taskKey(name);
-    if (specific(key) && index.has(key)) return index.get(key);
+    for (const key of [taskKey(name), taskKey(twoLetterName(name))]) {
+      if (specific(key) && index.has(key)) return index.get(key);
+    }
   }
   return null;
 }

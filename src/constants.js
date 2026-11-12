@@ -771,7 +771,7 @@ export const FILM_MAPPINGS = {
   MO2: "The Super Mario Galaxy Movie",
   GLG: "Girls Like Girls",
   KNG: "The Comeback King",
-  AB3: "Angry Birds 3",
+  AB3: "Angry Birds 3 Movie",
   COBAB: "Children of Blood and Bone",
   PSGR: "Passenger",
   SF: "Street Fighter",
